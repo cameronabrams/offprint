@@ -94,3 +94,31 @@ copy of each fact** — a second copy is a second thing to keep true.
 
 If you are running this yourself rather than through an agent, neither file is
 required reading; everything a person needs is in these pages.
+
+## Getting every attachment onto disk
+
+`--attachments keep` writes a PDF **only for attachments it actually processes**.
+On a library that is already mirrored that is almost none of them: the skip
+fires for every attachment whose extract exists and whose filehash is unchanged,
+and it returns before any download. A keep run over a finished mirror therefore
+downloads nothing, archives nothing, and reports a successful run — which is
+correct for a refresh and useless as an evacuation.
+
+To pull the files themselves down:
+
+```
+uv run --script mendeley_mirror.py --attachments keep --backfill
+```
+
+`--backfill` fetches a skipped attachment's file when it is not already in
+`<out>/pdf/`, under its own extension — a `.cif` stays a `.cif` — and changes
+nothing else: no extraction, no state write, no report row. It is resumable by
+construction, because a file already on disk is never fetched again, so an
+interrupted run is finished by re-running it. Anything it could not fetch is
+named in the log rather than counted, since a file missed during an evacuation
+is a file left behind.
+
+Expect this to take a while and to be large: roughly 1.5–2.5 MB per attachment.
+If `<out>` is inside a synced folder, decide *before* running it whether the
+other machines should carry the files — a Syncthing `.stignore` line naming the
+`pdf/` directory keeps them on one host.

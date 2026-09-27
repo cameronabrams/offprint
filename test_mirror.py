@@ -680,6 +680,57 @@ def main():
           "and names the paper under its own heading")
     check("silent zero" in crep, "and says what would have gone wrong")
 
+    # --attachments keep does NOT archive a library that is already mirrored:
+    # the skip fires for every unchanged attachment and continues before any
+    # download. Correct for a refresh, wrong for an evacuation -- and the run
+    # reports success either way, so the emptiness is silent. --backfill is the
+    # difference between "get the PDFs off this service" working and appearing to.
+    print("\n--backfill archives what a keep run skips")
+
+    class Serves:
+        def __init__(self): self.n = 0
+        def get(self, url, **kw):
+            self.n += 1
+            outer = self
+            class R:
+                status_code = 200; ok = True; content = pdf_bytes
+                def raise_for_status(self): pass
+            return R()
+
+    bf = tmp / "backfill"
+    two = {"d1": [{"id": "f1", "mime_type": "application/pdf", "filehash": "h1"},
+                  {"id": "f2", "mime_type": "chemical/x-cif", "filehash": "h2",
+                   "file_name": "structure.cif"}]}
+    bkm = {mm.qualify("d1"): "K1"}
+    bdoc = {"d1": DOCS[0]}
+    bst = {}
+    mm.harvest_attachments(Serves(), two, bkm, bdoc, bf, bst, "text")
+    check(not (bf / "pdf").exists(), "a text-mode refresh leaves no pdf/ behind")
+
+    plain = Serves()
+    mm.harvest_attachments(plain, two, bkm, bdoc, bf, bst, "keep")
+    check(plain.n == 0,
+          "keep alone downloads NOTHING once the extracts exist (the trap)")
+    check(not list((bf / "pdf").glob("*")) if (bf / "pdf").exists() else True,
+          "and archives nothing, while still reporting a successful run")
+
+    filled = Serves()
+    mm.harvest_attachments(filled, two, bkm, bdoc, bf, bst, "keep", backfill=True)
+    got = sorted(p.name for p in (bf / "pdf").glob("*"))
+    check(filled.n == 2, f"--backfill fetches the skipped attachments ({filled.n})")
+    check(got == ["K1-2.cif", "K1.pdf"],
+          f"archiving each under its own suffix, not all as .pdf ({got})")
+
+    again = Serves()
+    mm.harvest_attachments(again, two, bkm, bdoc, bf, bst, "keep", backfill=True)
+    check(again.n == 0, "a second --backfill run fetches nothing: resumable by construction")
+
+    # It must not disturb the mirror it is archiving.
+    before = dict(bst["files"])
+    once_more = Serves()
+    mm.harvest_attachments(once_more, two, bkm, bdoc, bf, bst, "keep", backfill=True)
+    check(bst["files"] == before, "and changes no extraction state")
+
     print("\na pass that examines nothing is a failure, not a zero")
 
     def staged(name: str) -> Path:

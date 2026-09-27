@@ -37,7 +37,7 @@ Usage:
 
 from __future__ import annotations
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 """The tool's version, and the only place it is written down.
 
 It exists so a mirror can say what produced it. Extraction behaviour has changed
@@ -1185,8 +1185,23 @@ def write_extraction_report(rows: list, out: Path, extracted: int) -> None:
 
 def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                         docs_by_id: dict, out: Path, state: dict, mode: str,
-                        state_path: Path | None = None, ocr: bool = False) -> tuple:
-    """Download each attachment, extract its text, and (by default) discard it."""
+                        state_path: Path | None = None, ocr: bool = False,
+                        backfill: bool = False) -> tuple:
+    """Download each attachment, extract its text, and (by default) discard it.
+
+    `backfill` is for getting the PDFs themselves onto disk, which a plain
+    `--attachments keep` does NOT do on a library that is already mirrored. The
+    skip below fires for every attachment whose extract exists and whose
+    filehash is unchanged, and it `continue`s before any download -- so a keep
+    run over a finished mirror downloads nothing and archives nothing. Verified
+    against the stub: 0 downloads, 0 files written.
+
+    That is correct for a refresh and wrong for an evacuation. With `backfill`,
+    a skipped attachment still has its file fetched if it is not already on
+    disk, and nothing else about it changes: no extraction, no state write, no
+    report row. Resumable by construction, since a file already present is not
+    fetched again.
+    """
     text_dir = out / "text"
     text_dir.mkdir(parents=True, exist_ok=True)
     pdf_dir = out / "pdf"
@@ -1198,7 +1213,8 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
         # Not cosmetic: an unqualified file id from a second backend would collide
         # here and skip an extraction as "already done".
         note(f"  namespaced {migrated} attachment ids as {BACKEND}:<id>")
-    fetched = skipped = failed = reused = unresolved = 0
+    fetched = skipped = failed = reused = unresolved = archived = 0
+    unarchived: list = []
     report: list = []
     state_path = state_path or mirror_state_dir(out) / "state.json"
 
@@ -1237,6 +1253,29 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                                        "title": doc.get("title", ""),
                                        "detail": f"{prior.get('chars', 0)} characters "
                                                  f"across {prior.get('pages', 0)} pages"})
+                    if backfill and mode == "keep":
+                        suffix = ".pdf" if is_pdf else (
+                            Path(f.get("file_name") or "").suffix or ".bin")
+                        archive = pdf_dir / f"{stem}{suffix}"
+                        if not (archive.exists() and archive.stat().st_size > 0):
+                            try:
+                                resp = client.get(f"{API}/files/{f['id']}",
+                                                  accept="*/*", allow_redirects=False)
+                                if resp.status_code in (301, 302, 303, 307):
+                                    resp = requests.get(resp.headers["Location"],
+                                                        timeout=180)
+                                resp.raise_for_status()
+                                archive.write_bytes(resp.content)
+                                archived += 1
+                                progress(f"  {seen}/{total}  archiving {stem[:36]}")
+                                time.sleep(0.2)
+                            except Exception as exc:
+                                # An attachment that cannot be archived is worth
+                                # naming: this run is the evacuation, and a file
+                                # missed here is a file left behind.
+                                note(f"  ! could not archive {stem}: "
+                                     f"{type(exc).__name__}: {exc}")
+                                unarchived.append(stem)
                     continue
                 progress(f"  {seen}/{total}  {stem[:44]}")
                 try:
@@ -1332,6 +1371,12 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
         pdf_dir.rmdir()
     if reused:
         note(f"  re-used {reused} PDFs already on disk (no re-download)")
+    if archived or unarchived:
+        note(f"  archived {archived} attachment files that were already extracted")
+        if unarchived:
+            note(f"  ! {len(unarchived)} could NOT be archived: "
+                 + ", ".join(unarchived[:10])
+                 + (" ..." if len(unarchived) > 10 else ""))
     if unresolved:
         note(f"  ! {unresolved} documents had attachments but no citation key, "
              "and were skipped")
@@ -1632,6 +1677,12 @@ def main() -> int:
                          "machine's guess at the characters and not the paper's words")
     ap.add_argument("--no-pdfs", action="store_true",
                     help=argparse.SUPPRESS)  # old spelling of --attachments none
+    ap.add_argument("--backfill", action="store_true",
+                    help="with --attachments keep: also download attachments whose "
+                         "text is already extracted, so every file lands in "
+                         "<out>/pdf/. A plain keep run archives nothing on a "
+                         "library that is already mirrored. Resumable; re-run it "
+                         "and it fetches only what is still missing")
     ap.add_argument("--no-annotations", action="store_true", help="skip annotation export")
     ap.add_argument("--no-abstracts", action="store_true", help="omit abstracts from library.bib")
     ap.add_argument("--reauth", action="store_true", help="discard saved tokens and log in again")
@@ -1642,6 +1693,12 @@ def main() -> int:
                     help="for scheduled runs: no progress output, never prompt, "
                          "log to .mirror/mirror.log")
     args = ap.parse_args()
+    # Validated here, not inside run(): a usage error is not a failed refresh,
+    # and letting it reach the failure path would write **FAILED** to the status
+    # file and bump the consecutive-failure streak over a typo.
+    if args.backfill and (args.no_pdfs or args.attachments != "keep"):
+        ap.error("--backfill needs --attachments keep: it archives the files, "
+                 "and the other modes discard them")
 
     QUIET = NONINTERACTIVE = args.quiet
     out = args.out.expanduser()
@@ -1763,7 +1820,7 @@ def run(args, out: Path, mirror_dir: Path) -> int:
             note("  interrupt with Ctrl-C any time -- progress is kept and resumed next run")
         fetched, skipped, failed, report = harvest_attachments(
             client, files_by_doc, keymap, docs_by_id, out, state, mode, state_path,
-            ocr=args.ocr)
+            ocr=args.ocr, backfill=args.backfill)
         write_extraction_report(report, out, fetched)
         note(f"  text: {fetched} extracted, {skipped} unchanged, {failed} failed")
         read_by_ocr = sum(1 for r in report if r["status"] == "ocr")
