@@ -544,6 +544,85 @@ patent records carries a patent number in any field, so nothing in them lets a
 reader find the document again. That is a defect in the records, not in the
 writer, and the library session is raising it with Cameron.
 
+## 8. A default refresh erodes the archive that --backfill built
+
+`--backfill` (0.8.0) put 2,745 attachments, 4.48 GB, into `<out>/pdf/` so the
+library would survive the Mendeley account lapsing on 2027-01-01. A default
+refresh — `--attachments text`, which is what the timer and every scheduled entry
+point run — deletes from that directory:
+
+```python
+if mode == "text" and local.exists():
+    local.unlink()   # the text is the artifact; Mendeley keeps the PDF
+```
+
+That comment was true when it was written and is now false — but not because of
+the 2027 lapse, which is how this was first argued and is the weaker case. The
+defect stands without any expiry date: `<out>/pdf/` is an archive somebody built
+deliberately, and a refresh deletes from it. The lapse only sets a deadline on
+noticing.
+
+**On a static library the loss is zero**, which is what makes it easy to miss.
+The skip branch fires when the filehash matches and the extract exists, and
+`continue`s long before the unlink, so all 2,745 currently skip. The exposure is
+exactly the attachments that changed in Mendeley since the last run: each one is
+reprocessed, and its archived copy is then removed. One changed paper, one PDF
+gone. Nothing reports it, because deleting the PDF is the documented behaviour of
+that mode.
+
+**This is the standing configuration, not a hazard of some future manual run.**
+`run_mirror.sh` passes `"$@"`, and the unit's `ExecStart=%h/Git/offprint/run_mirror.sh`
+carries no arguments, so every hourly fire runs `--attachments text`. The archive
+survived ~48 hours of that intact — 2,745 files, none modified since the
+evacuation finished — only because nothing changed in Mendeley in the meantime.
+
+And it is **not currently safe, only quiet**: the timer is `inactive` but still
+`enabled`, so it returns at the next login or reboot. Worse than returning on
+schedule — the timer is `OnCalendar=*:07` with **`Persistent=true`**, and
+`~/.local/share/systemd/timers/stamp-mendeley-mirror.timer` records a last
+trigger of 2026-09-29 11:08:12 EDT. So the moment it becomes active again
+systemd sees a missed elapse and fires **immediately**, not at the next `:07`,
+with no arguments, in delete mode. The unit's own comment says catching up after
+the machine was asleep is the whole point, and it is: the behaviour is correct
+and predates the archive it now threatens.
+
+panacea has been up since 2026-09-16, so a reboot is ordinary rather than
+imminent — which is the kind of interval that makes a latent defect look like a
+safe one. The archive's protection today rests on the machine not restarting.
+
+**Until this is fixed, a refresh on this library is run with `--attachments
+keep`.** That path never unlinks. But a flag an operator must remember, on a
+schedule nobody watches, is not a fix — which is why the second box below is not
+optional.
+
+- [x] Do not delete a PDF this run did not download. **Done 2026-09-29**,
+      `0.11.0`: the unlink is guarded by `not from_disk`. `text` mode writes
+      nothing to `pdf_dir` — extraction runs on bytes in memory — so what stays
+      reachable is a zero-byte stub from a failed download, which is still
+      cleared because it is nobody's archive.
+
+      **Two existing tests asserted the defect.** `test_mirror.py` staged a PDF
+      on disk, ran the mode the timer runs, and *required* the file to be gone
+      afterwards — the erosion written down as a specification, which is why it
+      survived every previous reading of that code. They now assert the
+      opposite. The new check fails without the fix, verified by restoring the
+      old line and watching it go red.
+- [ ] **Make the scheduled path safe without anyone remembering a flag.** Either
+      the code fix above makes `text` harmless to an existing archive, or the
+      unit and `refresh_quiet.bat` carry `--attachments keep` before the timer is
+      ever restarted. The code fix is the better of the two: it protects a
+      machine whose unit nobody edited, and `run_mirror.sh` and
+      `refresh_quiet.bat` have to be kept in step either way.
+- [x] `systemctl --user disable mendeley-mirror.timer` on panacea. **Done
+      2026-09-29**; stopping it was not enough, since an enabled timer comes
+      back. `mendeley-mirror.service` is `static`, so it stays startable on
+      demand and `inbox.py`'s `REFRESH_UNIT` path still works.
+
+**Still open: Cameron's two laptops.** Neither session can see their units, and
+the Windows scheduled task runs `refresh_quiet.bat`. The code fix protects them
+without anyone editing anything, which is the argument for having done it that
+way — but it only protects them once they pull.
+
 ## Deliberately not doing
 
 **Packaging (PyPI, conda-forge, console entry points).** The PEP 723 headers

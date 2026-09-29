@@ -37,7 +37,7 @@ Usage:
 
 from __future__ import annotations
 
-__version__ = "0.10.0"
+__version__ = "0.11.0"
 """The tool's version, and the only place it is written down.
 
 It exists so a mirror can say what produced it. Extraction behaviour has changed
@@ -1380,8 +1380,21 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                         fetched += 1
                     known[qualify(f["id"])] = {"filehash": f.get("filehash"), "status": status,
                                       "detail": detail, "pages": pages, "chars": chars}
-                    if mode == "text" and local.exists():
-                        local.unlink()  # the text is the artifact; Mendeley keeps the PDF
+                    if mode == "text" and local.exists() and not from_disk:
+                        # `not from_disk` is the whole fix. `text` mode writes
+                        # nothing to pdf_dir -- extraction runs on bytes in
+                        # memory -- so anything of substance found here was put
+                        # there by a `keep` or `--backfill` run and is somebody's
+                        # archive, not this run's scratch copy. What remains
+                        # reachable is a zero-byte stub from a failed earlier
+                        # download, which is worth clearing.
+                        #
+                        # The comment that used to sit here read "the text is the
+                        # artifact; Mendeley keeps the PDF". True when written.
+                        # The account it says that about expires, and `<out>/pdf/`
+                        # is the answer to that -- so the line quietly ate one
+                        # archived PDF for every attachment that changed.
+                        local.unlink()
                     if seen % 25 == 0:
                         save_json(state_path, state)  # so Ctrl-C keeps the progress
                     if not from_disk:

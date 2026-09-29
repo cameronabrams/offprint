@@ -564,8 +564,15 @@ def main():
         {mm.qualify("d1"): "Muller2020Yield"}, {"d1": DOCS[0]}, h_out, st, "text")
     check(fetched == 1 and failed == 0, f"local PDF extracted without a download ({fetched=}, {failed=})")
     check((h_out / "text" / "Muller2020Yield.md").exists(), "text file written")
-    check(not (h_out / "pdf" / "Muller2020Yield.pdf").exists(), "PDF discarded after extraction")
-    check(not (h_out / "pdf").exists(), "empty pdf/ directory cleaned up")
+    # These two asserted the opposite until 2026-09-29, which is how the defect
+    # lasted: the test staged a PDF on disk, ran the mode the hourly timer runs,
+    # and required the file to be gone afterwards. That is the erosion written
+    # down as a specification. What this block is really for -- re-using a local
+    # PDF instead of re-downloading it -- is still proved by NoNetwork above.
+    check((h_out / "pdf" / "Muller2020Yield.pdf").exists(),
+          "a re-used PDF is still there afterwards: it was not this run's to delete")
+    check((h_out / "pdf").exists(),
+          "and pdf/ is not removed out from under an archive")
     check(st["files"][mm.qualify("x1")]["status"] == "ok", "state records the extraction")
 
     # An OCR'd attachment is skipped on every later refresh, because its extract
@@ -892,6 +899,39 @@ def main():
     once_more = Serves()
     mm.harvest_attachments(once_more, two, bkm, bdoc, bf, bst, "keep", backfill=True)
     check(bst["files"] == before, "and changes no extraction state")
+
+    print("\na text refresh must not erode an archive it did not create")
+
+    # The timer runs --attachments text with no arguments, so this is the
+    # scheduled path, not a manual one. Before the fix it unlinked any PDF it
+    # found after extracting: one changed paper, one archived PDF gone, and
+    # nothing reported it, because deleting the PDF is that mode's documented
+    # job. `from_disk` is the distinction -- a file already on disk when the run
+    # started belongs to whoever put it there.
+    kept = sorted(p_.name for p_ in (bf / "pdf").glob("*"))
+    check(kept == ["K1-2.cif", "K1.pdf"], f"the archive is in place to be eroded ({kept})")
+
+    # Changing the filehash is what stops the skip branch firing, which is
+    # exactly what a paper edited in Mendeley does.
+    changed = {"d1": [dict(two["d1"][0], filehash="h1-NEW"),
+                      dict(two["d1"][1], filehash="h2-NEW")]}
+    erode = Serves()
+    mm.harvest_attachments(erode, changed, bkm, bdoc, bf, bst, "text")
+    still = sorted(p_.name for p_ in (bf / "pdf").glob("*"))
+    check(still == kept, f"an archived PDF survives a text-mode reprocess ({still})")
+    check(erode.n == 1,
+          f"and was re-used from disk, not re-downloaded ({erode.n} fetched: the .cif only)")
+
+    # The one thing it should still clear: a zero-byte stub from a download that
+    # died. That is not an archive, and leaving it would make the next run skip
+    # a real fetch.
+    stub = tmp / "stub"
+    (stub / "pdf").mkdir(parents=True)
+    (stub / "pdf" / "K1.pdf").write_bytes(b"")
+    one = {"d1": [two["d1"][0]]}
+    mm.harvest_attachments(Serves(), one, bkm, bdoc, stub, {}, "text")
+    check(not (stub / "pdf" / "K1.pdf").exists(),
+          "but a zero-byte stub is still cleared, since it is nobody's archive")
 
     print("\na pass that examines nothing is a failure, not a zero")
 
