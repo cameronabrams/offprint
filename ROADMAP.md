@@ -501,18 +501,35 @@ there is no `else`, so for `@misc`, `@techreport`, `@phdthesis` and `@book`,
 where a human typed the disambiguating fact by hand is the one where the writer
 throws it away.
 
-- [ ] **Emit `source` when no other field claimed it.** The cheapest of these by
-      a distance: it needs no knowledge of the source type, invents nothing, and
-      recovers 66 records' worth of data the backend already sends and the
-      extract already keeps. Start here.
-- [ ] Keep the source type whenever `TYPE_MAP` flattens it. Use **`note`**, not
-      `howpublished`: `howpublished` is not a standard field for `@article`,
-      which is 97% of the affected records, while `note` is valid in every
-      standard entry type. `note` is already emitted for untitled records, so it
-      is not a new field in the format. Greppable either way, which is the point.
-- [ ] Stop asserting `@phdthesis` for an unqualified `thesis`. `@mastersthesis`
-      is equally wrong; the honest rendering is `@phdthesis` only when the source
-      says so, and otherwise a type that does not claim a degree.
+- [x] **Emit `source` when no other field claimed it.** **Done 2026-09-29**,
+      `0.10.0`. Anything not taken by `journal` or `booktitle` goes to `note`,
+      which is valid in every standard entry type. `@article` and
+      `@incollection` are untouched, so the 2,668 entries that were already
+      right do not change. Demonstrated on the named records: `Berman2000Protein`
+      gains `note = {Nucleic Acids Research}` beside its bare `28(1)`;
+      `Snow1991Dilatometry` gains the full `NRL Memorandum Report 6848, Naval
+      Research Laboratory (DTIC ADA239276)`; `Park2004Calculating` gains
+      `Journal of Chemical Physics`. Real `bibtex` parses the result with zero
+      warnings.
+- [ ] Keep the source type whenever `TYPE_MAP` flattens it — **but not as
+      written, and worth less than it looks now.** `note` prints. Putting
+      `note = {journal}` on 2,660 `@article` entries would append the word
+      *journal* to almost every reference in every bibliography built from this
+      file, which is a larger harm than the one it fixes. And the box above
+      already recovers most of its value: a magazine is told from a journal by
+      its name, and the name is now in the entry. What remains is the case where
+      the venue name alone does not settle it. That needs a field that does not
+      print, which is a format decision rather than a bug fix, so it waits for
+      one rather than being smuggled in beside a correctness change.
+- [x] Stop asserting `@phdthesis` for an unqualified `thesis`. **Done
+      2026-09-29**, `0.10.0`, and without changing the entry type: standard
+      styles let `type` override the printed label, so the entry stays
+      `@phdthesis` — which is what styles and `school` know how to handle — and
+      carries `type = {Thesis}`. No style now prints a degree Mendeley never
+      recorded. `Deserno1999Efficient`, which is chapter 3 of someone else's
+      dissertation, comes out as `type = {Thesis}` with
+      `note = {PhD Thesis, Ch 3}`: still the wrong entry type for a chapter, but
+      no longer claiming a doctorate, and now saying what it actually is.
 - [ ] Decide separately whether `@patent` is worth emitting. Base BibTeX styles
       do not define it and biblatex does, which is presumably why `misc` was
       chosen. Not losing the fact and rendering it are different questions, and

@@ -295,6 +295,56 @@ def main():
     check("Müller, Jörg and Smith, A. B." in bib, "author list formatted")
     check(bib.count("\n@") == len(DOCS), "one entry per document")
 
+    print("\nthe venue survives every entry type (ROADMAP 7)")
+
+    def entry(**kw):
+        d = {"id": "x", "title": "T", "authors": [{"last_name": "Doe"}], "year": 2000}
+        d.update(kw)
+        return mm.bib_entry(d, "Doe2000T", include_abstract=False)
+
+    # The types that already had a home for it keep using it, and gain no note.
+    e = entry(type="journal", source="AIChE Journal")
+    check("journal   = {AIChE Journal}" in e or "journal = {AIChE Journal}" in e,
+          "an article still puts source in journal")
+    check("note" not in e, "and gains no note, so 2,660 bibliographies do not change")
+    e = entry(type="book_section", source="Transport Phenomena")
+    check("booktitle" in e and "note" not in e, "a book section still uses booktitle")
+
+    # The four that dropped it on the floor. 66 records here, 28 of them holding
+    # volume/pages/DOI and no venue at all -- complete-looking and uncitable.
+    # NB: not `bib` as the loop name -- this script is flat, and `bib` holds the
+    # generated BibTeX that later checks read.
+    for kind, bibtype in (("report", "techreport"), ("patent", "misc"),
+                          ("web_page", "misc"), ("book", "book")):
+        e = entry(type=kind, source="NRL Memorandum Report 6848 (DTIC ADA239276)")
+        check(f"@{bibtype}{{" in e and "NRL Memorandum Report 6848 (DTIC ADA239276)" in e,
+              f"a {kind} keeps its venue, in note ({bibtype})")
+
+    # This is the case <out>/CLAUDE.md's grey-literature procedure creates: the
+    # accession number is put in `source` because no identifier field exists.
+    e = entry(type="report", source="DTIC ADA239276", volume="12", pages="1-9")
+    check("note" in e and "DTIC ADA239276" in e,
+          "an accession number filed per the documented procedure reaches the .bib")
+
+    # A thesis must not claim a doctorate the source never stated.
+    e = entry(type="thesis", institution="Johannes Gutenberg University")
+    check("@phdthesis{" in e, "a thesis is still @phdthesis, which is what styles know")
+    check("type" in e and "{Thesis}" in e,
+          "but carries type = {Thesis}, so no style prints a degree Mendeley never gave")
+    check("school" in e, "and institution still lands in school")
+
+    # Both notes coexist rather than one overwriting the other.
+    e = mm.bib_entry({"id": "d9", "type": "generic", "source": "Some venue"},
+                     "Anonnd", include_abstract=False)
+    check("Some venue" in e and "Untitled Mendeley record" in e,
+          "an untitled record with a venue reports both, not whichever was added last")
+
+    # No source, no note: the fix must not add an empty field to every entry.
+    e = entry(type="report")
+    check("note" not in e, "a record with no source gains nothing")
+    e = entry(type="report", source="")
+    check("note" not in e, "and neither does one whose source is empty")
+
     print("\nunicode punctuation (non-UTF-8 LaTeX safety)")
     check(mm.tex_escape("Jean\u2010Pierre") == "Jean-Pierre", "U+2010 hyphen -> ASCII hyphen")
     check(mm.tex_escape("Jean\u2011Pierre") == "Jean-Pierre", "U+2011 non-breaking hyphen -> ASCII")

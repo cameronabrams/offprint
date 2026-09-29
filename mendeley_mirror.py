@@ -37,7 +37,7 @@ Usage:
 
 from __future__ import annotations
 
-__version__ = "0.9.0"
+__version__ = "0.10.0"
 """The tool's version, and the only place it is written down.
 
 It exists so a mirror can say what produced it. Extraction behaviour has changed
@@ -693,17 +693,39 @@ def bib_entry(doc: dict, key: str, include_abstract: bool = True) -> str:
         # BibTeX needs author or key to sort an entry
         add("key", key)
 
+    # `source` is the venue, and for four of the seven entry types there was no
+    # field to put it in and no else-branch, so it was dropped: 66 records here,
+    # 28 of which carry volume/pages/DOI and no venue of any kind. That is not an
+    # entry that looks incomplete -- Berman2000Protein printed "28(1)" with
+    # nothing to put it in. Worse, <out>/CLAUDE.md tells the filer to put a
+    # report's accession number in `source` precisely because there is no
+    # identifier field for it, and reports become @techreport. The documented
+    # procedure wrote into the field the documented output discarded.
+    # Anything not claimed by a real field now goes to `note`, which is valid in
+    # every standard entry type (`howpublished` is not, and @article is 97% of
+    # the library).
     source = doc.get("source")
+    source_placed = False
     if entry_type == "article":
         add("journal", tex_escape(source) if source else None)
+        source_placed = bool(source)
     elif entry_type in ("inproceedings", "incollection"):
         add("booktitle", tex_escape(source) if source else None)
+        source_placed = bool(source)
 
     add("year", doc.get("year"))
     add("volume", doc.get("volume"))
     add("number", doc.get("issue"))
     add("pages", format_pages(doc.get("pages") or "") or None)
     add("publisher", tex_escape(doc.get("publisher")) if doc.get("publisher") else None)
+    if entry_type == "phdthesis":
+        # Mendeley has ONE thesis type and does not say which degree. TYPE_MAP
+        # renders it @phdthesis, and a style then prints "PhD thesis" -- a claim
+        # the source never made. Deserno1999Efficient is chapter 3 of someone
+        # else's dissertation and carried it. `type` overrides that label in the
+        # standard styles, which is the cheap honest fix: say "Thesis" and let
+        # `note` carry whatever the record actually said.
+        add("type", "Thesis")
     if doc.get("institution"):
         # a thesis wants school; a report wants institution
         add("school" if entry_type == "phdthesis" else "institution",
@@ -727,8 +749,13 @@ def bib_entry(doc: dict, key: str, include_abstract: bool = True) -> str:
     if include_abstract and doc.get("abstract"):
         add("abstract", tex_escape(doc["abstract"]))
 
+    notes = []
+    if source and not source_placed:
+        notes.append(tex_escape(source))
     if not doc.get("title"):
-        add("note", f"Untitled Mendeley record (document id {doc.get('id', '?')})")
+        notes.append(f"Untitled Mendeley record (document id {doc.get('id', '?')})")
+    if notes:
+        add("note", ". ".join(notes))
 
     lines = [f"@{entry_type}{{{key},"]
     width = max((len(n) for n, _ in fields), default=0)
