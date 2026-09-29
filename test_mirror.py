@@ -171,6 +171,118 @@ def main():
     check(known.get(mm.qualify("f1"), {}).get("filehash") == "abc",
           "and is still found by the id the API reports, so nothing re-extracts")
 
+    print("\nzotero_migrate: pairing citation keys with a second backend (ROADMAP 1)")
+
+    import zotero_migrate as zmig
+
+    check(zmig.norm_doi("https://doi.org/10.1/A") == "10.1/a", "a DOI URL reduces to the DOI")
+    check(zmig.norm_doi("doi: 10.1/a.") == "10.1/a", "as does a doi: prefix with trailing stop")
+    check(zmig.norm_doi(None) == "", "and a missing DOI is empty, not an error")
+
+    # The normalization that did the real work. Zotero's Mendeley import writes
+    # &#8208; where the BibTeX has a plain hyphen; strip punctuation before
+    # entities and "8208" survives as a word, so two identical titles differ.
+    check(zmig.norm_title("A model of an&#8208;paraffinic liquid")
+          == zmig.norm_title("A model of an-paraffinic liquid"),
+          "an HTML entity and the character it stands for normalize alike")
+    check("8208" not in zmig.norm_title("an&#8208;paraffinic"),
+          "and the entity's digits do not survive as a word")
+    check(zmig.norm_title(r"2.4 &angst; resolution") == zmig.norm_title("2.4 Angstrom resolution")
+          or "angst" not in zmig.norm_title("2.4 &angst; resolution"),
+          "a named entity is dropped rather than read as letters")
+    check(zmig.norm_title("{Title}") == "title", "brace protection does not survive normalization")
+
+    # parse_bib reads what write_bibtex writes; the hard part is braces INSIDE
+    # values -- protected titles and abstracts that contain them.
+    sample = (
+        "@article{Key2020Sample,\n"
+        "  author    = {Doe, J.},\n"
+        "  title     = {{A {braced} title}},\n"
+        "  abstract  = {Contains {nested} braces and a brace-balanced {clause}},\n"
+        "  doi       = {10.1/x},\n"
+        "}\n"
+    )
+    ents = zmig.parse_bib(sample)
+    check(len(ents) == 1 and ents[0][0] == "Key2020Sample", "one entry, keyed correctly")
+    check(ents[0][2]["title"] == "{A {braced} title}", "a brace-protected title comes back whole")
+    check(ents[0][2]["doi"] == "10.1/x", "and a later field is still found after it")
+    check("{clause}" in ents[0][2]["abstract"], "braces inside an abstract do not end the field")
+
+    def _row(ident, doi, title, year):
+        return zmig.Row(ident, zmig.norm_doi(doi), zmig.norm_title(title),
+                        zmig.year_of(year), title)
+
+    M = [
+        _row("Doe2000Alpha",   "10.1/a", "First paper", "2000"),
+        _row("Roe2001Unique",  "",       "A quite unique title", "2001"),
+        _row("Poe2002Dup",     "",       "Duplicated paper", "2002"),
+        _row("Poe2002Dupa",    "",       "Duplicated paper", "2002"),
+        _row("Coe2003Fuzzy",   "",       r"Molecular picture of folding of a small \$\textbackslash{}alpha\$/\$\textbackslash{}beta\$ protein", "2003"),
+        _row("Zoe2004Orphan",  "",       "Nothing matches this", "2004"),
+        _row("Hyp1980Model",   "",       "A computer model of an-paraffinic liquid", "1980"),
+        _row("Lon2006Missing", "",       "Only one copy survived", "2006"),
+        _row("Lon2006Missinga", "",      "Only one copy survived", "2006"),
+    ]
+    Z = [
+        _row("Z1", "https://doi.org/10.1/A", "Completely different title", "2000-01-01"),
+        _row("Z2", "", "A quite unique title", "2001-05-01"),
+        _row("Z3", "", "Duplicated paper", "2002"),
+        _row("Z4", "", "Duplicated paper", "2002"),
+        _row("Z5", "", r"Molecular picture of folding of a small $\alpha$/$\beta$ protein", "2003"),
+        _row("Z7", "", "A computer model of an&#8208;paraffinic liquid", "1980"),
+        _row("Z8", "", "Only one copy survived", "2006"),
+        _row("Z9", "", "Unclaimed extra", "2005"),
+    ]
+    pairs, unmatched, unclaimed, stats = zmig.match(M, Z)
+
+    check(pairs.get("Doe2000Alpha") == "Z1",
+          "a DOI match wins even when the titles disagree entirely")
+    check(pairs.get("Roe2001Unique") == "Z2", "an exact title+year pairs")
+    check(pairs.get("Hyp1980Model") == "Z7",
+          "and so does a title that only agrees after entity normalization")
+    check(pairs.get("Coe2003Fuzzy") == "Z5",
+          "a title differing only in surviving LaTeX matches fuzzily")
+    check(stats["fuzzy title"] == 1, "and the fuzzy pass is credited for exactly that one")
+
+    # Two-sided, because a threshold tested only from above is a threshold nobody
+    # has measured. The pair above scores 0.8952; the same difference in a shorter
+    # title scores 0.8254, and must be refused.
+    short = [_row("Sho2003Fuzzy", "", r"Folding of a small \$\textbackslash{}alpha\$/\$\textbackslash{}beta\$ protein", "2003")]
+    shortz = [_row("S5", "", r"Folding of a small $\alpha$/$\beta$ protein", "2003")]
+    p4, u4, _, _ = zmig.match(short, shortz)
+    check(not p4 and len(u4) == 1,
+          "the same difference in a shorter title falls below the threshold and is refused")
+    check({pairs.get("Poe2002Dup"), pairs.get("Poe2002Dupa")} == {"Z3", "Z4"},
+          "two indistinguishable copies pair with the two on the other side")
+
+    # What it must NOT do.
+    check("Zoe2004Orphan" in [m.ident for m in unmatched],
+          "a reference with nothing to match is reported, not attached to the nearest thing")
+    check({"Lon2006Missing", "Lon2006Missinga"} <= {m.ident for m in unmatched},
+          "and an UNEQUAL duplicate group is reported whole rather than half-guessed")
+    check("Z8" in {z.ident for z in unclaimed},
+          "the lone survivor on the other side stays unclaimed, so the loss is visible")
+    check("Z9" in {z.ident for z in unclaimed}, "an item nothing points at is reported too")
+
+    check(len(set(pairs.values())) == len(pairs),
+          "no Zotero item is claimed twice (the map is a bijection)")
+    check(set(pairs) & {m.ident for m in unmatched} == set(),
+          "and nothing is both matched and unmatched")
+
+    # The margin: a near-tie is not a match. Two candidates equally close to the
+    # query must leave it unmatched rather than let a thousandth of a ratio pick.
+    q = [_row("Tie2010Paper", "", "the quick brown fox jumps over", "2010")]
+    tied = [_row("T1", "", "the quick brown fox jumps over it", "2010"),
+            _row("T2", "", "the quick brown fox jumps over us", "2010")]
+    p2, u2, _, _ = zmig.match(q, tied)
+    check(not p2 and len(u2) == 1,
+          "two equally-near titles leave the reference unmatched rather than guessing")
+
+    # A single near candidate below the threshold is still refused.
+    far = [_row("F1", "", "an entirely unrelated piece of writing", "2010")]
+    p3, u3, _, _ = zmig.match(q, far)
+    check(not p3 and len(u3) == 1, "and a candidate below the threshold is not a match")
+
     print("\nbibtex")
     mm.write_bibtex(DOCS, keymap, out, include_abstract=True)
     bib = (out / "library.bib").read_text(encoding="utf-8")
@@ -1634,11 +1746,11 @@ def main():
     check(fnd.confirm_offset(HEAD, 2, 2899) is None,
           "and that reading still refuses an off-by-one claim")
 
-    print("\nPEP 723 headers: ten copies of the dependency list, kept honest")
+    print("\nPEP 723 headers: eleven copies of the dependency list, kept honest")
 
     # There is no pyproject.toml here on purpose -- every script carries its own
     # inline header so `uv run --script` needs nothing installed, which is what
-    # makes this work on a bare Windows laptop. The cost is ten copies of the
+    # makes this work on a bare Windows laptop. The cost is eleven copies of the
     # same facts, and nothing but this check would notice them drifting apart:
     # a script whose header forgets a dependency fails at import time on a
     # machine that has not run its sibling first, which is exactly the machine
