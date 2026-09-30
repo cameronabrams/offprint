@@ -48,6 +48,17 @@ document id and kept in `citekeys.json`. `Abrams2013Enhanced` keeps its handle
 while its `year` field reads 2014. The key is a handle; the year field is the
 claim.
 
+That example is the gentle case, and it can leave the impression that a key is at
+worst a year out. It is not. The library holds `Lordi2011Molecular` over
+`year = 2000` and `Pincus2002Excluded` over `year = 1976` — keys minted while
+those records carried a wrong year, kept after the year was corrected, and now 11
+and 26 years adrift. Both are behaving exactly as designed.
+
+So: **read the year off the field, never off the key.** Renumbering is the one
+repair the tool will not make, because a key is cited in manuscripts and names
+files under `findings/`; a key that could be corrected would be a key that could
+break someone's bibliography. A wrong-looking key is not a defect to report.
+
 One thing worth knowing when a reference looks like it is missing its journal:
 BibTeX only emits `journal` for entry type `article`, and Mendeley's `generic`
 type maps to `@misc`. A reference with the right journal name but the wrong

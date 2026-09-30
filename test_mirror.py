@@ -4,7 +4,7 @@
 # dependencies = ["requests>=2.31", "pymupdf>=1.24"]
 # ///
 """Offline tests for mendeley_mirror.py -- pure functions + a stubbed API."""
-import json, os, re, shutil, subprocess, sys, tempfile
+import copy, json, os, re, shutil, subprocess, sys, tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -107,6 +107,19 @@ def main():
                     "authors": [{"last_name": "Bird", "first_name": "R"}]}]
     keymap2 = mm.assign_citekeys(more, cfgdir / "citekeys.json")
     check(all(keymap2[k] == v for k, v in keymap.items()), "keys stable across runs")
+
+    # Stability the other way: CORRECTING a field on a document already keyed must
+    # not renumber it either. This is the contract, not an accident of ordering --
+    # the live library holds Lordi2011Molecular over year = 2000 and
+    # Pincus2002Excluded over year = 1976, keys frozen before the years were fixed
+    # and 11 and 26 years adrift. A key is a handle; read the year off the field.
+    corrected = copy.deepcopy(DOCS)
+    corrected[0]["year"] = 1976
+    corrected[0]["authors"] = [{"last_name": "Pincus", "first_name": "P"}]
+    keymap3 = mm.assign_citekeys(corrected, cfgdir / "citekeys.json")
+    check(keymap3[q("d1")] == "Muller2020Yield",
+          "a corrected year and author do not renumber a key already assigned")
+    check(len(keymap3) == len(keymap2), "and no second key is minted for the same id")
 
     print("\nidentifier namespaces (ROADMAP 1)")
 
