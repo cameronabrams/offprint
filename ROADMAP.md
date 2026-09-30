@@ -618,6 +618,23 @@ optional.
       back. `mendeley-mirror.service` is `static`, so it stays startable on
       demand and `inbox.py`'s `REFRESH_UNIT` path still works.
 
+      **Do not re-enable it as a repair.** A disabled hourly timer reads like
+      something broken, and it is not. Two separate reasons put it there, and
+      only one of them has been fixed:
+
+      1. The archive hazard above — **fixed** in `0.11.0`, so this reason no
+         longer applies on a machine running that code.
+      2. Cameron is retiring the Mendeley backend. The library is final, the
+         account lapses 2027-01-01, and a refresh against a degrading account
+         would fail loudly and regenerate nothing anyone wants. **This reason
+         still stands**, and it is his decision to reverse, not a defect to
+         repair.
+
+      The reboot on 2026-09-30 is the evidence that the disable holds: the
+      archive came back byte-identical at **2,745 files / 4,476,820,874 bytes**,
+      and `stamp-mendeley-mirror.timer` was still 2026-09-29 11:08:12,
+      unrewritten. Those two numbers are the baseline for any later check.
+
 **Still open: Cameron's two laptops.** Neither session can see their units, and
 the Windows scheduled task runs `refresh_quiet.bat`. The code fix protects them
 without anyone editing anything, which is the argument for having done it that
