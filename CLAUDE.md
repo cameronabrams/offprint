@@ -44,6 +44,17 @@ wrong id for another backend's. When the Zotero backend lands this is the rule i
 will be tempted to break, because a second source is exactly the case the bare
 ids have never had to survive.
 
+Since 2026-09-30 `citekeys.json` holds both halves — 2,739 `mendeley:<id>` and
+2,739 `zotero:<key>` entries pointing at the same 2,739 citation keys. Two things
+follow. `taken` in `assign_citekeys` is built from **values** and is deliberately
+namespace-blind, so a key spoken for by either half is spoken for; don't "fix"
+that by filtering to one backend, or a Zotero record will be handed a key a
+Mendeley record already owns. And the map is append-only — nothing in the tool
+removes an entry — so a key cited in a manuscript keeps resolving after its
+record is deleted. The consequence for anyone pruning by hand is in
+`docs/reference.md`: both halves or neither, because dropping one leaves the key
+reserved and the surviving line pointing at nothing in `library.bib`.
+
 Two habits that came out of the same failure, and are cheaper than the debugging:
 
 - **Searching for one access pattern is not searching for the accesses.** Every

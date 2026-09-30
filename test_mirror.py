@@ -161,6 +161,22 @@ def main():
           "a second backend's entries do not renumber the first's")
     check(after2["zotero:ZZZ"] == "Somebody2030New", "and are themselves left alone")
 
+    # But `taken` is built from VALUES and is deliberately namespace-blind, so a
+    # citekey spoken for by EITHER half is spoken for. That is what stops a Zotero
+    # record being handed a key a Mendeley record already owns while both halves
+    # describe the same corpus -- and it is also why a half-finished deletion is
+    # worse than none: dropping the mendeley: entry alone does not release the key.
+    solo = tmp / "solo.json"
+    twin = {"id": "d9", "created": "2030-01-01T00:00:00Z", "type": "journal",
+            "title": "New results", "year": 2030,
+            "authors": [{"last_name": "Somebody", "first_name": "A"}]}
+    solo.write_text(json.dumps({"zotero:ZZZ": "Somebody2030New"}), encoding="utf-8")
+    check(mm.assign_citekeys([twin], solo)[q("d9")] == "Somebody2030Newa",
+          "a key held only by the zotero half still blocks a new mendeley key")
+    solo.write_text(json.dumps({}), encoding="utf-8")
+    check(mm.assign_citekeys([twin], solo)[q("d9")] == "Somebody2030New",
+          "and the same document takes the unsuffixed key when nothing holds it")
+
     # state.json is keyed by FILE id and gets the same treatment. The property that
     # matters is that migration must not make the extractor think a file is new:
     # 2,700 re-extractions is what "just re-run it" would cost.

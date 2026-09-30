@@ -74,12 +74,6 @@ actually find it:
 
 - `mirror-status.md` says `written by offprint X.Y.Z` beside the run times.
 - `.mirror/state.json` carries `mirror_version` alongside `last_run`.
-Ids in `citekeys.json` and in `state.json` are **namespaced** — `mendeley:<id>` —
-so that a second backend can be added without two services' ids colliding. A bare
-id is read as Mendeley's, so a map written before this change still works, and it
-is rewritten in place on the next run. The citation *key* never changes: it is
-assigned once per id and is cited in manuscripts and used as a file name.
-
 - `.mirror/health.json` carries the consecutive-failure count, when the streak
   began, and which kind the last failure was. It is separate from `state.json`
   on purpose: that file's shape is something other people's tooling reads, and a
@@ -89,3 +83,31 @@ assigned once per id and is cited in manuscripts and used as a file name.
 That makes "this extract predates the garbled-text fix" a question the library
 can answer about itself, rather than one answered from a git log that the
 library does not carry.
+
+
+## Namespaced ids, and why a reference has two entries
+
+Ids in `citekeys.json` and in `state.json` are **namespaced** — `mendeley:<id>`,
+`zotero:<key>` — so that a second backend can be added without two services' ids
+colliding. A bare id is read as Mendeley's, so a map written before this change
+still works, and it is rewritten in place on the next run. The citation *key*
+never changes: it is assigned once per id, is cited in manuscripts, and names
+files under `findings/`.
+
+Since 2026-09-30 `citekeys.json` carries both halves. Every reference appears
+twice — once as `mendeley:<id>`, once as `zotero:<key>` — pointing at the same
+citation key. That pairing *is* the migration map, and it is what lets a key
+already in a manuscript survive the move between services.
+
+The file is **append-only**: `assign_citekeys` adds an entry for a document id it
+has not seen and never removes one. So a reference deleted in Mendeley keeps its
+line here, on purpose — a key cited last year should still tell you which paper
+was meant, long after the record behind it is gone.
+
+**If you ever do prune the file by hand, drop both halves of a reference or
+neither.** A new key is chosen against the keys already in use, and that check is
+namespace-blind by design: a key spoken for by either half is spoken for, so a
+Zotero record can never be handed a key some Mendeley record already owns. The
+cost is one sharp edge — removing just the `mendeley:` line does not release the
+key, and leaves a `zotero:` line pointing at a citation key that nothing in
+`library.bib` answers to any more. Half a deletion is worse than none.
