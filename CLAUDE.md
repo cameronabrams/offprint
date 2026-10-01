@@ -100,6 +100,16 @@ change indistinguishable by the one line put there to distinguish them. The
 announcement rule above covers the library's *files*; this covers the tool's own
 *output*, which nobody else was going to notice.
 
+The rule reads as being about mirrored files, and on 2026-10-02 that reading was
+too narrow. `zotero_attach.py` writes nothing into the mirror, so seven commits
+went out under an unchanged version — and the library session, comparing one dry
+run against another after two fixes, had to track which was which by quoting
+commit hashes in a message. Those run logs are kept; they are the record of 2,740
+writes to a live library, and nothing in them said what produced them. **If a
+run's output is saved, it is a file, whatever it is printed on.** So a script
+that writes to someone's account prints `__version__` in its header and takes
+`--version`, and a change to what it does bumps it.
+
 Third: announce a contract change **before the working tree carries it, not
 before the push**. The clone is what the systemd timer runs, so a saved file is
 already live — there is no staging step between editing and shipping, and the

@@ -377,6 +377,29 @@ missing. Every one was found by someone running the tool and adding the numbers
 up by hand, none by reading the code. That is the argument for the tool doing
 the addition itself, which it now does.
 
+### The version rule was read too narrowly — `0.14.0`
+
+Seven commits built and then repeatedly corrected `zotero_attach.py` under an
+unchanged `0.13.0`. The reasoning each time was that `__version__` says which
+rules produced a *mirrored file*, and this script writes none. That is literally
+true and it was the wrong reading.
+
+It bit the same day, in the shape the rule exists to prevent. The library session
+ran a dry run, two defects were fixed, it ran another — and to say which log was
+which it quoted commit hashes in a message, because the tool stamped nothing.
+Those logs are saved in `~/.local/state/fleet/drops/` and they are the record of
+2,740 writes to a live library.
+
+**If a run's output is kept, it is a file, whatever it is printed on.** September's
+version of this was two hours of `mirror-status.md` made indistinguishable by a
+layout change under a frozen version; this is the same failure arriving through a
+script nobody counted as producing output. `zotero_attach.py` now prints
+`offprint <version>` in its header and takes `--version`.
+
+- [ ] The three Mendeley writing scripts have the same property and not the same
+      problem — they are interactive and single-record, and nobody keeps their
+      logs. Worth giving them `--version` anyway if a batch mode ever lands.
+
 ### The 132 stranded files are the library session's job, and it now has the tool
 
 Cameron's line, 2026-10-02: resolving them belongs to `literature`, "once it

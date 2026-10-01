@@ -83,8 +83,8 @@ import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from mendeley_mirror import (DEFAULT_OUT, load_json, load_removed,  # noqa: E402
-                             looks_like_pdf, mirror_state_dir)
+from mendeley_mirror import (DEFAULT_OUT, __version__, load_json,  # noqa: E402
+                             load_removed, looks_like_pdf, mirror_state_dir)
 from zotero_migrate import Zotero, load_zotero_credentials  # noqa: E402
 
 MAX_TRIES = 5
@@ -501,6 +501,7 @@ def stem_of(path: Path) -> str:
 def main() -> None:
     ap = argparse.ArgumentParser(
         description="Upload mirrored PDFs into the Zotero records that already reference them.")
+    ap.add_argument("--version", action="version", version=f"offprint {__version__}")
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT,
                     help=f"mirror directory (default: {DEFAULT_OUT})")
     ap.add_argument("--yes", action="store_true",
@@ -545,7 +546,12 @@ def main() -> None:
     writer = ZoteroWriter(z)
 
     mode = "UPLOADING" if args.yes else "DRY RUN -- reading only, nothing is written"
-    print(f"offprint zotero_attach: {mode}")
+    # The version goes in the output because these runs are KEPT. The library
+    # session saved a dry-run log, then another after two fixes, and had to
+    # track which was which by commit hash in a message -- the same thing that
+    # made two hours of mirror-status.md indistinguishable in September, in a
+    # tool whose own output nobody thought of as a file.
+    print(f"offprint {__version__} zotero_attach: {mode}")
     print(f"  mirror  {out}")
     print(f"  records {len(zotero_keys)}\n")
 
