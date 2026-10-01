@@ -2157,7 +2157,7 @@ def main():
     check(prob_bo2 is not None,
           "and refuses unequal counts even then: ordering cannot invent a file")
     _p, prob5 = za.pair_attachments(one_local, [])  # noqa: F841 -- read below
-    check(prob5 and "no imported_file" in prob5,
+    check(prob5 and "no storage attachment left" in prob5,
           f"an archived file with nowhere to go is reported, not invented ({prob5})")
     check(za.pair_attachments([], one_item) == ([], None),
           "and a record with nothing archived is simply nothing to do")
@@ -2184,6 +2184,76 @@ def main():
     odd = za.archived_for(adir2, "Vanommeslaeghe2009Charmm")
     check([p_.name for p_ in odd] == ["Vanommeslaeghe2009Charmm.-_charmm_g"],
           f"a mangled extension is still that key's attachment 1 ({odd})")
+
+    print("\nzotero_attach takes a pairing a person decided by hand")
+
+    # 62 records cannot be paired by any rule and must not be guessed at.
+    # --pair-by-order is a bulk guess that is wrong for some of them. What was
+    # missing was any way to RECORD a decision, so they can be worked through a
+    # few at a time with the reason kept beside the choice.
+    pdir = tmp / "pairings"
+    pstate = mm.mirror_state_dir(pdir)
+    (pstate / "pairings.tsv").write_text(
+        "# decided by hand after reading the filenames, 2026-10-02\n"
+        "\n"
+        "Won2001Influence\tZK1\t2026-10-02\tfilename names Won, not Shan\n"
+        "Won2001Influence-2\tZK2\t2026-10-02\tthe supplement\n",
+        encoding="utf-8")
+    pm = za.load_pairings(pdir)
+    check(pm == {"Won2001Influence": "ZK1", "Won2001Influence-2": "ZK2"},
+          f"a stem and an attachment key are read back ({pm})")
+    check(za.load_pairings(tmp / "no-such") == {}, "and no file is no pairings")
+
+    wk = [{"key": "ZK1", "data": {"linkMode": "imported_file", "filename": "shan-ish.pdf"}},
+          {"key": "ZK2", "data": {"linkMode": "imported_file", "filename": "won-ish.pdf"}}]
+    wl = [Path("Won2001Influence.pdf"), Path("Won2001Influence-2.pdf")]
+    check(za.pair_attachments(wl, wk)[1] is not None,
+          "without a decision the record is still refused")
+    wp, wprob = za.pair_attachments(wl, wk, explicit=pm)
+    check(wprob is None and [it["key"] for _x, it in wp] == ["ZK1", "ZK2"],
+          f"with one, it is paired exactly as written -- against what the "
+          f"extensions and the ordering would both have said ({wprob})")
+
+    # A typo here must STOP the record. This file is the one place a human
+    # assertion overrides the tool's refusal to guess, so it is checked harder
+    # than anything the tool decides for itself.
+    _x, bad1 = za.pair_attachments(wl, wk, explicit={"Won2001Influence": "NOPE"})
+    check(bad1 and "not a storage attachment on this record" in bad1,
+          f"an attachment key that is not on the record is named, not ignored ({bad1})")
+
+    (pstate / "pairings.tsv").write_text("A\tZK1\nB\tZK1\n", encoding="utf-8")
+    import subprocess as _sp2
+    rc = _sp2.run([sys.executable, "-c",
+                   f"import sys; sys.path.insert(0, {str(Path(__file__).parent)!r});"
+                   "import zotero_attach as z;"
+                   f"z.load_pairings(__import__('pathlib').Path({str(pdir)!r}))"],
+                  capture_output=True, text=True)
+    check(rc.returncode != 0 and "one slot cannot take two files" in rc.stderr,
+          f"two stems claiming one attachment stops the run ({rc.stderr.strip()[:80]})")
+
+    (pstate / "pairings.tsv").write_text("JustAStem\n", encoding="utf-8")
+    rc2 = _sp2.run([sys.executable, "-c",
+                    f"import sys; sys.path.insert(0, {str(Path(__file__).parent)!r});"
+                    "import zotero_attach as z;"
+                    f"z.load_pairings(__import__('pathlib').Path({str(pdir)!r}))"],
+                   capture_output=True, text=True)
+    check(rc2.returncode != 0 and "need a stem and a Zotero attachment key" in rc2.stderr,
+          "and a line missing its key stops it too -- unlike removed.tsv, where "
+          "a bare stem is complete and tolerating it protects a file")
+
+    # Partial coverage: decide one, let the rules settle the rest.
+    half = [{"key": "H1", "data": {"linkMode": "imported_file", "filename": "a.pdf"}},
+            {"key": "H2", "data": {"linkMode": "imported_file", "filename": "b.cif"}},
+            {"key": "H3", "data": {"linkMode": "imported_file", "filename": "c.pdf"}}]
+    hl = [Path("K5.pdf"), Path("K5-2.cif"), Path("K5-3.pdf")]
+    hp, hprob = za.pair_attachments(hl, half, explicit={"K5-3": "H3"})
+    check(hprob is None and [it["key"] for _x, it in hp] == ["H3", "H1", "H2"],
+          f"one decision unblocks the two the extensions can then settle ({hprob})")
+
+    cand = za.describe_candidates([adir2 / "Abrams2013Enhanced.pdf"], wk)
+    text = "\n".join(cand)
+    check("ZK1" in text and "shan-ish.pdf" in text and "imported_file" in text,
+          f"the refusal prints the keys and filenames a decision needs\n{text}")
 
     print("\nzotero_attach counts records, not lines, and makes the total close")
 

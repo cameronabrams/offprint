@@ -81,6 +81,34 @@ left exactly where it is; the file withholds a fetch and nothing else. Keeping
 it that way matters — a list of filenames the tool consults is precisely how a
 third archive-eroding path would arrive.
 
+### Pairing an attachment Zotero cannot be matched to automatically
+
+`zotero_attach.py` refuses to guess which archived file belongs to which Zotero
+attachment when a record has several and nothing distinguishes them. The refusal
+prints what the decision needs: each archived file with its size, and each Zotero
+attachment with its key, filename, link mode and content type. Filenames carry
+author surnames and subject words, which is usually enough to see the answer.
+
+`.mirror/pairings.tsv` is where the answer goes — one line per attachment, the
+stem and the Zotero attachment key, with a date and a reason if you want them:
+
+```
+# decided by hand after reading the filenames, 2026-10-02
+Won2001Influence	ZK1AB2CD	2026-10-02	filename names Won, not Shan
+Won2001Influence-2	ZK3EF4GH	2026-10-02	the supplement
+```
+
+A stem named here bypasses every automatic rule, so the file is checked strictly:
+a key that is not on that record, two stems claiming one attachment, or a line
+missing its key each stop the run rather than being skipped. This is the one
+place a human assertion overrides the tool's refusal to guess, and a typo in it
+would otherwise become a wrong upload.
+
+Partial coverage is fine and is usually the quickest route — deciding one
+attachment on a record often leaves the rest unique enough for the extension rule
+to settle. Re-run after each few decisions; an attachment already uploaded is
+skipped.
+
 Two smaller traps worth knowing. A short extract is not evidence of a short
 paper: some scans are dozens of pages of one repeated permission stamp, and the
 known ones are listed in `stamp-only-extracts.tsv`. And every attachment on a

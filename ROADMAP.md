@@ -377,6 +377,48 @@ missing. Every one was found by someone running the tool and adding the numbers
 up by hand, none by reading the code. That is the argument for the tool doing
 the addition itself, which it now does.
 
+### The 132 stranded files are the library session's job, and it now has the tool
+
+Cameron's line, 2026-10-02: resolving them belongs to `literature`, "once it
+knows it has the tools it needs from you to accomplish" it. It did not, and the
+gap was specific rather than general.
+
+The 132 are two different problems and only one of them is a pairing problem.
+
+**69 records have no archived file at all.** Nothing can be uploaded for them
+because nothing exists locally. That is acquisition, not pairing, and the tools
+for it already exist — `get_pdf.py`, the fetch queue, `inbox.py`. Nothing new is
+needed here, and building something would have been motion.
+
+**62 records cannot be paired by any rule**, holding the other ~125 files. The
+tool could refuse, and could guess in bulk with `--pair-by-order`, and had
+nothing in between. There was **no way to record a decision once a person had
+made one** — so the only routes were all-or-nothing, and the bulk route is known
+to be wrong for some of them.
+
+`.mirror/pairings.tsv` closes that, beside `removed.tsv` and for the same
+reason: a human decision that has to travel with the library and outlive any
+one session. One `stem<TAB>attachmentKey` line, date and reason optional. A
+stem named there bypasses every rule, and **partial coverage is the quickest
+route** — deciding one attachment on a record often leaves the rest unique
+enough for the extension rule to settle, which a test asserts directly.
+
+The other half of the gap was that a refusal printed no way to act on it.
+"2 archived against 2, no unambiguous pairing" tells a reader a decision exists
+and gives them nothing to decide with. It now prints every archived file with
+its size and every Zotero attachment with its **key**, filename, link mode and
+content type — the key being what a `pairings.tsv` line has to name, and the
+filename being what the decision actually turns on.
+
+**This file is checked harder than anything the tool decides for itself**, and
+deliberately so: it is the one place a human assertion overrides the tool's
+refusal to guess. A key that is not on that record, two stems claiming one
+attachment, or a line missing its key each stop the run. That is the opposite of
+`removed.tsv`, where a bare stem is a complete entry and tolerating a sloppy line
+*protects* a file — there, strictness would cause the harm it exists to prevent.
+Same shape of file, opposite failure direction, and the reason is which way a
+mistake cuts.
+
 Once this has run, the exposure in item 1 changes shape: the PDFs stop being a
 single local copy excluded from every replica, and Zotero becomes a second place
 they exist. That does not retire `<out>/pdf/` — a mirror whose bytes live only

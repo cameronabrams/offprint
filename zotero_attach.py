@@ -49,6 +49,15 @@ Resumable by construction, twice over: an attachment that already reports an
 it already holds with `{"exists": 1}`, which is honoured as success. An
 interrupted run is finished by running it again.
 
+When a record cannot be paired, the refusal prints the candidates — every
+archived file with its size, every Zotero attachment with its key, filename,
+link mode and content type — and `.mirror/pairings.tsv` is where a decision
+made from that gets written: one `stem<TAB>attachmentKey` line, with the reason
+beside it. A stem named there bypasses every rule below, and partial coverage is
+fine: deciding one attachment on a record often lets the rules settle the rest.
+That is the whole loop for working through the records no rule can resolve, a
+few at a time, resumably.
+
 Pairing is the one place this can be wrong in a way nobody notices. A record
 with one archived file and one Zotero attachment is unambiguous and is the
 overwhelming majority. A record with several is paired on file extension only
@@ -127,12 +136,75 @@ def storage_attachments(children: list) -> list:
             if (c.get("data") or {}).get("linkMode") in STORAGE_MODES]
 
 
+def load_pairings(out: Path) -> dict:
+    """Pairings a person has decided by hand: `<stem>` -> Zotero attachment key.
+
+    `.mirror/pairings.tsv`, beside `removed.tsv`, travelling with the library
+    for the same reason. Format is `stem<TAB>attachmentKey<TAB>date<TAB>why`,
+    `#` comments and blank lines ignored; only the first two fields are read.
+
+    This exists because 62 records cannot be paired by any rule and should not
+    be guessed at. `--pair-by-order` is a bulk guess and is wrong for some of
+    them -- it would hand `Won2001Influence` a filename naming Shan. What was
+    missing was any way to *record* a decision once a person had made it, so
+    the 62 can be worked through a few at a time, resumably, with the reason
+    kept next to the choice.
+
+    A stem named here bypasses every heuristic. That is the point, and it is
+    also why the checks around it are strict rather than forgiving: this file
+    is the one place a human assertion overrides the tool's refusal to guess,
+    so a typo in it must stop the record rather than quietly become a wrong
+    upload.
+    """
+    path = mirror_state_dir(out) / "pairings.tsv"
+    if not path.exists():
+        return {}
+    out_map, seen = {}, {}
+    for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = [f.strip() for f in line.split("\t")]
+        if len(parts) < 2 or not parts[0] or not parts[1]:
+            sys.exit(f"{path}:{lineno}: need a stem and a Zotero attachment key, "
+                     f"separated by a tab -- got {line!r}")
+        stem, key = parts[0], parts[1]
+        if stem in out_map:
+            sys.exit(f"{path}:{lineno}: {stem} is paired twice")
+        if key in seen:
+            sys.exit(f"{path}:{lineno}: attachment {key} is claimed by both "
+                     f"{seen[key]} and {stem} -- one slot cannot take two files")
+        out_map[stem], seen[key] = key, stem
+    return out_map
+
+
+def describe_candidates(locals_: list, items: list) -> list:
+    """Everything needed to write a `pairings.tsv` line, for one record.
+
+    A failure message that says "2 archived against 2, no unambiguous pairing"
+    tells a reader there is a decision to make and nothing with which to make
+    it. The attachment keys are what the decision has to name, and the
+    filenames are what it gets decided on -- they carry author surnames and
+    subject words, which is how a person sees in seconds that a Won paper is
+    being offered a Shan filename.
+    """
+    lines = ["archived:"]
+    lines += [f"    {p.name}  ({p.stat().st_size:,} bytes)" for p in locals_]
+    lines.append("zotero:")
+    for it in items:
+        d = it.get("data") or {}
+        key = it.get("key") or d.get("key")
+        lines.append(f"    {key}  {d.get('filename')!r}  "
+                     f"{d.get('linkMode')}  {d.get('contentType')!r}")
+    return lines
+
+
 def zotero_suffix(item: dict) -> str:
     return Path((item.get("data") or {}).get("filename") or "").suffix.lower()
 
 
-def pair_attachments(locals_: list, items: list,
-                     by_order: bool = False) -> tuple[list, str | None]:
+def pair_attachments(locals_: list, items: list, by_order: bool = False,
+                     explicit: dict | None = None) -> tuple[list, str | None]:
     """Pair archived files with Zotero attachment items.
 
     Returns `(pairs, problem)`. A non-None `problem` means report it and upload
@@ -162,32 +234,60 @@ def pair_attachments(locals_: list, items: list,
     because the alternative for ~61 records is doing them by hand, and the dry
     run prints the pairing it would use so a person can check a sample first.
     """
+    explicit = explicit or {}
     if not locals_:
         return [], None
-    if not items:
-        return [], (f"{len(locals_)} archived file(s) but no imported_file "
-                    "attachment in Zotero to put them in")
-    if len(locals_) == 1 and len(items) == 1:
-        return [(locals_[0], items[0])], None
 
-    pairs, claimed = [], set()
+    # A hand-written pairing wins over every rule below, and a wrong one stops
+    # the record rather than becoming a wrong upload.
+    by_key = {}
+    for idx, it in enumerate(items):
+        k = it.get("key") or (it.get("data") or {}).get("key")
+        if k:
+            by_key[k] = idx
+    fixed, claimed, rest = [], set(), []
     for path in locals_:
-        cands = [i for i, it in enumerate(items)
-                 if zotero_suffix(it) == path.suffix.lower() and i not in claimed]
+        want = explicit.get(stem_of(path))
+        if want is None:
+            rest.append(path)
+            continue
+        idx = by_key.get(want)
+        if idx is None:
+            return [], (f"pairings.tsv sends {stem_of(path)} to attachment "
+                        f"{want}, which is not a storage attachment on this record")
+        if idx in claimed:
+            return [], (f"pairings.tsv sends more than one file to attachment {want}")
+        claimed.add(idx)
+        fixed.append((path, items[idx]))
+
+    left = [it for i, it in enumerate(items) if i not in claimed]
+    if not rest:
+        return fixed, None
+    if not left:
+        return [], (f"{len(rest)} archived file(s) with no storage attachment "
+                    "left in Zotero to put them in")
+    if len(rest) == 1 and len(left) == 1:
+        return fixed + [(rest[0], left[0])], None
+
+    pairs, taken = [], set()
+    for path in rest:
+        cands = [i for i, it in enumerate(left)
+                 if zotero_suffix(it) == path.suffix.lower() and i not in taken]
         if len(cands) != 1:
             pairs = None
             break
-        claimed.add(cands[0])
-        pairs.append((path, items[cands[0]]))
+        taken.add(cands[0])
+        pairs.append((path, left[cands[0]]))
     if pairs is not None:
-        return pairs, None
+        return fixed + pairs, None
 
-    local_suffixes = [p.suffix.lower() for p in locals_]
-    zotero_suffixes = [zotero_suffix(it) for it in items]
-    modes = [(it.get("data") or {}).get("linkMode") for it in items]
-    if by_order and len(locals_) == len(items):
-        return list(zip(locals_, items)), None
-    return [], (f"{len(locals_)} archived against {len(items)} in Zotero, no "
+    if by_order and len(rest) == len(left):
+        return fixed + list(zip(rest, left)), None
+
+    local_suffixes = [p.suffix.lower() for p in rest]
+    zotero_suffixes = [zotero_suffix(it) for it in left]
+    modes = [(it.get("data") or {}).get("linkMode") for it in left]
+    return [], (f"{len(rest)} archived against {len(left)} in Zotero, no "
                 f"unambiguous pairing (archive {local_suffixes}, "
                 f"zotero {zotero_suffixes}, modes {modes})")
 
@@ -436,6 +536,9 @@ def main() -> None:
         zotero_keys = {k: v for k, v in zotero_keys.items() if v in wanted}
 
     removed = load_removed(out)
+    explicit = load_pairings(out)
+    if explicit:
+        print(f"  pairings.tsv: {len(explicit)} attachment(s) paired by hand")
 
     api_key, user_id = load_zotero_credentials()
     z = Zotero(api_key, user_id)
@@ -485,9 +588,13 @@ def main() -> None:
 
         children = z.paged(f"items/{zkey}/children", quiet=True)
         items = storage_attachments(children)
-        pairs, problem = pair_attachments(locals_, items, by_order=args.pair_by_order)
+        pairs, problem = pair_attachments(locals_, items,
+                                          by_order=args.pair_by_order,
+                                          explicit=explicit)
         if problem:
-            hints = []
+            # Everything a person needs to write a pairings.tsv line, printed
+            # where the refusal is, rather than leaving them to go and look.
+            hints = describe_candidates(locals_, items)
             # Show the pairing --pair-by-order WOULD use, so the dry run is the
             # place that decision gets checked rather than taken on trust. The
             # filenames carry author names, which is what makes a person able to
