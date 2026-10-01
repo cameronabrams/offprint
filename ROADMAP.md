@@ -119,30 +119,32 @@ annotations and findings all work on a generic document/file/annotation shape.
 - [ ] Abstract the client behind the small interface the rest of the code
       already implies: list documents, list files, fetch file, list annotations.
 
-      **"fetch file" is not implementable against Zotero, measured 2026-10-01.**
-      In a 12-item sample of the `zotero:` half of `citekeys.json`, every
-      `imported_file` attachment came back with `md5: None` — 12 of 12, no bytes
-      in zotero.org storage. That matches what Cameron said the same day: the
-      library is live on Zotero without any PDFs, all PDFs are local, and
-      uploading them is not authorized.
+      **CORRECTED 2026-10-02. The first version of this item said Zotero holds
+      no attachment bytes at all, and it was wrong by 39%.** The claim rested on
+      a 12-item sample in which every attachment reported `md5: None`, and then
+      on a whole-library dry run reporting "already in Zotero: 0". The live
+      upload answered `{"exists": 1}` for **1,060 of 2,608**.
 
-      So the interface is not "fetch file". It is **locate bytes**, and for
-      Zotero the only place they exist is `<out>/pdf/` — 2,740 files that
-      `--backfill` evacuated from Mendeley. `find_archived()` is therefore
-      load-bearing rather than an optimisation, and anything that falls back to
-      the network on a miss fetches nothing, or fetches from a Mendeley account
-      that has been downgraded to the free tier. A miss should be loud (item 2),
-      because under Zotero it is unrecoverable rather than slow.
+      The error is one inference: **`md5: None` in item metadata does not mean
+      no bytes in storage.** It means the item does not record a file. Only the
+      upload-authorization request consults storage, and a dry run never makes
+      one — so the dry run could not have known, and its zero was a restatement
+      of the same unreliable field rather than a second source. The caveat
+      originally kept beside the number ("`md5: None` strictly means 'not in
+      zotero.org storage'") was itself the mistaken reading, stated as the
+      careful one. The library session found this and recorded it as its own.
 
-      The adapter must also carry each attachment's **filename**, not just an id:
-      the archive is named `<citekey><real suffix>`, and the suffix is derived
-      from that filename. An adapter exposing only an id and a download URL
-      cannot find the bytes it needs.
+      What survives: the adapter must carry each attachment's **filename**, not
+      just an id, because the archive is named `<citekey><real suffix>` and the
+      suffix comes from that filename. An adapter exposing only an id and a
+      download URL cannot find the bytes it needs.
 
-      Caveat kept with the number: 12 of 2,739 is a sample, and `md5: None`
-      strictly means "not in zotero.org storage" rather than "nowhere". There is
-      no Zotero install on panacea, so the reading is consistent with Cameron's
-      statement but inferred from it rather than independent of it.
+      What does not survive: "the local archive is the only source of bytes."
+      Zotero could already serve a large minority of them before the upload, and
+      after it, all 2,608. `find_archived()` is resilience and bandwidth, not
+      the sole supply. `<out>/pdf/` is still the copy that is not behind a
+      service, which is the reason it exists — but that is an argument about
+      durability, not about availability, and the two were run together here.
 - [ ] Decide what "primary" means for the writing scripts (`inbox.py`,
       `mendeley_push.py`, `mendeley_edit.py`). They may only ever target one
       account; pointing them at the wrong one is the expensive mistake.
@@ -340,6 +342,40 @@ The filenames carry author names and subject words; a person reads that in
 seconds. The agreement statistic that this replaced could not have shown it, and
 could not have been computed at all. If the 62 are ever to be resolved
 automatically, that filename text is the signal to use — not ordering.
+
+### The upload ran, 2026-10-02
+
+Cameron authorized it directly, to the library session, after declining to have
+it lifted by relay through here. **Done and verified independently:** a random
+sample of 30 single-attachment records compared Zotero's md5 against the local
+file's — 30 of 30 match, 0 mismatch, 0 missing.
+
+    uploaded 1,548 · already in Zotero 1,060 · patched 2,599
+    1,548 + 1,060 + 132 stranded + 0 withheld = 2,740, the archive exactly
+
+One transient: `authorize` on `PMNRQQQJ` returned HTTP 502, was retried once and
+succeeded. `Zheng2008Random` carries its md5. The retry path earned itself.
+
+**A fourth counter defect, same family as the other three.** The summary printed
+`uploaded: 1548 (4,246,587,930 bytes)` — but that byte total accumulated for
+every file the run read and offered, including the 1,060 Zotero already had. The
+library session proved it arithmetically rather than by reading the code: the dry
+run over 2,608 files reported 4,250,487,080 bytes, the live run 4,246,587,930,
+and the difference of exactly 3,899,150 is the six files already done under
+`--key` and `--limit 5`, which `needs_upload()` then skipped before the read. So
+the figure was bytes *considered*, attached to a count of files *sent*. Bytes
+actually uploaded were not recoverable from the output at all.
+
+Now two totals: `sent_bytes`, incremented only after a successful transfer, and
+the read-and-offered total, labelled as such. And a dry run says plainly that it
+cannot know how much would really be sent, because it never authorizes.
+
+**Four counting defects in one tool in two days** — a silent zero, a measurement
+that could not fire, lines counted as records, and a byte total labelled as a
+different byte total. Three of the four read as plausible and only one looked
+missing. Every one was found by someone running the tool and adding the numbers
+up by hand, none by reading the code. That is the argument for the tool doing
+the addition itself, which it now does.
 
 Once this has run, the exposure in item 1 changes shape: the PDFs stop being a
 single local copy excluded from every replica, and Zotero becomes a second place

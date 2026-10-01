@@ -262,7 +262,20 @@ def item_version(item: dict) -> int | None:
 
 
 def needs_upload(item: dict) -> bool:
-    """An attachment with an md5 already has its bytes in Zotero's storage."""
+    """Worth offering: this item's metadata records no file.
+
+    **It is not a test for whether Zotero holds the bytes, and reading it as
+    one was wrong.** On 2026-10-01, 1,060 attachments — 39% of the library —
+    passed this check and were then answered `{"exists": 1}` by the
+    authorization request, which is the only call that consults storage.
+    `md5: None` in item metadata means the item does not record a file, not
+    that no file is there.
+
+    So this is a cheap pre-filter that avoids reading a file off disk, and
+    `{"exists": 1}` is the authority. A dry run, which never authorizes,
+    therefore cannot report how much would really be sent — and must say so
+    rather than print a number that looks like it.
+    """
     return not (item.get("data") or {}).get("md5")
 
 
@@ -434,7 +447,12 @@ def main() -> None:
     print(f"  records {len(zotero_keys)}\n")
 
     uploaded = existing = skipped_removed = patched = 0
-    would_bytes = 0
+    # Two totals, because one of them was labelled as the other. `would_bytes`
+    # accumulates for every file this run READ and offered; `sent_bytes` only
+    # for bytes that actually went over the wire. On the 2026-10-01 live run
+    # 1,060 files were read, offered, and answered `{"exists": 1}` -- so a
+    # single counter printed beside "uploaded: 1548" described 2,608 files.
+    would_bytes = sent_bytes = 0
     # Three separate things, deliberately not one list. They were one list
     # until 2026-10-01, and `len()` of it was printed as a count of RECORDS --
     # but it also held the indented `--pair-by-order` hint lines, so a run with
@@ -529,6 +547,7 @@ def main() -> None:
                     existing += 1
                 else:
                     writer.put_bytes(auth, data)
+                    sent_bytes += len(data)
                     writer.register(item_key, auth["uploadKey"])
                     uploaded += 1
                 time.sleep(0.2)
@@ -539,7 +558,16 @@ def main() -> None:
             break
 
     verb = "uploaded" if args.yes else "would upload"
-    print(f"\n{verb}: {uploaded}  ({would_bytes:,} bytes)")
+    if args.yes:
+        print(f"\nuploaded: {uploaded}  ({sent_bytes:,} bytes sent)")
+        print(f"read and offered: {would_bytes:,} bytes across "
+              f"{uploaded + existing} file(s) -- Zotero already held the rest")
+    else:
+        print(f"\nwould upload: {uploaded}  ({would_bytes:,} bytes to read)")
+        print("  a dry run cannot know how many of these Zotero already holds: "
+              "`md5: None` in item metadata does not mean no bytes in storage, "
+              "and only the authorization request consults storage. On "
+              "2026-10-01 that was 1,060 of 2,608.")
     print(f"already in Zotero: {existing}")
     if not args.no_metadata:
         print(f"{'patched' if args.yes else 'would patch'}: {patched} "
