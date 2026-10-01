@@ -2185,6 +2185,34 @@ def main():
     check([p_.name for p_ in odd] == ["Vanommeslaeghe2009Charmm.-_charmm_g"],
           f"a mangled extension is still that key's attachment 1 ({odd})")
 
+    print("\nzotero_attach counts records, not lines, and makes the total close")
+
+    # The run on 8970622: 69 records with no archived file, 62 that could not be
+    # paired, 61 of which also carried a --pair-by-order hint line. The old code
+    # held all of that in ONE list and printed its len() as a record count: 123,
+    # where the truth is 131. Under by 8, close enough to read as right, and in
+    # the direction that hides records rather than inventing them.
+    no_arch = [f"Rec{i} (Z{i})" for i in range(69)]
+    unpaired = [(f"Bad{i} (Z{i}): 2 archived against 2", ["--pair-by-order would use: ..."])
+                for i in range(61)]
+    unpaired.append(("Shan2011How (ZS): 2 archived against 3", []))
+    lines = za.summary_lines(uploaded=2608, existing=0, stranded_files=125,
+                             withheld=0, total_archived=2733,
+                             no_archive=no_arch, unpaired=unpaired)
+    joined = "\n".join(lines)
+    check("records that uploaded nothing: 131 = 69" in joined,
+          f"the record count is 131, not the 123 that counting lines gave\n{joined}")
+    check(len(unpaired) == 62 and "+ 62 that could not be paired" in joined,
+          "and a hint line attached to a record does not become a record")
+
+    # The file arithmetic must close, and the tool says whether it does rather
+    # than leaving a reader to add it up.
+    check("reconciles against 2733" in joined, f"a closing total says so\n{joined}")
+    off = za.summary_lines(uploaded=10, existing=0, stranded_files=0, withheld=0,
+                           total_archived=12, no_archive=[], unpaired=[])
+    check(any("does NOT reconcile" in l_ and "2 unaccounted" in l_ for l_ in off),
+          f"and a total that does not close is named, not rounded past ({off})")
+
     print("\nzotero_attach speaks the v3 upload protocol exactly")
 
     class FakeResp:

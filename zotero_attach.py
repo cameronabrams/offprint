@@ -221,6 +221,38 @@ def plan_metadata(item: dict, path: Path, is_pdf: bool) -> dict:
     return want
 
 
+def summary_lines(uploaded: int, existing: int, stranded_files: int,
+                  withheld: int, total_archived: int,
+                  no_archive: list, unpaired: list) -> list:
+    """The closing report, as text, so the arithmetic in it can be tested.
+
+    It is here rather than inline in `main` because the counting is exactly what
+    went wrong: `len()` was taken of a list that held one entry per record AND
+    one per hint line, and printed as a number of records. 62 records with 61
+    hints announced 123. The real figure was 131 -- so it under-reported, which
+    hides records rather than inventing them, and it landed close enough to the
+    truth to read as right.
+
+    Two rules come out of that. A count of records is taken from a list that
+    holds only records. And the file arithmetic has to **close**: every archived
+    file is uploaded, already present, stranded in a record that could not be
+    paired, or withheld by `removed.tsv`. Saying whether it closes is the tool's
+    job, not the reader's.
+    """
+    accounted = uploaded + existing + stranded_files + withheld
+    lines = [f"archived files: {uploaded} to upload + {existing} already present "
+             f"+ {stranded_files} stranded + {withheld} withheld = {accounted}"]
+    if accounted != total_archived:
+        lines.append(f"  ! does NOT reconcile: {total_archived} archived file(s) "
+                     f"for these records, {abs(total_archived - accounted)} unaccounted")
+    else:
+        lines.append(f"  reconciles against {total_archived} archived file(s)")
+    lines.append(f"records that uploaded nothing: {len(no_archive) + len(unpaired)} "
+                 f"= {len(no_archive)} with no archived file "
+                 f"+ {len(unpaired)} that could not be paired")
+    return lines
+
+
 def item_version(item: dict) -> int | None:
     """The version PATCH must be told, so a concurrent edit loses rather than us."""
     v = item.get("version")
@@ -403,14 +435,24 @@ def main() -> None:
 
     uploaded = existing = skipped_removed = patched = 0
     would_bytes = 0
-    problems: list = []
-    no_archive: list = []
+    # Three separate things, deliberately not one list. They were one list
+    # until 2026-10-01, and `len()` of it was printed as a count of RECORDS --
+    # but it also held the indented `--pair-by-order` hint lines, so a run with
+    # 62 unpaired records and 61 hints announced "123 record(s)". The true
+    # figure was 131. It read as plausible because it landed near the right
+    # answer, and it under-reported, which is the direction that hides records
+    # rather than inventing them.
+    unpaired: list = []       # (headline, [hint lines]) -- one entry per RECORD
+    no_archive: list = []     # records with nothing in pdf/ at all
+    write_errors: list = []   # per-attachment, not per-record
+    stranded_files = total_archived = 0
 
     for n, (zkey, citekey) in enumerate(sorted(zotero_keys.items(), key=lambda kv: kv[1]), 1):
         locals_ = [p for p in archived_for(pdf_dir, citekey)
                    if stem_of(p) not in removed]
         dropped = [p for p in archived_for(pdf_dir, citekey) if stem_of(p) in removed]
         skipped_removed += len(dropped)
+        total_archived += len(locals_) + len(dropped)
         if not locals_:
             # A record with nothing archived uploads nothing, and until
             # 2026-10-01 said nothing either: the problem list was keyed on
@@ -427,13 +469,18 @@ def main() -> None:
         items = storage_attachments(children)
         pairs, problem = pair_attachments(locals_, items, by_order=args.pair_by_order)
         if problem:
-            problems.append(f"{citekey} ({zkey}): {problem}")
+            hints = []
             # Show the pairing --pair-by-order WOULD use, so the dry run is the
-            # place that decision gets checked rather than taken on trust.
+            # place that decision gets checked rather than taken on trust. The
+            # filenames carry author names, which is what makes a person able to
+            # see that a Won paper is being offered a Shan filename -- and what
+            # no summary statistic could have shown.
             if not args.pair_by_order and len(locals_) == len(items):
                 guess = ", ".join(f"{p_.name} -> {(it.get('data') or {}).get('filename')!r}"
                                   for p_, it in zip(locals_, items))
-                problems.append(f"    --pair-by-order would use: {guess}")
+                hints.append(f"--pair-by-order would use: {guess}")
+            unpaired.append((f"{citekey} ({zkey}): {problem}", hints))
+            stranded_files += len(locals_)
             continue
 
         for path, item in pairs:
@@ -454,13 +501,13 @@ def main() -> None:
                 else:
                     version = item_version(item)
                     if version is None:
-                        problems.append(f"{citekey} ({item_key}): no item version, "
-                                        "cannot PATCH safely")
+                        write_errors.append(f"{citekey} ({item_key}): no item "
+                                            "version, cannot PATCH safely")
                     elif writer.patch_item(item_key, version, fields):
                         print(f"  patched  {citekey} -> {item_key}  {shown}", flush=True)
                         patched += 1
                     else:
-                        problems.append(
+                        write_errors.append(
                             f"{citekey} ({item_key}): 412, the item changed since "
                             "this run read it -- left alone, re-run to pick it up")
                         continue
@@ -499,6 +546,14 @@ def main() -> None:
               "(filename and content type made to match the archived file)")
     if skipped_removed:
         print(f"skipped as deliberately removed (.mirror/removed.tsv): {skipped_removed}")
+    # The numbers have to close, and saying so is the tool's job rather than
+    # the reader's. Every archived file is uploaded, already present, stranded
+    # in a record that could not be paired, or withheld by removed.tsv.
+    print()
+    for line in summary_lines(uploaded, existing, stranded_files, skipped_removed,
+                              total_archived, no_archive, unpaired):
+        print(line)
+
     if no_archive:
         print(f"\nno archived file at all -- nothing to upload, and this is the "
               f"only place they are named ({len(no_archive)}):")
@@ -507,12 +562,20 @@ def main() -> None:
 
     # A pass that examines nothing does not get to report success, and neither
     # does one that silently leaves records out.
-    if problems:
-        print(f"\nREPORTED, not guessed -- {len(problems)} record(s) uploaded nothing:")
-        for line in problems:
-            print(f"  ! {line}")
+    if unpaired:
+        print(f"\nREPORTED, not guessed -- {len(unpaired)} record(s), "
+              f"{stranded_files} file(s):")
+        for headline, hints in unpaired:
+            print(f"  ! {headline}")
+            for hint in hints:
+                print(f"      {hint}")
     else:
         print("\nno ambiguous records")
+
+    if write_errors:
+        print(f"\nwrite errors ({len(write_errors)} attachment(s), not records):")
+        for line in write_errors:
+            print(f"  ! {line}")
 
     if not args.yes:
         print("\nThis was a dry run. Nothing was written -- no upload, no PATCH. "

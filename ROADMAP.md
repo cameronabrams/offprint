@@ -301,7 +301,45 @@ apart.
 
 - [ ] **UNVERIFIED: whether Zotero accepts an upload against an `imported_url`
       item.** Nobody has tested it, because testing it is a write. The first
-      live run does one alone with `--key` before the other 2,581.
+      live run does one alone with `--key` before the rest.
+- [x] **The headline counter reported lines as records.** On `8970622`: 2,608
+      to upload, 4,250,487,080 bytes, and the arithmetic closes at 2,740. But
+      the header announced "123 record(s) uploaded nothing" where the truth is
+      **131** — 69 with no archived file plus 62 that could not be paired, no
+      overlap.
+
+      One list held both the per-record headline and the indented
+      `--pair-by-order` hint lines, and `len()` of it was printed as a count of
+      records: 62 records plus 61 hints is 123. It **under**-reported, which is
+      the direction that hides records rather than inventing them, and it landed
+      close enough to the real figure to read as right. The third instance today
+      of the same family, and the first where the number was present and wrong
+      rather than absent.
+
+      Two rules out of it, both now enforced by a test. A count of records comes
+      from a list holding only records — `unpaired`, `no_archive` and
+      `write_errors` are three lists because they are three different things,
+      and the last is per-attachment and must not be added to a record count.
+      And **the file arithmetic has to close**: every archived file is uploaded,
+      already present, stranded, or withheld, and the tool says whether that
+      sums to what is in `pdf/` rather than leaving a reader to check. The
+      library session did that addition by hand and that is how this was caught.
+
+**An honest negative, recorded because a fix with no instances is still worth
+distinguishing from one that repaired something.** Zero records in this library
+hold both an `imported_file` and an `imported_url`, so the confident-wrong-
+pairing hazard was real in principle and had no instances here. It was checkable
+only because the failure message prints the link modes — which is the argument
+for printing them.
+
+**And the `--pair-by-order` hint lines earned their place.** The library session
+could see that `Brenner1990Empirical` would pair correctly, and that
+`Won2001Influence` would hand a Won paper a Shan filename, and that
+`Theodorou1989Variablea` would pair melt-surfaces against melt-solid-interfaces.
+The filenames carry author names and subject words; a person reads that in
+seconds. The agreement statistic that this replaced could not have shown it, and
+could not have been computed at all. If the 62 are ever to be resolved
+automatically, that filename text is the signal to use — not ordering.
 
 Once this has run, the exposure in item 1 changes shape: the PDFs stop being a
 single local copy excluded from every replica, and Zotero becomes a second place
