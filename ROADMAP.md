@@ -167,6 +167,60 @@ annotations and findings all work on a generic document/file/annotation shape.
 
 ---
 
+## 11. Getting the PDFs into Zotero — `zotero_attach.py`, built 2026-10-01
+
+Cameron bought the 6 GB tier and granted write on the existing API key the same
+day. The archive is 2,740 files and 4,468,935,079 bytes — 4.47 GB, 4.16 GiB —
+so it fits either way the tier is counted.
+
+**This is smaller than it sounds, because the attachment items already exist.**
+The 09-28 import created every one as `imported_file` with a parent, a filename,
+a content type and `md5: None`. So the job is supplying bytes for items that are
+already linked, not creating 2,740 attachments. `zotero_attach.py` **never
+creates one**: where Zotero has no `imported_file` child, it reports. Inventing
+an item is a different kind of write and nobody asked for it.
+
+Protocol verified against Zotero's own docs on the day rather than written from
+memory: authorization POST with `If-None-Match: *`, then `prefix + bytes +
+suffix` to the returned URL under the content type it names, then a registration
+POST carrying the upload key. `mtime` is milliseconds; the docs say so twice and
+seconds would be accepted and wrong.
+
+**Pairing is the one place this can be wrong without anyone noticing.** 71
+archived files carry a `-N` suffix across 62 records. One archived file against
+one attachment is unambiguous and covers the rest. Several are paired on file
+extension only where that is unique on both sides and the two sets agree;
+anything else is **reported, not guessed**, which is the rule that took
+`zotero_migrate.py` from 98.5% to 2,739 of 2,739. A wrong pairing files one
+paper's PDF under another's citation key, and nothing downstream would ever say
+so.
+
+Zotero's child order is never used to decide anything. It is *measured*: on
+every record paired by extension, the run reports whether child order would have
+agreed. Enough agreement and index order becomes a defensible fallback for the
+records that cannot be paired at all — but that is a later decision made on
+evidence, not a shortcut taken now.
+
+- [ ] **The first live run is `literature`'s**, and should start with `--limit`
+      or a single `--key`. A dry run performs no write at all: it stops before
+      the authorization, which is itself a POST.
+- [ ] **Decide what to do about `Vanommeslaeghe2009Charmm`.** Its Zotero
+      attachment declares `application/octet-stream` and a filename ending
+      `.-_charmm_g`. Uploading PDF bytes under that name leaves Zotero holding a
+      PDF it will not treat as one. Fixing it is a PATCH on the item's
+      `contentType` and `filename`, which this script deliberately does not do —
+      it uploads bytes, it does not edit metadata.
+- [ ] **Decide whether to keep Mendeley's filenames at all.** The script uses
+      the filename the Zotero item already declares, which is the least
+      surprising thing and keeps this run to one kind of change. Renaming 2,740
+      attachments to `<citekey>.pdf` is tidier and is a separate decision.
+
+Once this has run, the exposure in item 1 changes shape: the PDFs stop being a
+single local copy excluded from every replica, and Zotero becomes a second place
+they exist. That does not retire `<out>/pdf/` — a mirror whose bytes live only
+behind a service is the thing this tool exists to avoid — but it does end the
+period where one disk on panacea is the only copy.
+
 ## 2. Make a failing refresh loud
 
 **Why.** The failure this tool is least equipped to notice is silent

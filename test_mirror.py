@@ -75,6 +75,9 @@ FILES_BY_DOC = {"d1": [{"id": "x1", "mime_type": "application/pdf", "filehash": 
 fails = []
 
 
+import hashlib as _hashlib
+
+
 def check(cond, msg):
     print(("  ok   " if cond else "  FAIL ") + msg)
     if not cond:
@@ -2066,6 +2069,126 @@ def main():
           "a running head at a steady LINE is confirmed though the characters drift")
     check(fnd.confirm_offset(HEAD, 2, 2899) is None,
           "and that reading still refuses an off-by-one claim")
+
+    print("\nzotero_attach: pairing, and the protocol it speaks")
+    import zotero_attach as za
+
+    # 149 linked_url bookmarks came across in the migration. They are links, not
+    # attachments, and counting them is how the import's 2,894 became 2,745.
+    kids = [{"key": "A1", "data": {"linkMode": "imported_file", "filename": "x.pdf"}},
+            {"key": "A2", "data": {"linkMode": "linked_url"}},
+            {"key": "A3", "data": {"linkMode": "imported_url", "filename": "y.pdf"}}]
+    got_if = za.imported_files(kids)
+    check([c["key"] for c in got_if] == ["A1"],
+          "only imported_file children can receive bytes")
+
+    one_local = [Path("K1.pdf")]
+    one_item = [{"key": "A1", "data": {"linkMode": "imported_file", "filename": "orig.pdf"}}]
+    pairs, prob = za.pair_attachments(one_local, one_item)
+    check(prob is None and pairs == [(one_local[0], one_item[0])],
+          "one archived file and one attachment is unambiguous")
+
+    # Distinct extensions on both sides: pairable without trusting any ordering.
+    two_local = [Path("K1.pdf"), Path("K1-2.cif")]
+    two_items = [{"key": "B2", "data": {"linkMode": "imported_file", "filename": "s.cif"}},
+                 {"key": "B1", "data": {"linkMode": "imported_file", "filename": "p.pdf"}}]
+    pairs2, prob2 = za.pair_attachments(two_local, two_items)
+    check(prob2 is None, f"distinct extensions pair ({prob2})")
+    check(dict((p_.name, it["key"]) for p_, it in pairs2) == {"K1.pdf": "B1", "K1-2.cif": "B2"},
+          "and pair by extension, not by the order Zotero happened to return")
+
+    # What it must REFUSE. A wrong pairing files one paper's PDF under another's
+    # citation key -- silent, and very hard to find later.
+    same = [Path("K1.pdf"), Path("K1-2.pdf")]
+    same_items = [{"key": "C1", "data": {"linkMode": "imported_file", "filename": "a.pdf"}},
+                  {"key": "C2", "data": {"linkMode": "imported_file", "filename": "b.pdf"}}]
+    _p, prob3 = za.pair_attachments(same, same_items)
+    check(prob3 and "unambiguous" in prob3,
+          f"two PDFs on one record are reported, never guessed ({prob3})")
+    _p, prob4 = za.pair_attachments(same, one_item)
+    check(prob4 and "against" in prob4, f"a count mismatch is reported ({prob4})")
+    _p, prob5 = za.pair_attachments(one_local, [])
+    check(prob5 and "no imported_file" in prob5,
+          f"an archived file with nowhere to go is reported, not invented ({prob5})")
+    check(za.pair_attachments([], one_item) == ([], None),
+          "and a record with nothing archived is simply nothing to do")
+
+    check(za.needs_upload({"data": {"filename": "x.pdf"}}), "no md5 means no bytes yet")
+    check(not za.needs_upload({"data": {"filename": "x.pdf", "md5": "abc"}}),
+          "an md5 means Zotero already holds it -- resumable by construction")
+
+    check(za.upload_body("PRE", b"\x00bytes", "POST") == b"PRE\x00bytesPOST",
+          "the upload body is exactly prefix + file + suffix")
+
+    adir2 = tmp / "attach-order"
+    adir2.mkdir()
+    for name in ("Abrams2013Enhanced.pdf", "Abrams2013Enhanced-2.pdf",
+                 "Abrams2013Enhanced-10.pdf", "Abrams2013Other.pdf",
+                 "Vanommeslaeghe2009Charmm.-_charmm_g"):
+        (adir2 / name).write_bytes(b"x")
+    order = [p_.name for p_ in za.archived_for(adir2, "Abrams2013Enhanced")]
+    check(order == ["Abrams2013Enhanced.pdf", "Abrams2013Enhanced-2.pdf",
+                    "Abrams2013Enhanced-10.pdf"],
+          f"attachments come back in archive order, 10 after 2 ({order})")
+    check(all("Other" not in n for n in order),
+          "and a different key that shares a prefix is not swept in")
+    odd = za.archived_for(adir2, "Vanommeslaeghe2009Charmm")
+    check([p_.name for p_ in odd] == ["Vanommeslaeghe2009Charmm.-_charmm_g"],
+          f"a mangled extension is still that key's attachment 1 ({odd})")
+
+    print("\nzotero_attach speaks the v3 upload protocol exactly")
+
+    class FakeResp:
+        def __init__(self, code=200, payload=None, headers=None):
+            self.status_code, self._payload = code, payload or {}
+            self.headers = headers or {}
+        def json(self): return self._payload
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise AssertionError(f"HTTP {self.status_code}")
+
+    class FakeSession:
+        def __init__(self, replies): self.replies, self.calls = replies, []
+        def post(self, url, data=None, headers=None, timeout=None):
+            self.calls.append({"url": url, "data": data, "headers": headers or {}})
+            return self.replies.pop(0)
+
+    class FakeZ:
+        def __init__(self, session): self.base, self.session = "https://api/users/9", session
+
+    auth_payload = {"url": "https://s3/upload", "contentType": "multipart/form-data; boundary=x",
+                    "prefix": "PRE", "suffix": "SUF", "uploadKey": "UK1"}
+    sess = FakeSession([FakeResp(200, auth_payload)])
+    w = za.ZoteroWriter(FakeZ(sess))
+    got_auth = w.authorize("IT1", "paper.pdf", b"hello", 1700000000000)
+    call = sess.calls[0]
+    check(call["url"] == "https://api/users/9/items/IT1/file",
+          f"authorization goes to the item's file endpoint ({call['url']})")
+    check(call["headers"].get("If-None-Match") == "*",
+          "with If-None-Match: * -- this attachment has no file yet")
+    check(call["data"]["md5"] == _hashlib.md5(b"hello").hexdigest(),
+          "the md5 is of the bytes being sent")
+    check(call["data"]["filesize"] == 5 and call["data"]["mtime"] == 1700000000000,
+          "filesize in bytes and mtime in MILLISECONDS, which the API insists on")
+    check(got_auth["uploadKey"] == "UK1", "and the authorization is returned to the caller")
+
+    check(za.upload_body(auth_payload["prefix"], b"hello", auth_payload["suffix"])
+          == b"PREhelloSUF", "the body sent to S3 is the concatenation, not a re-encode")
+
+    sess2 = FakeSession([FakeResp(204)])
+    za.ZoteroWriter(FakeZ(sess2)).register("IT1", "UK1")
+    check(sess2.calls[0]["data"] == {"upload": "UK1"},
+          "registration carries only the upload key")
+    check(sess2.calls[0]["headers"].get("If-None-Match") == "*",
+          "and the same precondition, so a race cannot overwrite a file that arrived meanwhile")
+
+    # 429 with Retry-After: 0 so the test does not sit there sleeping.
+    sess3 = FakeSession([FakeResp(429, {}, {"Retry-After": "0"}),
+                         FakeResp(200, auth_payload)])
+    w3 = za.ZoteroWriter(FakeZ(sess3))
+    again = w3.authorize("IT1", "paper.pdf", b"hello", 1)
+    check(again["uploadKey"] == "UK1" and len(sess3.calls) == 2,
+          f"a 429 is retried after Retry-After rather than failing the run ({len(sess3.calls)})")
 
     print("\nPEP 723 headers: eleven copies of the dependency list, kept honest")
 

@@ -113,8 +113,9 @@ left to connect the two.
 
 `mendeley_mirror.py` is the refresh and the module everything else imports.
 `get_pdf.py`, `refs.py`, `inbox.py`, `mendeley_push.py`, `mendeley_edit.py`,
-`finding.py`, `pdbrefs.py` and `pdbxref.py` are separate CLIs that reuse its
-`Mendeley` client, `config_dir()`, and `DEFAULT_OUT`. `finding.py` and `pdbrefs.py`
+`finding.py`, `pdbrefs.py`, `pdbxref.py`, `zotero_migrate.py` and
+`zotero_attach.py` are separate CLIs that reuse its `Mendeley` client,
+`config_dir()`, and `DEFAULT_OUT`. `finding.py` and `pdbrefs.py`
 touch neither Mendeley nor the network; `pdbxref.py` queries RCSB, which is public
 and unauthenticated, and never writes anything.
 
@@ -128,13 +129,25 @@ has changed before, so check it rather than assuming it.
 ## Direction of travel
 
 The refresh is strictly one-way: Mendeley to disk. A bad run can lose mirrored
-files but cannot touch the library. Three scripts break that on purpose —
+files but cannot touch the library. Four scripts break that on purpose —
 `inbox.py` attaches files to references and can create them, `mendeley_push.py`
-POSTs a new reference, and `mendeley_edit.py` PATCHes fields on a reference that
-already exists — and all three are interactive by default. `--dry-run` is the
-safe thing to run and to show someone; `--yes` is for a run a person has already
-approved, not a way past a prompt. **All three act on someone's real library, and
-this session is not the one that runs them.**
+POSTs a new reference, `mendeley_edit.py` PATCHes fields on a reference that
+already exists, and `zotero_attach.py` uploads the archive into Zotero. The three
+Mendeley ones are interactive by default; `--dry-run` is the safe thing to run and
+to show someone, and `--yes` is for a run a person has already approved, not a way
+past a prompt. **All four act on someone's real library, and this session is not
+the one that runs them.**
+
+`zotero_attach.py` is dry-run by default instead, because a per-file prompt
+across 2,740 files is not a safeguard. It never creates an attachment item: where
+Zotero has no `imported_file` child, it reports rather than inventing one, and
+where a record's attachments cannot be paired unambiguously it uploads nothing
+for that record. Both are the same rule — guessing writes a paper's PDF under
+another paper's citation key, silently.
+
+`zotero_migrate.Zotero` is read-only and its docstring says so. The write client
+lives in `zotero_attach.py` for exactly that reason: adding a write method there
+would retire a guarantee every other caller is relying on.
 
 **`mendeley_edit.py` is the one to be most careful with**, because it is the only
 one that can *destroy* correct metadata rather than merely add wrong metadata.

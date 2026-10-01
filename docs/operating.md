@@ -54,17 +54,26 @@ A refresh is strictly one-way, Mendeley to disk. A bad run can lose mirrored
 files but cannot touch the library, which is what makes it safe to run
 unattended on a schedule.
 
-Three scripts break that on purpose, and all three are interactive by default:
+Four scripts break that on purpose:
 
-| script | what it does to your account |
-|---|---|
-| `inbox.py` | attaches a PDF to a reference, creating the reference from its DOI if it is new |
-| `mendeley_push.py` | adds one reference, from an arXiv ID or a DOI |
-| `mendeley_edit.py` | corrects fields on a reference that already exists |
+| script | account | what it does |
+|---|---|---|
+| `inbox.py` | Mendeley | attaches a PDF to a reference, creating the reference from its DOI if it is new |
+| `mendeley_push.py` | Mendeley | adds one reference, from an arXiv ID or a DOI |
+| `mendeley_edit.py` | Mendeley | corrects fields on a reference that already exists |
+| `zotero_attach.py` | Zotero | uploads the mirrored PDFs into attachments that already exist |
 
-`--dry-run` is the safe thing to run and the right thing to show someone before
-a batch. `--yes` is for a run that has already been approved — not a way past a
-prompt in a non-interactive shell.
+The three Mendeley scripts are interactive by default. `--dry-run` is the safe
+thing to run and the right thing to show someone before a batch. `--yes` is for a
+run that has already been approved — not a way past a prompt in a
+non-interactive shell.
+
+`zotero_attach.py` inverts that, because asking per file across 2,740 of them is
+not a safeguard, it is a way of training someone to hold down a key: **a dry run
+is the default and performs no write of any kind**, stopping before the upload
+authorization, which is itself a POST. `--yes` is the whole approval, so it is
+given once, deliberately, to a run whose dry run has been read. `--limit` and
+`--key` exist to make a first live run small.
 
 `mendeley_edit.py` deserves the most care, because it is the only one that can
 *destroy* correct metadata rather than merely add wrong metadata. See
