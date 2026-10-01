@@ -118,6 +118,31 @@ annotations and findings all work on a generic document/file/annotation shape.
       shape — records from the API, PDFs from local disk.
 - [ ] Abstract the client behind the small interface the rest of the code
       already implies: list documents, list files, fetch file, list annotations.
+
+      **"fetch file" is not implementable against Zotero, measured 2026-10-01.**
+      In a 12-item sample of the `zotero:` half of `citekeys.json`, every
+      `imported_file` attachment came back with `md5: None` — 12 of 12, no bytes
+      in zotero.org storage. That matches what Cameron said the same day: the
+      library is live on Zotero without any PDFs, all PDFs are local, and
+      uploading them is not authorized.
+
+      So the interface is not "fetch file". It is **locate bytes**, and for
+      Zotero the only place they exist is `<out>/pdf/` — 2,740 files that
+      `--backfill` evacuated from Mendeley. `find_archived()` is therefore
+      load-bearing rather than an optimisation, and anything that falls back to
+      the network on a miss fetches nothing, or fetches from a Mendeley account
+      that has been downgraded to the free tier. A miss should be loud (item 2),
+      because under Zotero it is unrecoverable rather than slow.
+
+      The adapter must also carry each attachment's **filename**, not just an id:
+      the archive is named `<citekey><real suffix>`, and the suffix is derived
+      from that filename. An adapter exposing only an id and a download URL
+      cannot find the bytes it needs.
+
+      Caveat kept with the number: 12 of 2,739 is a sample, and `md5: None`
+      strictly means "not in zotero.org storage" rather than "nowhere". There is
+      no Zotero install on panacea, so the reading is consistent with Cameron's
+      statement but inferred from it rather than independent of it.
 - [ ] Decide what "primary" means for the writing scripts (`inbox.py`,
       `mendeley_push.py`, `mendeley_edit.py`). They may only ever target one
       account; pointing them at the wrong one is the expensive mistake.
@@ -717,6 +742,16 @@ Zotero refresh, which re-examines ~2,700 attachments at once against metadata
 nobody has audited. Whatever that run skips, it skips into a cached verdict that
 no later refresh revisits, and this file is the only instrument that would say
 so.
+
+**And the Zotero side was checked rather than assumed, same day.** Item
+`Q8E9FEKN`, child `2YFEGK72`: `contentType: application/octet-stream`, filename
+ending `.-_charmm_g`. **Both halves of the defect crossed the migration intact**,
+because Zotero imported through the same Mendeley API that produced them. Under
+pre-0.12.0 code the first Zotero refresh reproduces the identical silent skip.
+So `looks_like_pdf()` is a prerequisite for the migration, not a patch to a
+backend being retired. In a 12-item sample every other attachment was
+`application/pdf`, so CGenFF is the anomaly on both backends and from one
+source.
 
 - [ ] **The six cached `not-pdf` entries need clearing**, which is the library
       session's to do and only after this ships: the download at the head of the
