@@ -2392,6 +2392,49 @@ def main():
           "a 412 is reported as a conflict, never retried: a retry would "
           "overwrite whatever edit caused it")
 
+    print("\ndoixref: three-way, because the citation key is frozen")
+    import doixref as dx
+
+    check(dx.bib_first_author("Shan, J. and Robertson, C. and Verghese, K.") == "Shan",
+          "the first surname comes off a bib author field")
+    check(dx.bib_first_author("De Meyts, P. and others") == "De Meyts",
+          "a two-word surname survives")
+    check(dx.bib_first_author("") == "", "and an empty field yields nothing to compare")
+
+    check(dx.key_surname("Won2001Influence") == "Won", "the key's surname is the run before the year")
+    check(dx.key_surname("Abrams2013Enhanced") == "Abrams", "even with digits after it")
+    check(dx.key_surname("AnonndUntitled") == "", "a key with no year yields nothing, not a guess")
+
+    # Folding an accent must drop the ACCENT, not the letter. The checker that
+    # verified the Zotero migration got this wrong and scored 2,731 of 2,736.
+    check(dx.norm_surname("M\u00fcller") == "muller",
+          f"diacritics fold to the base letter ({dx.norm_surname('M\u00fcller')})")
+    check(dx.norm_surname("O'Brien") == "obrien", "punctuation goes")
+
+    check(dx.compare("Shan", "Shan") == "agree", "the same surname agrees")
+    check(dx.compare("Shan", "Won") == "mismatch",
+          "a different one is a mismatch -- the class the three records are in")
+    check(dx.compare("van der Waals", "Waals") == "particle",
+          "a particle difference is its OWN bucket, never agreement: a false "
+          "agreement hides a defect, a false mismatch costs a reader a second")
+    check(dx.compare("", "Shan") == "skip" and dx.compare("Shan", "") == "skip",
+          "and a side with nothing in it is skipped, so it cannot be scored as agreeing")
+
+    check(dx.norm_title("Influence of vinyl ester/styrene network structure")
+          == dx.norm_title("Influence of vinyl ester\\slash styrene network structure"),
+          "titles compare after LaTeX and punctuation are stripped")
+    check(dx.norm_title("Effect of Charge on Protein Diffusion")
+          != dx.norm_title("Effect of Aspect Ratio on Protein Diffusion"),
+          "but two companion papers' titles do NOT collapse into each other")
+
+    # The whole reason for the three-way comparison: a record whose authors were
+    # legitimately corrected after its key was assigned looks exactly like the
+    # defect, if you only compare Crossref against the key.
+    check(dx.compare(dx.bib_first_author("Shan, J. and Robertson, C."), "Shan") == "agree"
+          and dx.key_surname("Won2001Influence") == "Won",
+          "a frozen key can name Won while the record and Crossref both say "
+          "Shan -- which is the key doing its job, and is counted apart")
+
     print("\nPEP 723 headers: eleven copies of the dependency list, kept honest")
 
     # There is no pyproject.toml here on purpose -- every script carries its own

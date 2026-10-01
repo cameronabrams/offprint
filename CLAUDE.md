@@ -138,11 +138,13 @@ left to connect the two.
 
 `mendeley_mirror.py` is the refresh and the module everything else imports.
 `get_pdf.py`, `refs.py`, `inbox.py`, `mendeley_push.py`, `mendeley_edit.py`,
-`finding.py`, `pdbrefs.py`, `pdbxref.py`, `zotero_migrate.py` and
+`finding.py`, `pdbrefs.py`, `pdbxref.py`, `doixref.py`, `zotero_migrate.py` and
 `zotero_attach.py` are separate CLIs that reuse its `Mendeley` client,
 `config_dir()`, and `DEFAULT_OUT`. `finding.py` and `pdbrefs.py`
-touch neither Mendeley nor the network; `pdbxref.py` queries RCSB, which is public
-and unauthenticated, and never writes anything.
+touch neither Mendeley nor the network; `pdbxref.py` queries RCSB and
+`doixref.py` queries Crossref, both public and unauthenticated, and neither
+writes anything — `doixref.py` caches to `~/.cache/offprint/` precisely so that
+a read-only audit never touches the library.
 
 The `.bat`, `.sh`, and `.vbs` launchers are thin — keep `run_mirror.sh` and
 `run_mirror.bat` in step when either changes. Neither scheduled entry point may ever

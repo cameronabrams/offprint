@@ -426,12 +426,41 @@ from the stored first-author surname: `Won2001Influence` on a Shan paper,
 paper. Identifiers from A, authors from B, three times. That is a pattern, not
 three coincidences, and it is almost certainly a Mendeley import artefact.
 
-- [ ] **The probe that would find the whole class**, if Cameron wants it: for
-      every record with a DOI, compare Crossref's first-author surname against
-      the one in the citation key. ~2,270 of 2,739 are checkable; the ~17%
-      without a DOI are not. Mismatches are candidates, not verdicts — a key is
-      frozen at assignment and a legitimately corrected author list produces the
-      same mismatch, which is the next paragraph.
+- [x] **`doixref.py` finds the class.** Cameron asked for it 2026-10-02. It
+      queries Crossref — public, unauthenticated — and **never writes to the
+      library**, caching to `~/.cache/offprint/` so that a read-only audit stays
+      one. `pdbxref.py` is the precedent and the naming.
+
+      **The comparison is three-way, and the obvious two-way version would have
+      been wrong.** Crossref's first author against the *citation key's* surname
+      flags every record whose authors were ever legitimately corrected, because
+      a key is frozen at assignment. So it compares key · `library.bib`'s current
+      first author · Crossref, and reports on the middle against the right; a key
+      disagreeing with a bib author that agrees with Crossref is counted
+      separately as a frozen key doing its job.
+
+      Two classes, both candidates and not verdicts: **author** (the DOI's title
+      matches but its first author does not — the class the three belong to) and
+      **title** (the DOI resolves to a different paper altogether, which is worse
+      and is how `Wu1982Potts` nearly acquired the wrong PDF).
+
+      Nothing scores similarity. A surname agreeing only on its last
+      whitespace-separated token — `van der Waals` against `Waals` — gets its own
+      heading rather than being counted as agreement, because the two errors do
+      not cost the same: a false agreement hides a defect and a false mismatch
+      costs a reader a second. Every unchecked record is counted and named beside
+      the score, since a denominator that shrinks to fit its numerator reads as a
+      perfect result and this repo has produced that twice.
+
+      **Validated against the three cases the library session picked, not
+      against a case of its own choosing:** all three land in the author class
+      with their titles agreeing, and `Abrams2013Enhanced` agrees as a control.
+      That is the shape confirmed mechanically — identifiers from one paper,
+      authors from another.
+
+- [ ] **Run it over the whole library.** ~2,270 of 2,739 records carry a DOI;
+      the rest cannot be checked this way and the report says how many. That run
+      is the library session's, and detached — it is 2,270 round trips.
 
 **And fixing an author list does not rename anything.** `assign_citekeys` gives a
 key once per document and keeps it, so `Won2001Influence` stays
