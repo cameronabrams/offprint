@@ -395,10 +395,50 @@ split printed `85 (152,674,932 bytes sent)` beside `read and offered:
 216 MB as sent. And the dry-run caveat about `md5: None` printed exactly where it
 was needed, because 41 of the 126 turned out to be already held.
 
-**Three records still refuse, correctly**, and they are the argument for the tool
-being stubborn: `Won2001Influence`, `Daoulas2005Molecular`, `Hirota2000Effect`
-are each **two different papers merged into one record**. No pairing is right
-because the record is wrong. They are Cameron's, not the tool's.
+**Two records still refuse, correctly** — not three. `literature` first reported
+`Won2001Influence` as a merge and withdrew it before it reached Cameron;
+Crossref settles it, and all six DOIs below were re-checked here against
+`api.crossref.org` rather than taken on report.
+
+`Won2001Influence` is **one paper with the wrong author list**. The record's
+journal, volume, issue and pages are `10.1002/app.1171` — Shan, Robertson,
+Verghese & Burts, *Influence of vinyl ester/styrene network structure…*, JAPS
+80(7) 917–927 — and both archived files are that paper. Won, Fulchiron &
+Douillard's JAPS 80(7) paper is `10.1002/app.1185`, *Effect of the pressure on
+the crystallization behavior of polyamide 66*, 1021–1029, a different subject
+that is not in this archive at all. The Zotero filename reading "Won, Fulchiron,
+Douillard - 2001 - Influence of vinyl ester/styrene…" is the mislabel: it puts
+Won's name over Shan's title. Pairing was safe, both files uploaded.
+
+The other two are real merges, each a pair of companion papers in one issue:
+
+| record | the record's own DOI | the second paper |
+|---|---|---|
+| `Daoulas2005Molecular` | `10.1021/ma050177j`, Macromolecules 38(13) 5796–5809, Harmandaris et al. | `10.1021/ma050176r`, 38(13) 5780–5795, Daoulas et al. |
+| `Hirota2000Effect` | `10.1021/jp0014418`, JPCB 104(42) 9904–9908, Gong et al. | `10.1021/jp001438o`, 104(42) 9898–9903, Hirota et al. |
+
+**All three share one shape, and that is the finding worth more than the three
+records.** Each carries identifiers — DOI, volume, issue, pages — from one paper
+and an author list headed by a *different* paper's first author. The citation
+keys prove it without reading the records, because `make_citekey` builds them
+from the stored first-author surname: `Won2001Influence` on a Shan paper,
+`Daoulas2005Molecular` on a Harmandaris paper, `Hirota2000Effect` on a Gong
+paper. Identifiers from A, authors from B, three times. That is a pattern, not
+three coincidences, and it is almost certainly a Mendeley import artefact.
+
+- [ ] **The probe that would find the whole class**, if Cameron wants it: for
+      every record with a DOI, compare Crossref's first-author surname against
+      the one in the citation key. ~2,270 of 2,739 are checkable; the ~17%
+      without a DOI are not. Mismatches are candidates, not verdicts — a key is
+      frozen at assignment and a legitimately corrected author list produces the
+      same mismatch, which is the next paragraph.
+
+**And fixing an author list does not rename anything.** `assign_citekeys` gives a
+key once per document and keeps it, so `Won2001Influence` stays
+`Won2001Influence` while its author field says Shan — the same way
+`Abrams2013Enhanced` carries `year = 2014`. The key is a handle; the field is the
+claim. Anyone who meets that record later will think it is broken, which is why
+it is written down here.
 
 **The discriminators that actually worked, worth keeping if this is ever
 automated:** page-1 text of the extract against the Zotero filename, and
