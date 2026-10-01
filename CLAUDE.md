@@ -68,7 +68,7 @@ Two habits that came out of the same failure, and are cheaper than the debugging
 
 | where | what | why |
 |---|---|---|
-| the clone | all code | replaceable; `git pull` is the update mechanism |
+| the clone | all code | replaceable; `git pull` is the update mechanism **for other machines** |
 | `<out>/.mirror/` | `citekeys.json`, `state.json`, `removed.tsv`, `pairings.tsv`, `mirror.log` | travels with the library, so every machine agrees what a citation key means and nobody re-extracts 2500 PDFs |
 | `~/.config/mendeley-mirror` (`%LOCALAPPDATA%` on Windows) | app ID, secret, tokens | per-machine on purpose: a public repo and a synced library both stay free of credentials |
 | `~/.cache/mendeley-mirror/pdf` | fetched PDFs | outside the library so grabbing one doesn't sync it everywhere |
@@ -113,7 +113,22 @@ that writes to someone's account prints `__version__` in its header and takes
 Third: announce a contract change **before the working tree carries it, not
 before the push**. The clone is what the systemd timer runs, so a saved file is
 already live — there is no staging step between editing and shipping, and the
-next `:07` is the deadline. The 09-24 namespacing was announced with 45 minutes
+next `:07` is the deadline.
+
+**The same is true of the library session, and it is easier to forget.** There is
+one clone on this machine, `~/Git/offprint`, and that session runs its scripts
+from it by absolute path. So it never pulls, there is no version boundary between
+an edit here and a run there, and a run started a second after a save is on the
+new code with nobody having done anything. Telling it to "pull before you run" is
+worse than useless: it is a no-op dressed as a safety step, and this session said
+it repeatedly on 2026-10-02 before Cameron pointed out that the clone is local.
+The row above is about the Windows laptops, which do pull and which is why the
+sentence reads that way.
+
+What follows is that **the version a run prints is the only record of which code
+it used** — not a convenience for labelling logs. And that a long run is on the
+code as it stood when Python read the file, so editing during one is safe for
+that run and silently changes the next. The 09-24 namespacing was announced with 45 minutes
 to spare and the library session found a consumer of `citekeys.json` that the
 repo could not see: a procedure in its own notes that would have started
 handing Mendeley a namespaced id and getting a 404, months later, with nothing

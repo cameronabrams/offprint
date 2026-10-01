@@ -377,6 +377,37 @@ missing. Every one was found by someone running the tool and adding the numbers
 up by hand, none by reading the code. That is the argument for the tool doing
 the addition itself, which it now does.
 
+### The 62 are done — 2026-10-02, by hand, with evidence
+
+`literature` worked through every one and uploaded them.
+
+    pairings.tsv: 126 lines, each carrying its evidence
+    uploaded 85 (152,674,932 bytes sent) · already in Zotero 41 · patched 126
+    85 + 41 + 6 stranded + 0 withheld = 132, reconciles
+
+It verified 18 of the evidence-based pairings by md5 — chosen as the ones where a
+swap would be a real error, supplement-against-paper and part I-against-part II —
+18 correct, 0 wrong.
+
+Both of the day's late fixes earned themselves on this run. The sent-versus-read
+split printed `85 (152,674,932 bytes sent)` beside `read and offered:
+216,503,800 across 126`; under the old single counter it would have reported
+216 MB as sent. And the dry-run caveat about `md5: None` printed exactly where it
+was needed, because 41 of the 126 turned out to be already held.
+
+**Three records still refuse, correctly**, and they are the argument for the tool
+being stubborn: `Won2001Influence`, `Daoulas2005Molecular`, `Hirota2000Effect`
+are each **two different papers merged into one record**. No pairing is right
+because the record is wrong. They are Cameron's, not the tool's.
+
+**The discriminators that actually worked, worth keeping if this is ever
+automated:** page-1 text of the extract against the Zotero filename, and
+Crossref. `Mao2013Molecular` resolved four PNAS DOIs to four titles exactly;
+`Theodorou1989Variablea` split on page ranges, 4578–4589 against 4589–4597.
+**Similarity scores failed three times** and are not the route — which matches
+what `zotero_migrate.py` found, where fuzzy title matching was the last resort
+and settled 3 pairs out of 2,739.
+
 ### The version rule was read too narrowly — `0.14.0`
 
 Seven commits built and then repeatedly corrected `zotero_attach.py` under an
