@@ -182,6 +182,23 @@ some future date.
 A deadline nobody set is worse than no deadline: it makes a thing look safe until
 a date, and this one was used as the argument for several decisions.
 
+**Two things the library session added by reading its own transcript rather than
+accepting the trace above**, and both are worth more than the date:
+
+- Its *notes* said "renews" throughout — the correct direction. So grepping its
+  own records for the error came back clean and proved nothing; the drift was in
+  what it had told Cameron on evacuation day ("these files survive the
+  subscription lapse"), twice. **A claim can be right in the file and wrong in
+  the mouth**, and auditing the file does not catch that. Nothing in this repo's
+  verification habits reads what anyone actually said.
+- **"Lapses" is passive, and it erased the only mechanism ever operating.** The
+  attachment files were never at risk from an automatic expiry — they were at
+  risk from a decision, which is precisely what occurred on 2026-10-01 when the
+  account was downgraded to the free tier. An action, with no date attached to it
+  in advance. A passive verb invents a deadline and hides an agent; a date then
+  makes the invention look checkable. When a note says something *will happen*,
+  ask what would have to do it.
+
 Still open, and now the interesting part: **nothing reads the status file unless
 a person opens it.** The streak is recorded and legible, but a mirror that has
 not refreshed in nine days still announces it only to whoever looks. That is
