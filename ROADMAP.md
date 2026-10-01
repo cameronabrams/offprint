@@ -640,6 +640,67 @@ the Windows scheduled task runs `refresh_quiet.bat`. The code fix protects them
 without anyone editing anything, which is the argument for having done it that
 way — but it only protects them once they pull.
 
+## 9. A generated `metadata-report.md` — REQUESTED, NOT DECIDED
+
+Filed by the library session 2026-10-01, relayed as being at Cameron's
+direction. **Recorded here because a peer's relay is not approval; nothing is
+built until Cameron says so himself.** Spec and runnable probes:
+`~/.local/state/fleet/drops/metadata-report-spec-20261001/`.
+
+The case for it is the honest one: library defects live in the library session's
+memory, tool-side conclusions live in this repo's commits and `docs/`, neither
+session reads the other's, and **both go stale** — the library session's did
+twice in one day. A hand-maintained shared list would catch the same disease, so
+it should be derived from `library.bib` on every refresh, the way
+`extraction-report.md` already is.
+
+What makes the proposal more than a list of greps is its organising principle:
+**every line names who fixes it.**
+
+| bucket | fixer |
+|---|---|
+| the writer dropped it | this repo, in code |
+| the Mendeley record is wrong | Cameron, in Mendeley |
+| unfixable by design | nobody, and the report must say so |
+
+That third row is the one that earns the file. The three frozen-year keys are
+correct behaviour, and without an explicit "do not report this" at the point of
+discovery they get rediscovered every few months by whoever next notices a 2002
+key on a 1976 paper. `f2e00a5` says it in `docs/`; a reader of the report is not
+reading `docs/`.
+
+**Verified before recording, not taken on trust:** `--selftest` passes 22
+fixtures in both directions, and the probes reproduce the shipped baseline
+byte-identical against the live 2,739-reference library.
+
+### What it would cost, and why it is Cameron's call and not mine
+
+- A new generated file in the library is a **new output format**: `__version__`
+  bumps, and the library session is told before the working tree carries it.
+- It is a **ninth entry point's worth of surface** that must stay offline, and
+  every probe arrives with the fixtures it must reject as well as accept. That
+  is not negotiable: on this family of probes the first draft was wrong by an
+  order of magnitude *every time* — 163 → 5, 103 → 2, 3 → 2.
+
+### One defect found while verifying, to fix before any of this ships
+
+The `and others` rows print a fixed-width **tail** of the author field, so
+`De Meyts, P. and Roth, J. and Neville, D.M. and others` displays as
+`nd Roth, J. and Neville, D.M. and others`. Detection is right; the display
+invents a mangled author name, which is precisely the kind of line a reader
+would then re-report as a defect. A report that manufactures findings is worse
+than no report.
+
+### The part worth preserving if it is built
+
+The library session is deliberately **not** handing over every probe, because
+what made this work was disjoint blind spots — this repo's comma probe could not
+see `Jbames` (zero commas, not two); its front-matter probe could not see
+`Abrams2002Biphasic` (no extract). If every probe moves into the tool and both
+sessions read the same generated report, the cross-check dies and two copies of
+one opinion remain. Known classes go in; the hunt for unknown ones stays out.
+
+
 ## Deliberately not doing
 
 **Packaging (PyPI, conda-forge, console entry points).** The PEP 723 headers
