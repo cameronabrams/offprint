@@ -753,10 +753,36 @@ backend being retired. In a 12-item sample every other attachment was
 `application/pdf`, so CGenFF is the anomaly on both backends and from one
 source.
 
-- [ ] **The six cached `not-pdf` entries need clearing**, which is the library
-      session's to do and only after this ships: the download at the head of the
-      branch precedes the `continue`, so clearing first buys a re-download and
-      the same verdict. Code, then state, in that order.
+- [x] **The cached `not-pdf` entries cleared** by the library session, after
+      this shipped and not before: the download at the head of the branch
+      precedes the `continue`, so clearing first buys a re-download and the same
+      verdict. Code, then state, in that order. Only
+      `Vanommeslaeghe2009Charmm`'s was cleared — Cameron deleted the other five
+      attachments the same day, and their entries are what keep a plain refresh
+      from fetching them again.
+- [x] **A deliberate deletion is recorded, not inferred — `0.13.0`.** Deleting
+      those five from `<out>/pdf/` was not enough on its own. `--backfill` tests
+      only whether a file is on disk, so it read each gap as evacuation it had
+      not finished and would have fetched all five back. The one command written
+      to be safe to repeat was the one that undid the deletion, and the state
+      entries do not stop it: the backfill block sits inside the skip branch and
+      never reads the stored status.
+
+      `.mirror/removed.tsv` is the difference between "never evacuated" and
+      "evacuated, then removed on purpose". It is keyed by stem rather than
+      attachment id, because the citation key is the handle that survives a
+      change of backend. It **withholds a fetch and never causes a deletion** —
+      a list of filenames the tool consults is exactly how a third
+      archive-eroding path would arrive, and the test for that asserts a listed
+      file that is present stays present.
+
+      The library session's point, kept because it bounds the problem: the
+      window closes on its own. Zotero holds no attachment bytes, so once the
+      mirror is Zotero-backed there is no backfill source at all, and the
+      deletion can only be undone while Mendeley still serves files. A permanent
+      marker is still the right answer — Cameron's, 2026-10-01 — but the
+      alternative was "do not run `--backfill` before the switch", which is a
+      smaller question than it first looked.
 
 ## 9. A generated `metadata-report.md` — REQUESTED, NOT DECIDED
 

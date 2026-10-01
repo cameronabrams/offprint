@@ -37,7 +37,7 @@ Usage:
 
 from __future__ import annotations
 
-__version__ = "0.12.0"
+__version__ = "0.13.0"
 """The tool's version, and the only place it is written down.
 
 It exists so a mirror can say what produced it. Extraction behaviour has changed
@@ -887,6 +887,43 @@ def annotation_markdown(doc: dict, key: str, annotations: list) -> str:
 
 # A page of a text-bearing paper yields hundreds of characters. A scanned page
 # yields a handful of stray marks, if that.
+def load_removed(out: Path) -> dict:
+    """Attachment stems a person deliberately deleted from `<out>/pdf/`.
+
+    `--backfill` tests only whether a file is on disk, so it cannot tell
+    "never evacuated" from "evacuated, then deleted on purpose". Re-running the
+    evacuation -- which is documented as the way to finish an interrupted one,
+    and is resumable by construction -- therefore undid the deletion silently.
+    Five files removed on 2026-10-01 are the case this was written for.
+
+    Keyed by STEM (`<citekey>` or `<citekey>-N`), not by attachment id: the
+    citation key is the one handle that survives a change of backend, and
+    Zotero's ids are not Mendeley's.
+
+    Format is `stem<TAB>date<TAB>reason`, `#` comments and blank lines ignored.
+    Only the first field is required, and any non-blank line yields a stem, so
+    a hand-edit cannot quietly fail to protect a file by being malformed.
+
+    **This file never causes a deletion.** It withholds a fetch, nothing else.
+    An entry whose file is present on disk is left exactly where it is -- the
+    tool does not read it as an instruction to remove anything, because an
+    archive-eroding path is the defect this repo has now fixed twice.
+    """
+    path = mirror_state_dir(out) / "removed.tsv"
+    if not path.exists():
+        return {}
+    out_map = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split("\t")
+        stem = parts[0].strip()
+        if stem:
+            out_map[stem] = " ".join(p_.strip() for p_ in parts[1:] if p_.strip())
+    return out_map
+
+
 PDF_MAGIC = b"%PDF-"
 
 
@@ -1300,6 +1337,8 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
         # here and skip an extraction as "already done".
         note(f"  namespaced {migrated} attachment ids as {BACKEND}:<id>")
     fetched = skipped = failed = reused = unresolved = archived = 0
+    withheld = 0
+    removed = load_removed(out)
     unarchived: list = []
     report: list = []
     state_path = state_path or mirror_state_dir(out) / "state.json"
@@ -1345,7 +1384,11 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                                        "detail": f"{prior.get('chars', 0)} characters "
                                                  f"across {prior.get('pages', 0)} pages"})
                     if backfill and mode == "keep":
-                        if find_archived(pdf_dir, stem, f) is None:
+                        if stem in removed:
+                            # Absent from pdf/ because somebody took it out, not
+                            # because the evacuation has not reached it yet.
+                            withheld += 1
+                        elif find_archived(pdf_dir, stem, f) is None:
                             try:
                                 resp = client.get(f"{API}/files/{f['id']}",
                                                   accept="*/*", allow_redirects=False)
@@ -1389,7 +1432,10 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
 
                     sniffed = looks_like_pdf(data)
                     if mode == "keep" and not from_disk:
-                        (pdf_dir / (stem + archive_suffix(f, sniffed))).write_bytes(data)
+                        if stem in removed:
+                            withheld += 1
+                        else:
+                            (pdf_dir / (stem + archive_suffix(f, sniffed))).write_bytes(data)
 
                     if not sniffed:
                         # The MIME type is a hint; the bytes are the verdict.
@@ -1492,6 +1538,10 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
         note(f"  re-used {reused} PDFs already on disk (no re-download)")
     if archived or unarchived:
         note(f"  archived {archived} attachment files that were already extracted")
+        if withheld:
+            word = "attachment" if withheld == 1 else "attachments"
+            note(f"  {withheld} {word} not archived: .mirror/removed.tsv lists "
+                 "them as deliberately deleted")
         if unarchived:
             note(f"  ! {len(unarchived)} could NOT be archived: "
                  + ", ".join(unarchived[:10])

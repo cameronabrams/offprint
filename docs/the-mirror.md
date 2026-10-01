@@ -53,6 +53,34 @@ text, in four classes:
   else, and under that older rule it was skipped, cached as skipped, and never
   reconsidered by any later refresh.
 
+### Deleting an attachment from the archive, and making it stay deleted
+
+`<out>/pdf/` is an archive a person built, and a person may want something out
+of it again — a video, a structure file, a scan that was never a paper. Deleting
+the file is not enough on its own: `--backfill` tests only whether a file is on
+disk, so it reads the gap as evacuation it has not finished yet and fetches the
+file back. That command is *documented as safe to repeat*, which is what made it
+the dangerous one.
+
+`.mirror/removed.tsv` records the difference. One stem per line — `<citekey>` or
+`<citekey>-N`, matching the archive's own naming — optionally followed by a tab,
+a date and a reason:
+
+```
+# taken out by hand, 2026-10-01
+Shan2011How	2026-10-01	a video, not a paper
+Hoover1979Exact	2026-10-01	a PNG of one equation
+```
+
+Both `--backfill` and `--attachments keep` then leave those alone and say how
+many they withheld. The match is on the exact stem, so a line for `Shan2011How`
+has no effect on `Shan2011How-2`.
+
+**It never causes a deletion.** A listed stem whose file is present on disk is
+left exactly where it is; the file withholds a fetch and nothing else. Keeping
+it that way matters — a list of filenames the tool consults is precisely how a
+third archive-eroding path would arrive.
+
 Two smaller traps worth knowing. A short extract is not evidence of a short
 paper: some scans are dozens of pages of one repeated permission stamp, and the
 known ones are listed in `stamp-only-extracts.tsv`. And every attachment on a

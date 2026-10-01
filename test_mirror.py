@@ -1015,6 +1015,74 @@ def main():
         {mm.qualify("d1"): "Muller2020Yield"}, {"d1": DOCS[0]}, staged("ns3"), st3, "text")
     check(f3 == 1, "one unkeyed document among several is skipped, not raised over")
 
+    print("\na deliberate deletion is not a gap for --backfill to fill")
+
+    # --backfill tests only whether a file is on disk, so before removed.tsv it
+    # could not tell "never evacuated" from "evacuated, then deleted on
+    # purpose". The evacuation procedure is documented as resumable and
+    # re-running it is how an interrupted one is finished -- so the one command
+    # written to be safe to repeat was the one that undid a deletion.
+    check(mm.load_removed(tmp / "no-such-mirror") == {},
+          "no removed.tsv at all is simply nothing removed")
+
+    rm_out = tmp / "removed"
+    rm_state = mm.mirror_state_dir(rm_out)
+    (rm_state / "removed.tsv").write_text(
+        "# taken out by hand, 2026-10-01\n"
+        "\n"
+        "K1-2\t2026-10-01\tnot a paper: a structure file\n"
+        "BareStem\n",
+        encoding="utf-8")
+    rmap = mm.load_removed(rm_out)
+    check(rmap.get("K1-2") == "2026-10-01 not a paper: a structure file",
+          "a stem, its date and its reason are read back")
+    check("BareStem" in rmap,
+          "a stem on its own is still a stem: a hand-edit cannot fail to "
+          "protect a file by leaving the reason off")
+    check("#" not in "".join(rmap) and len(rmap) == 2,
+          f"comments and blank lines are not stems ({sorted(rmap)})")
+
+    rm_st = {}
+    mm.harvest_attachments(Serves(), two, bkm, bdoc, rm_out, rm_st, "text")
+    held = Serves()
+    mm.harvest_attachments(held, two, bkm, bdoc, rm_out, rm_st, "keep",
+                           backfill=True)
+    got_rm = sorted(p_.name for p_ in (rm_out / "pdf").glob("*"))
+    check(got_rm == ["K1.pdf"],
+          f"--backfill archives the one that was never evacuated ({got_rm})")
+    check("K1-2.cif" not in got_rm,
+          "and does NOT restore the one a person deleted on purpose")
+    check(held.n == 1, f"withholding means not fetching it either ({held.n})")
+
+    # The dangerous direction: a tombstone that matches too much silently stops
+    # archiving real papers. Exact stems only, never a prefix.
+    pre_out = tmp / "prefix"
+    (mm.mirror_state_dir(pre_out) / "removed.tsv").write_text(
+        "K1\t2026-10-01\tthe first attachment only\n", encoding="utf-8")
+    pre_st = {}
+    mm.harvest_attachments(Serves(), two, bkm, bdoc, pre_out, pre_st, "text")
+    mm.harvest_attachments(Serves(), two, bkm, bdoc, pre_out, pre_st, "keep",
+                           backfill=True)
+    got_pre = sorted(p_.name for p_ in (pre_out / "pdf").glob("*"))
+    check(got_pre == ["K1-2.cif"],
+          f"a tombstone on K1 withholds K1 and NOT K1-2 ({got_pre})")
+
+    # removed.tsv must never become a reason to delete. An archive-eroding path
+    # is the defect this repo has now fixed twice; a list of filenames the tool
+    # consults is exactly how a third one would arrive.
+    keep_out = tmp / "tombstoned-but-present"
+    (mm.mirror_state_dir(keep_out) / "removed.tsv").write_text(
+        "K1\t2026-10-01\tdeleted, then put back by hand\n", encoding="utf-8")
+    (keep_out / "pdf").mkdir(parents=True, exist_ok=True)
+    (keep_out / "pdf" / "K1.pdf").write_bytes(pdf_bytes)
+    kst = {}
+    mm.harvest_attachments(Serves(), two, bkm, bdoc, keep_out, kst, "text")
+    mm.harvest_attachments(Serves(), two, bkm, bdoc, keep_out, kst, "keep",
+                           backfill=True)
+    check((keep_out / "pdf" / "K1.pdf").exists(),
+          "a listed stem whose file IS present is left alone: the list "
+          "withholds a fetch, it never causes a deletion")
+
     print("\nthe bytes decide what is a PDF, not the backend's opinion")
 
     # Mendeley reported a non-PDF MIME type for Vanommeslaeghe2009Charmm -- a

@@ -69,7 +69,7 @@ Two habits that came out of the same failure, and are cheaper than the debugging
 | where | what | why |
 |---|---|---|
 | the clone | all code | replaceable; `git pull` is the update mechanism |
-| `<out>/.mirror/` | `citekeys.json`, `state.json`, `mirror.log` | travels with the library, so every machine agrees what a citation key means and nobody re-extracts 2500 PDFs |
+| `<out>/.mirror/` | `citekeys.json`, `state.json`, `removed.tsv`, `mirror.log` | travels with the library, so every machine agrees what a citation key means and nobody re-extracts 2500 PDFs |
 | `~/.config/mendeley-mirror` (`%LOCALAPPDATA%` on Windows) | app ID, secret, tokens | per-machine on purpose: a public repo and a synced library both stay free of credentials |
 | `~/.cache/mendeley-mirror/pdf` | fetched PDFs | outside the library so grabbing one doesn't sync it everywhere |
 
