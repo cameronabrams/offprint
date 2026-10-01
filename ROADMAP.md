@@ -682,14 +682,29 @@ byte-identical against the live 2,739-reference library.
   is not negotiable: on this family of probes the first draft was wrong by an
   order of magnitude *every time* — 163 → 5, 103 → 2, 3 → 2.
 
-### One defect found while verifying, to fix before any of this ships
+### The display rule the spec now carries, which came out of verifying it
 
-The `and others` rows print a fixed-width **tail** of the author field, so
-`De Meyts, P. and Roth, J. and Neville, D.M. and others` displays as
-`nd Roth, J. and Neville, D.M. and others`. Detection is right; the display
-invents a mangled author name, which is precisely the kind of line a reader
-would then re-report as a defect. A report that manufactures findings is worse
-than no report.
+Verifying turned up a defect in the *reporting* rather than the detection: the
+`and others` rows printed a fixed-width **tail** of the author field, so
+`De Meyts, P. and Roth, J. and Neville, D.M. and others` displayed as
+`nd Roth, J. and Neville, D.M. and others` — a mangled author name the report
+had invented, and precisely the line a reader would then re-report as a defect.
+
+**Fixed in the spec, and it was in two further places** the library session
+found by looking rather than by patching what was named: titles were sliced at
+60 characters mid-word with the BibTeX brace still attached, and the report
+printed `hits[:40]` *silently*, so a section longer than 40 would have
+under-reported itself with no sign that it had. The rule is now explicit —
+**never a blind slice**: clip on a word boundary with a visible ellipsis, and a
+truncated section says `... and N more NOT SHOWN`.
+
+Re-verified here after the fix: 26 fixtures pass both directions, and the output
+is byte-identical to the regenerated baseline against the live library.
+
+Worth carrying across if this is built, because it generalises past this file: a
+generated report that manufactures a finding is worse than no report, and a
+silent `[:40]` is the same failure as a denominator that shrinks to fit its
+numerator.
 
 ### The part worth preserving if it is built
 
