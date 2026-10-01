@@ -675,6 +675,54 @@ the Windows scheduled task runs `refresh_quiet.bat`. The code fix protects them
 without anyone editing anything, which is the argument for having done it that
 way — but it only protects them once they pull.
 
+## 10. An attachment can be discarded without anything saying so — FIXED 0.12.0
+
+Reported by the library session 2026-10-01 and confirmed in code, not on trust.
+`Vanommeslaeghe2009Charmm` — the CGenFF paper, that record's only attachment —
+had no extract, and `extraction-report.md` did not mention it. The bytes in
+`pdf/` are a complete 20-page PDF with an intact text layer: 20 pages, 99,318
+characters, no garbling, verified against the archived file itself.
+
+Three defects, and the first is the smallest:
+
+- [x] **The MIME type decided what a PDF was.** `is_pdf = "pdf" in mime_type`
+      was the whole test, so a backend that misreports a type removes a paper
+      from every text search of the library. The bytes decide now
+      (`looks_like_pdf`). The MIME type is a hint.
+- [x] **The skip was silent, and that is the real defect.** Six attachments were
+      examined, judged and discarded, and the judgement was written nowhere —
+      no counter, no row, no section. `extraction-report.md` is the one file
+      whose job is to explain a missing extract, and for this class it said
+      nothing, which reads as nothing being wrong. Every skip now carries a row
+      and a reason, and `not-pdf` joined the re-report list so the row survives
+      the next refresh rather than appearing once. That last clause is not
+      theoretical: it is exactly how 108 OCR rows emptied out of this file in
+      September.
+- [x] **The archive could not be read back.** `keep` and `--backfill` write the
+      attachment's real extension; the reuse lookup was hardcoded to `.pdf`. So
+      six archived files were unreachable and a changed attachment went to the
+      network for bytes already on disk — against an account that has since been
+      downgraded to the free tier. `find_archived` is the inverse of
+      `archive_suffix`, and the two now have to stay inverses.
+
+**A third test was found asserting its own defect.** `erode.n == 1` had "the
+.cif only" written beside it as though re-fetching a non-PDF were expected
+behaviour; it was the hardcoded `.pdf`. The two before it were the 0.11.0
+erosion pair. All three were found by changing the code and watching a test go
+red — none by reading the test, and each had been read several times.
+
+**Blast radius is honest: one recoverable paper today**, plus five rows that
+should always have been printed. The reason it was worth doing now is the first
+Zotero refresh, which re-examines ~2,700 attachments at once against metadata
+nobody has audited. Whatever that run skips, it skips into a cached verdict that
+no later refresh revisits, and this file is the only instrument that would say
+so.
+
+- [ ] **The six cached `not-pdf` entries need clearing**, which is the library
+      session's to do and only after this ships: the download at the head of the
+      branch precedes the `continue`, so clearing first buys a re-download and
+      the same verdict. Code, then state, in that order.
+
 ## 9. A generated `metadata-report.md` — REQUESTED, NOT DECIDED
 
 Filed by the library session 2026-10-01, relayed as being at Cameron's

@@ -37,7 +37,7 @@ Usage:
 
 from __future__ import annotations
 
-__version__ = "0.11.0"
+__version__ = "0.12.0"
 """The tool's version, and the only place it is written down.
 
 It exists so a mirror can say what produced it. Extraction behaviour has changed
@@ -887,6 +887,56 @@ def annotation_markdown(doc: dict, key: str, annotations: list) -> str:
 
 # A page of a text-bearing paper yields hundreds of characters. A scanned page
 # yields a handful of stray marks, if that.
+PDF_MAGIC = b"%PDF-"
+
+
+def looks_like_pdf(data: bytes) -> bool:
+    """Is this a PDF by its bytes? The backend's MIME type does not decide.
+
+    `mime_type` is the backend's opinion and it is sometimes wrong. Mendeley
+    reported a non-PDF type for `Vanommeslaeghe2009Charmm` -- a complete
+    20-page CGenFF paper with an intact text layer -- and the attachment was
+    skipped, cached as skipped, and never mentioned in extraction-report.md.
+    Zotero's attachment metadata is a second set of opinions nobody has
+    audited, and the first Zotero refresh re-examines every attachment at once.
+
+    The header is allowed a short preamble because some writers emit bytes
+    before it and every PDF reader tolerates that.
+    """
+    return PDF_MAGIC in data[:1024]
+
+
+def archive_suffix(f: dict, is_pdf: bool) -> str:
+    """The extension `keep` and `--backfill` archive this attachment under."""
+    return ".pdf" if is_pdf else (Path(f.get("file_name") or "").suffix or ".bin")
+
+
+def find_archived(pdf_dir: Path, stem: str, f: dict | None = None) -> Path | None:
+    """The archived copy under whichever suffix it was actually written with.
+
+    The inverse of `archive_suffix`, and it has to exist: `keep` and
+    `--backfill` write the attachment's real extension, so this library holds
+    `.cif`, `.pdb`, `.png`, `.avi` and one mangled `.-_charmm_g` beside 2,739
+    `.pdf`. A lookup hardcoded to `.pdf` cannot see any of them, so a refresh
+    went to the network for bytes already sitting on disk -- against an account
+    that is being retired and has already been downgraded.
+
+    Candidates rather than a glob: a citation key is alphanumeric today, but a
+    glob would still be the kind of thing that quietly matches a neighbour.
+    """
+    candidates = [f"{stem}.pdf"]
+    if f is not None:
+        suffix = Path(f.get("file_name") or "").suffix
+        if suffix and suffix != ".pdf":
+            candidates.append(f"{stem}{suffix}")
+        candidates.append(f"{stem}.bin")
+    for name in candidates:
+        path = pdf_dir / name
+        if path.exists() and path.stat().st_size > 0:
+            return path
+    return None
+
+
 MIN_CHARS_PER_PAGE = 80
 
 # How much of a document's pages a line must appear on to be boilerplate rather
@@ -1170,6 +1220,7 @@ def write_extraction_report(rows: list, out: Path, extracted: int) -> None:
     ocred = [r for r in rows if r["status"] == "ocr"]
     garbled = [r for r in rows if r["status"] == "garbled"]
     ctrl = [r for r in rows if r["status"] == "control-chars"]
+    notpdf = [r for r in rows if r["status"] == "not-pdf"]
     lines = [
         "# Extraction report",
         "",
@@ -1178,10 +1229,17 @@ def write_extraction_report(rows: list, out: Path, extracted: int) -> None:
         f"- read by OCR: {len(ocred)}",
         f"- garbled text layer, pages repaired or dropped: {len(garbled)}",
         f"- control characters stripped: {len(ctrl)}",
+        f"- not a PDF, nothing to extract: {len(notpdf)}",
         f"- failed outright: {len(failed)}",
         "",
         "Anything under 'No extractable text' is invisible to any text search of",
-        "this folder. The PDF is still in Mendeley; only the mirror lacks it.",
+        "this folder. The attachment exists; its text does not.",
+        "",
+        "Anything under 'Not a PDF' was examined and discarded: the bytes carry no",
+        "PDF header, so there was nothing to extract. Some of these are correct --",
+        "a figure, a structure file, a video attached to a paper. Any of them that",
+        "is the record's ONLY attachment is a paper with no extract, and the line",
+        "says what the bytes actually looked like so the two can be told apart.",
         "",
         "Anything under 'Read by OCR' is searchable but was never typeset as text:",
         "a machine guessed every character. Those extracts carry ocr: true and a",
@@ -1199,7 +1257,8 @@ def write_extraction_report(rows: list, out: Path, extracted: int) -> None:
     ]
     for label, rows_ in (("No extractable text", empty), ("Read by OCR", ocred),
                          ("Garbled text layer", garbled),
-                         ("Control characters stripped", ctrl), ("Failed", failed)):
+                         ("Control characters stripped", ctrl),
+                         ("Not a PDF", notpdf), ("Failed", failed)):
         if not rows_:
             continue
         lines += [f"## {label}", ""]
@@ -1267,7 +1326,12 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                 if prior.get("filehash") == f.get("filehash") and (
                         text_target.exists() or prior.get("status") in ("no-text", "not-pdf")):
                     skipped += 1
-                    if prior.get("status") in ("no-text", "failed", "garbled"):
+                    if prior.get("status") in ("no-text", "failed", "garbled",
+                                                "not-pdf"):
+                        # `not-pdf` joined this list on 2026-10-01. Without it a
+                        # skipped attachment is reported on the run that skipped
+                        # it and never again -- which is exactly how 108 OCR rows
+                        # emptied out of the report on the next refresh.
                         report.append({"key": stem, "status": prior["status"],
                                        "title": doc.get("title", ""),
                                        "detail": prior.get("detail", "")})
@@ -1281,10 +1345,7 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                                        "detail": f"{prior.get('chars', 0)} characters "
                                                  f"across {prior.get('pages', 0)} pages"})
                     if backfill and mode == "keep":
-                        suffix = ".pdf" if is_pdf else (
-                            Path(f.get("file_name") or "").suffix or ".bin")
-                        archive = pdf_dir / f"{stem}{suffix}"
-                        if not (archive.exists() and archive.stat().st_size > 0):
+                        if find_archived(pdf_dir, stem, f) is None:
                             try:
                                 resp = client.get(f"{API}/files/{f['id']}",
                                                   accept="*/*", allow_redirects=False)
@@ -1292,6 +1353,9 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                                     resp = requests.get(resp.headers["Location"],
                                                         timeout=180)
                                 resp.raise_for_status()
+                                archive = pdf_dir / (
+                                    stem + archive_suffix(
+                                        f, looks_like_pdf(resp.content)))
                                 archive.write_bytes(resp.content)
                                 archived += 1
                                 progress(f"  {seen}/{total}  archiving {stem[:36]}")
@@ -1308,8 +1372,8 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                 try:
                     # An earlier run may already have pulled this PDF down. Re-use
                     # it rather than paying for the download twice.
-                    local = pdf_dir / f"{stem}.pdf"
-                    from_disk = local.exists() and local.stat().st_size > 0
+                    local = find_archived(pdf_dir, stem, f)
+                    from_disk = local is not None
                     if from_disk:
                         data = local.read_bytes()
                         reused += 1
@@ -1323,13 +1387,27 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                         resp.raise_for_status()
                         data = resp.content
 
+                    sniffed = looks_like_pdf(data)
                     if mode == "keep" and not from_disk:
-                        suffix = ".pdf" if is_pdf else (
-                            Path(f.get("file_name") or "").suffix or ".bin")
-                        (pdf_dir / f"{stem}{suffix}").write_bytes(data)
+                        (pdf_dir / (stem + archive_suffix(f, sniffed))).write_bytes(data)
 
-                    if not is_pdf:
-                        known[qualify(f["id"])] = {"filehash": f.get("filehash"), "status": "not-pdf"}
+                    if not sniffed:
+                        # The MIME type is a hint; the bytes are the verdict.
+                        # And a skip that says nothing is the defect, not the
+                        # skip: six attachments were judged here and the
+                        # judgement was written nowhere, so the one file whose
+                        # job is to explain a missing extract did not mention
+                        # them. A pass that does no work does not get to report
+                        # success, and discarding an attachment is work.
+                        detail = (f"{f.get('mime_type') or 'unknown type'}, "
+                                  f"{len(data)} bytes beginning {data[:8]!r}; "
+                                  "no PDF header, so there is nothing to extract")
+                        report.append({"key": stem, "status": "not-pdf",
+                                       "title": doc.get("title", ""),
+                                       "detail": detail})
+                        known[qualify(f["id"])] = {"filehash": f.get("filehash"),
+                                                   "status": "not-pdf",
+                                                   "detail": detail}
                         continue
 
                     body, pages, chars, content, garble = extract_pdf_text(data)
@@ -1380,7 +1458,8 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                         fetched += 1
                     known[qualify(f["id"])] = {"filehash": f.get("filehash"), "status": status,
                                       "detail": detail, "pages": pages, "chars": chars}
-                    if mode == "text" and local.exists() and not from_disk:
+                    stub = pdf_dir / f"{stem}.pdf"
+                    if mode == "text" and not from_disk and stub.exists():
                         # `not from_disk` is the whole fix. `text` mode writes
                         # nothing to pdf_dir -- extraction runs on bytes in
                         # memory -- so anything of substance found here was put
@@ -1394,7 +1473,7 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                         # The account it says that about expires, and `<out>/pdf/`
                         # is the answer to that -- so the line quietly ate one
                         # archived PDF for every attachment that changed.
-                        local.unlink()
+                        stub.unlink()
                     if seen % 25 == 0:
                         save_json(state_path, state)  # so Ctrl-C keeps the progress
                     if not from_disk:
@@ -1869,6 +1948,10 @@ def run(args, out: Path, mirror_dir: Path) -> int:
         no_text = sum(1 for r in report if r["status"] == "no-text")
         if no_text:
             note(f"  {no_text} attachments had no text layer; see extraction-report.md")
+        not_pdf = sum(1 for r in report if r["status"] == "not-pdf")
+        if not_pdf:
+            note(f"  {not_pdf} attachments were not PDFs and were not extracted; "
+                 "see extraction-report.md")
 
     # written last, so its "text" column reflects what is actually on disk
     write_index(docs, keymap, files_by_doc, ann_by_doc, out)

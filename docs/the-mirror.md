@@ -24,7 +24,7 @@ extraction instead of being fetched again, then removed.
 
 Not every PDF yields clean prose, and the difference decides what the extract is
 good for. `extraction-report.md` lists every attachment that is not ordinary
-text, in three classes:
+text, in four classes:
 
 - **No text layer** — an image-only scan. It is mirrored and citable but
   invisible to any text search, so the report exists to make that gap a known
@@ -39,6 +39,19 @@ text, in three classes:
   Since 2026-09-16 each garbled page is re-read with `pdftotext` when that
   produces something better, and the extract records how many pages were repaired
   or dropped.
+- **Not a PDF** — the attachment was examined and discarded, because its bytes
+  carry no PDF header. Often that is right: a figure, a structure file, a video
+  attached to a paper. But where it is the record's *only* attachment, it is a
+  paper with no extract, so the row prints what the bytes actually were and the
+  two can be told apart. Until 0.12.0 this class was skipped **silently** —
+  nothing counted it and nothing listed it, so a readable paper could be missing
+  from every text search while the file whose job is to explain missing extracts
+  said nothing at all.
+
+  Which attachment counts as a PDF is decided by the bytes, not by the MIME type
+  the backend reports. Mendeley described a complete 20-page paper as something
+  else, and under that older rule it was skipped, cached as skipped, and never
+  reconsidered by any later refresh.
 
 Two smaller traps worth knowing. A short extract is not evidence of a short
 paper: some scans are dozens of pages of one repeated permission stamp, and the

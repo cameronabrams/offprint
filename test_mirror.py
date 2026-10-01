@@ -878,6 +878,9 @@ def main():
           "and names the paper under its own heading")
     check("silent zero" in crep, "and says what would have gone wrong")
 
+    CIF_BYTES = b"data_K1\n_cell_length_a 5.43\n"
+    PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+
     # --attachments keep does NOT archive a library that is already mirrored:
     # the skip fires for every unchanged attachment and continues before any
     # download. Correct for a refresh, wrong for an evacuation -- and the run
@@ -885,13 +888,17 @@ def main():
     # difference between "get the PDFs off this service" working and appearing to.
     print("\n--backfill archives what a keep run skips")
 
+    # Serves bytes that MATCH the declared type. The stub used to hand PDF
+    # bytes to a .cif attachment, which no longer passes unnoticed now that the
+    # bytes decide: a fixture that lies about its own content cannot test a
+    # sniff.
     class Serves:
         def __init__(self): self.n = 0
         def get(self, url, **kw):
             self.n += 1
-            outer = self
+            body = CIF_BYTES if "f2" in url else pdf_bytes
             class R:
-                status_code = 200; ok = True; content = pdf_bytes
+                status_code = 200; ok = True; content = body
                 def raise_for_status(self): pass
             return R()
 
@@ -948,8 +955,15 @@ def main():
     mm.harvest_attachments(erode, changed, bkm, bdoc, bf, bst, "text")
     still = sorted(p_.name for p_ in (bf / "pdf").glob("*"))
     check(still == kept, f"an archived PDF survives a text-mode reprocess ({still})")
-    check(erode.n == 1,
-          f"and was re-used from disk, not re-downloaded ({erode.n} fetched: the .cif only)")
+    # This asserted `== 1` until 2026-10-01, with "the .cif only" written beside
+    # it as though re-fetching were expected. It was the hardcoded `.pdf` in the
+    # reuse lookup: the .cif sat archived and unreachable, so every changed
+    # attachment that was not a .pdf went back to the network. The third test in
+    # this file found asserting its own defect, and the third found by changing
+    # the code rather than by reading it.
+    check(erode.n == 0,
+          f"and BOTH were re-used from disk, whatever suffix they are "
+          f"archived under ({erode.n} downloads)")
 
     # The one thing it should still clear: a zero-byte stub from a download that
     # died. That is not an archive, and leaving it would make the next run skip
@@ -1000,6 +1014,126 @@ def main():
          "dX": [{"id": "x9", "mime_type": "application/pdf", "filehash": "h9"}]},
         {mm.qualify("d1"): "Muller2020Yield"}, {"d1": DOCS[0]}, staged("ns3"), st3, "text")
     check(f3 == 1, "one unkeyed document among several is skipped, not raised over")
+
+    print("\nthe bytes decide what is a PDF, not the backend's opinion")
+
+    # Mendeley reported a non-PDF MIME type for Vanommeslaeghe2009Charmm -- a
+    # complete 20-page CGenFF paper, text layer intact -- so `"pdf" in
+    # mime_type` skipped it, cached the skip, and the report never said so.
+    check(mm.looks_like_pdf(pdf_bytes), "real PDF bytes are a PDF")
+    check(mm.looks_like_pdf(b"\n\n" + pdf_bytes),
+          "and so are PDF bytes behind a short preamble, which writers do emit")
+    # What it must REJECT, or a sniff is just an accept-everything with a name:
+    check(not mm.looks_like_pdf(PNG_BYTES), "a PNG is not")
+    check(not mm.looks_like_pdf(CIF_BYTES), "nor is a structure file")
+    check(not mm.looks_like_pdf(b""), "nor is nothing at all")
+    check(not mm.looks_like_pdf(b"x" * 4096 + mm.PDF_MAGIC),
+          "and a header 4 KB in is not a header: the window is bounded")
+
+    print("\nthe archive is found under the suffix it was written with")
+
+    adir = tmp / "arch"
+    adir.mkdir()
+    cif_rec = {"file_name": "structure.cif"}
+    (adir / "K9-2.cif").write_bytes(CIF_BYTES)
+    check(mm.find_archived(adir, "K9-2", cif_rec) == adir / "K9-2.cif",
+          "a .cif archive is reachable, where a hardcoded .pdf saw nothing")
+    (adir / "K9.pdf").write_bytes(pdf_bytes)
+    check(mm.find_archived(adir, "K9", {"file_name": "paper.pdf"}) == adir / "K9.pdf",
+          "and a .pdf still is")
+    check(mm.find_archived(adir, "K8", cif_rec) is None,
+          "a stem with no archive is None, never a neighbour's file")
+    (adir / "K7.pdf").write_bytes(b"")
+    check(mm.find_archived(adir, "K7", None) is None,
+          "and a zero-byte stub is not an archive")
+
+    print("\nan attachment whose MIME type lies is still extracted")
+
+    class ServesPdf:
+        def __init__(self): self.n = 0
+        def get(self, url, **kw):
+            self.n += 1
+            class R:
+                status_code = 200; ok = True; content = pdf_bytes
+                def raise_for_status(self): pass
+            return R()
+
+    lying = {"d1": [{"id": "L1", "mime_type": "application/octet-stream",
+                     "filehash": "hL", "file_name": "charmm_gen.-_charmm_g"}]}
+    lkm = {mm.qualify("d1"): "Vanommeslaeghe2009Charmm"}
+    liar, lst = tmp / "liar", {}
+    lf, _ls, _lx, lrep = mm.harvest_attachments(
+        ServesPdf(), lying, lkm, {"d1": DOCS[0]}, liar, lst, "text")
+    check(lf == 1, "a PDF behind a wrong MIME type is extracted")
+    check((liar / "text" / "Vanommeslaeghe2009Charmm.md").exists(),
+          "and its extract exists, where the library has none today")
+    check(not any(r["status"] == "not-pdf" for r in lrep),
+          "and it is not filed as a non-PDF, because it is not one")
+
+    print("\nan attachment that really is not a PDF is reported, every run")
+
+    class ServesPng:
+        def __init__(self): self.n = 0
+        def get(self, url, **kw):
+            self.n += 1
+            class R:
+                status_code = 200; ok = True; content = PNG_BYTES
+                def raise_for_status(self): pass
+            return R()
+
+    notpdf = {"d1": [{"id": "P1", "mime_type": "image/png", "filehash": "hP",
+                      "file_name": "equation.png"}]}
+    pkm = {mm.qualify("d1"): "Hoover1979Exact"}
+    png, pst = tmp / "png", {}
+    pf, _ps, _px, prep = mm.harvest_attachments(
+        ServesPng(), notpdf, pkm, {"d1": DOCS[0]}, png, pst, "text")
+    check(pf == 0, "a PNG is not extracted, which was always correct")
+    rows_np = [r for r in prep if r["status"] == "not-pdf"]
+    check(len(rows_np) == 1 and rows_np[0]["key"] == "Hoover1979Exact",
+          "and it IS reported: the silence was the defect, not the skip")
+    check("image/png" in rows_np[0]["detail"] and "PNG" in rows_np[0]["detail"],
+          f"with what the bytes were, so a figure and a paper can be told "
+          f"apart ({rows_np[0]['detail']})")
+    check(not (png / "text" / "Hoover1979Exact.md").exists(),
+          "and no extract is invented for it")
+
+    # The run that SKIPS it must report it too, or the row lives exactly one
+    # refresh. That is how 108 OCR rows emptied out of the report in September.
+    again_png = ServesPng()
+    _f, sk, _x, prep2 = mm.harvest_attachments(
+        again_png, notpdf, pkm, {"d1": DOCS[0]}, png, pst, "text")
+    check(sk == 1 and again_png.n == 0, "a second run skips it on cached state")
+    check(any(r["status"] == "not-pdf" and r["key"] == "Hoover1979Exact"
+              for r in prep2),
+          "and reports it anyway -- a cached skip is still a missing extract")
+
+    nrows = [{"key": "Hoover1979Exact", "status": "not-pdf",
+              "title": "Exact hard-disk free volumes",
+              "detail": "image/png, 72 bytes beginning b'\\x89PNG'"}]
+    mm.write_extraction_report(nrows, out, extracted=0)
+    nrep = (out / "extraction-report.md").read_text(encoding="utf-8")
+    check("not a PDF, nothing to extract: 1" in nrep, "the report counts them")
+    check("## Not a PDF" in nrep and "Hoover1979Exact" in nrep,
+          "and names each under its own heading")
+    check("ONLY attachment" in nrep,
+          "and says which of these rows are papers rather than figures")
+    check("still in Mendeley" not in nrep,
+          "and no longer promises the PDF is safe in an account that has "
+          "already been downgraded")
+
+    print("\na refresh reads its own archive instead of the network")
+
+    reuse, rst = tmp / "reuse", {}
+    (reuse / "pdf").mkdir(parents=True)
+    (reuse / "pdf" / "Vanommeslaeghe2009Charmm.-_charmm_g").write_bytes(pdf_bytes)
+    net = ServesPdf()
+    rf, _rs, _rx, _rr = mm.harvest_attachments(
+        net, lying, lkm, {"d1": DOCS[0]}, reuse, rst, "text")
+    check(rf == 1 and net.n == 0,
+          f"an archive under its real suffix is reused, not re-fetched from an "
+          f"account being retired (downloads={net.n})")
+    check((reuse / "pdf" / "Vanommeslaeghe2009Charmm.-_charmm_g").exists(),
+          "and a text-mode run still does not erode it")
 
     print("\nsecond attachments are reachable (get_pdf.py <key>-2)")
     import get_pdf as getpdf
