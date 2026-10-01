@@ -2073,14 +2073,37 @@ def main():
     print("\nzotero_attach: pairing, and the protocol it speaks")
     import zotero_attach as za
 
-    # 149 linked_url bookmarks came across in the migration. They are links, not
-    # attachments, and counting them is how the import's 2,894 became 2,745.
+    # Two of Zotero's four link modes are storage-backed and this filter kept
+    # one. 24 records in the library have an imported_url as their ONLY child --
+    # application/pdf, a filename, md5 None, exactly the shape of an
+    # imported_file awaiting bytes -- and they were skipped as bookmarks and
+    # then reported as having nowhere to put a PDF.
     kids = [{"key": "A1", "data": {"linkMode": "imported_file", "filename": "x.pdf"}},
-            {"key": "A2", "data": {"linkMode": "linked_url"}},
-            {"key": "A3", "data": {"linkMode": "imported_url", "filename": "y.pdf"}}]
-    got_if = za.imported_files(kids)
-    check([c["key"] for c in got_if] == ["A1"],
-          "only imported_file children can receive bytes")
+            {"key": "A2", "data": {"linkMode": "linked_url", "filename": None,
+                                   "contentType": ""}},
+            {"key": "A3", "data": {"linkMode": "imported_url", "filename": "y.pdf",
+                                   "contentType": "application/pdf"}},
+            {"key": "A4", "data": {"linkMode": "linked_file", "path": "/home/x/y.pdf",
+                                   "filename": "y.pdf"}}]
+    got_if = za.storage_attachments(kids)
+    check([c["key"] for c in got_if] == ["A1", "A3"],
+          f"imported_file AND imported_url can receive bytes ({[c['key'] for c in got_if]})")
+    check("A2" not in [c["key"] for c in got_if],
+          "a linked_url bookmark cannot: no filename, no content type")
+    check("A4" not in [c["key"] for c in got_if],
+          "and neither can a linked_file, whose bytes are on someone's disk "
+          "and are not Zotero's to hold")
+
+    # The case that used to become a confident WRONG pairing: one archived file,
+    # one imported_file and one imported_url. The old filter saw a single
+    # attachment and called it unambiguous. Now the arithmetic sees both, and
+    # two .pdf candidates is a report rather than a coin flip.
+    mixed = za.storage_attachments([
+        {"key": "M1", "data": {"linkMode": "imported_file", "filename": "a.pdf"}},
+        {"key": "M2", "data": {"linkMode": "imported_url", "filename": "b.pdf"}}])
+    _p, prob_mixed = za.pair_attachments([Path("K9.pdf")], mixed)
+    check(prob_mixed and "imported_url" in prob_mixed,
+          f"a mixed-mode record is reported, and names the modes ({prob_mixed})")
 
     one_local = [Path("K1.pdf")]
     one_item = [{"key": "A1", "data": {"linkMode": "imported_file", "filename": "orig.pdf"}}]

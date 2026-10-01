@@ -270,9 +270,38 @@ against a `.pdf` and a `.cif`, and a unique extension match is not a guess.
 `Shan2011How` stays reported: two PDFs among three attachments cannot be told
 apart.
 
-- [ ] **The 24 records with no `imported_file` attachment in Zotero** are a
-      migration finding, not a tool one, and they are the library session's to
-      look at: those papers have a record and no file to put the PDF in.
+- [x] **The 24 records with "no attachment to put them in" had one.** Not a
+      migration finding at all — a third link mode the filter dropped. Zotero
+      has four and **two of them are storage-backed**: `imported_file` and
+      `imported_url`. The filter kept one.
+
+      All 24 have exactly one child and all 24 are `imported_url`, each with
+      `application/pdf`, an `m-api-<uuid>.pdf` filename and `md5: None` — the
+      same shape as every `imported_file` in the census. A real bookmark looks
+      nothing like it: the `linked_url` child of `Vanommeslaeghe2009Charmm` has
+      no filename and an empty content type. `imported_url` is what Mendeley's
+      import produced for attachments it had recorded as fetched from a URL; the
+      provenance differs, the storage behaviour does not.
+
+      **The function was called `imported_files`, and that is how this stayed
+      invisible.** The name made the filter look obviously correct, and the
+      docstring reasoned carefully about the mode it excluded on purpose while
+      never mentioning the one it excluded by accident. A comment explaining why
+      one thing is out reads, at a glance, as an account of everything that is
+      out. It is now `storage_attachments`, with all four modes named and a
+      reason beside each.
+
+      The second half is worse than the 24 and the library session flagged it
+      without being able to measure it: **a record holding both an
+      `imported_file` and an `imported_url` child.** The old filter saw one of
+      them, so the arithmetic ran against a short count and "1 archived file
+      against 1 attachment" came out *unambiguous* — a confident wrong pairing,
+      which is the one outcome this script is built to refuse. With both modes
+      counted it is two `.pdf` candidates and therefore a report.
+
+- [ ] **UNVERIFIED: whether Zotero accepts an upload against an `imported_url`
+      item.** Nobody has tested it, because testing it is a write. The first
+      live run does one alone with `--key` before the other 2,581.
 
 Once this has run, the exposure in item 1 changes shape: the PDFs stop being a
 single local copy excluded from every replica, and Zotero becomes a second place

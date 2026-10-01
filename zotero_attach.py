@@ -85,15 +85,46 @@ MAX_TRIES = 5
 # pairing -- pure, and the part most worth testing
 # --------------------------------------------------------------------------
 
-def imported_files(children: list) -> list:
-    """The children that are files Zotero expects to hold bytes for.
+# Zotero has four attachment link modes and TWO of them are storage-backed.
+# This set was `{"imported_file"}` until 2026-10-01, and the function was called
+# `imported_files`, which is how the mistake stayed invisible: the name made the
+# filter look obviously right, and the docstring reasoned carefully about the
+# mode it did exclude while never mentioning the one it excluded by accident.
+#
+#   imported_file  bytes in Zotero storage                          -- IN
+#   imported_url   bytes in Zotero storage, plus the source url     -- IN
+#   linked_file    a path on this machine; the bytes are not Zotero's -- out
+#   linked_url     a bookmark: no filename, no content type at all   -- out
+STORAGE_MODES = {"imported_file", "imported_url"}
 
-    `linked_url` children are bookmarks -- 149 of them came across in the
-    migration and they are links, not attachments. Counting them is how the
-    import's 2,894 became the mirror's 2,745.
+
+def storage_attachments(children: list) -> list:
+    """The children Zotero expects to hold bytes for.
+
+    `linked_url` children are bookmarks -- 149 came across in the migration and
+    they are links, not attachments. Counting them is how the import's 2,894
+    became the mirror's 2,745. A bookmark is recognisable without consulting the
+    mode at all: it has no `filename` and an empty `contentType`.
+
+    `imported_url` is what Mendeley's import produced for attachments it had
+    recorded as fetched from a URL. The provenance differs from `imported_file`;
+    the storage behaviour does not. 24 records in this library have one as their
+    only child, each carrying `application/pdf`, an `m-api-<uuid>.pdf` filename
+    and `md5: None` -- storage slots awaiting bytes, and until this was widened
+    they were skipped as though they were bookmarks, then reported as records
+    with nowhere to put a PDF.
+
+    `linked_file` stays out for the opposite reason: its bytes are at a path on
+    someone's disk and are not Zotero's to hold, so there is nothing to upload
+    into.
+
+    **UNVERIFIED, 2026-10-01: whether Zotero accepts an upload against an
+    `imported_url` item.** Nobody has tested it, because testing it is a write.
+    The first live run should do one of these alone, with `--key`, before the
+    other 2,581.
     """
     return [c for c in children
-            if (c.get("data") or {}).get("linkMode") == "imported_file"]
+            if (c.get("data") or {}).get("linkMode") in STORAGE_MODES]
 
 
 def zotero_suffix(item: dict) -> str:
@@ -153,11 +184,12 @@ def pair_attachments(locals_: list, items: list,
 
     local_suffixes = [p.suffix.lower() for p in locals_]
     zotero_suffixes = [zotero_suffix(it) for it in items]
+    modes = [(it.get("data") or {}).get("linkMode") for it in items]
     if by_order and len(locals_) == len(items):
         return list(zip(locals_, items)), None
     return [], (f"{len(locals_)} archived against {len(items)} in Zotero, no "
                 f"unambiguous pairing (archive {local_suffixes}, "
-                f"zotero {zotero_suffixes})")
+                f"zotero {zotero_suffixes}, modes {modes})")
 
 
 def plan_metadata(item: dict, path: Path, is_pdf: bool) -> dict:
@@ -392,7 +424,7 @@ def main() -> None:
             continue
 
         children = z.paged(f"items/{zkey}/children", quiet=True)
-        items = imported_files(children)
+        items = storage_attachments(children)
         pairs, problem = pair_attachments(locals_, items, by_order=args.pair_by_order)
         if problem:
             problems.append(f"{citekey} ({zkey}): {problem}")
