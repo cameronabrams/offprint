@@ -204,16 +204,28 @@ evidence, not a shortcut taken now.
 - [ ] **The first live run is `literature`'s**, and should start with `--limit`
       or a single `--key`. A dry run performs no write at all: it stops before
       the authorization, which is itself a POST.
-- [ ] **Decide what to do about `Vanommeslaeghe2009Charmm`.** Its Zotero
-      attachment declares `application/octet-stream` and a filename ending
-      `.-_charmm_g`. Uploading PDF bytes under that name leaves Zotero holding a
-      PDF it will not treat as one. Fixing it is a PATCH on the item's
-      `contentType` and `filename`, which this script deliberately does not do —
-      it uploads bytes, it does not edit metadata.
-- [ ] **Decide whether to keep Mendeley's filenames at all.** The script uses
-      the filename the Zotero item already declares, which is the least
-      surprising thing and keeps this run to one kind of change. Renaming 2,740
-      attachments to `<citekey>.pdf` is tidier and is a separate decision.
+- [x] **Both metadata decisions made by Cameron, 2026-10-01: do them.** The
+      script now PATCHes each attachment to describe the file it is given,
+      before uploading it.
+
+      `Vanommeslaeghe2009Charmm` declared `application/octet-stream` for a
+      complete PDF under a mangled `.-_charmm_g` filename, so Zotero would have
+      stored a PDF it did not treat as one. And Mendeley's filenames are
+      replaced throughout by the archive's own `<citekey><ext>`, which is the
+      name `library.bib`, `text/<key>.md` and `findings/` already use — one name
+      for one paper across the whole system, instead of a per-service accident.
+
+      Three properties keep a bulk metadata write from being the dangerous kind,
+      and they are the same three `mendeley_edit.py` needed. Zotero's PATCH is a
+      real partial merge, so unnamed fields are untouched. Only fields that
+      actually differ are sent, so a re-run after a partial failure writes
+      nothing. And a content type is never invented: bytes that are not a PDF
+      keep whatever the item declares, because `looks_like_pdf` knows one thing
+      and the function must not pretend to know more.
+
+      A 412 is reported and the item left alone — never re-read and retried,
+      since a retry overwrites exactly the edit that caused the conflict.
+      `--no-metadata` uploads bytes only.
 
 Once this has run, the exposure in item 1 changes shape: the PDFs stop being a
 single local copy excluded from every replica, and Zotero becomes a second place

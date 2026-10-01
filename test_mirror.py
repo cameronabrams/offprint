@@ -2190,6 +2190,61 @@ def main():
     check(again["uploadKey"] == "UK1" and len(sess3.calls) == 2,
           f"a 429 is retried after Retry-After rather than failing the run ({len(sess3.calls)})")
 
+    print("\nzotero_attach makes Zotero describe the file it is given")
+
+    # Vanommeslaeghe2009Charmm: application/octet-stream for a complete PDF,
+    # under Mendeley's mangled filename. Both crossed the migration intact.
+    bad = {"key": "V1", "version": 42,
+           "data": {"linkMode": "imported_file",
+                    "filename": "2010-CHARMM_general_force_field_biolo.-_charmm_g",
+                    "contentType": "application/octet-stream"}}
+    want = za.plan_metadata(bad, Path("Vanommeslaeghe2009Charmm.pdf"), True)
+    check(want == {"filename": "Vanommeslaeghe2009Charmm.pdf",
+                   "contentType": "application/pdf"},
+          f"a mangled name and a wrong type are both corrected ({want})")
+
+    good = {"key": "G1", "version": 7,
+            "data": {"linkMode": "imported_file", "filename": "Abrams2013Enhanced.pdf",
+                     "contentType": "application/pdf"}}
+    check(za.plan_metadata(good, Path("Abrams2013Enhanced.pdf"), True) == {},
+          "an attachment already describing itself correctly is left alone, "
+          "so a re-run after a partial failure sends nothing")
+
+    # Must REFUSE to invent a type. This function knows what a PDF looks like
+    # and nothing else; guessing 'application/pdf' for bytes that are not one
+    # is how a library acquires metadata nobody can trust.
+    notpdf_item = {"key": "N1", "version": 3,
+                   "data": {"linkMode": "imported_file", "filename": "old.avi",
+                            "contentType": "video/x-msvideo"}}
+    want_np = za.plan_metadata(notpdf_item, Path("Shan2011How.avi"), False)
+    check(want_np == {"filename": "Shan2011How.avi"},
+          f"a non-PDF is renamed but keeps its declared type ({want_np})")
+
+    check(za.item_version({"version": 42, "data": {}}) == 42, "the item version is read")
+    check(za.item_version({"data": {"version": 11}}) == 11, "from data when it is only there")
+    check(za.item_version({"data": {}}) is None,
+          "and is None when absent -- a PATCH without one is refused, not guessed")
+
+    class FakePatchSession(FakeSession):
+        def patch(self, url, json=None, headers=None, timeout=None):
+            self.calls.append({"url": url, "json": json, "headers": headers or {}})
+            return self.replies.pop(0)
+
+    ps = FakePatchSession([FakeResp(204)])
+    ok_patch = za.ZoteroWriter(FakeZ(ps)).patch_item("V1", 42, {"contentType": "application/pdf"})
+    check(ok_patch is True, "a 204 is a successful patch")
+    check(ps.calls[0]["url"] == "https://api/users/9/items/V1",
+          f"PATCH addresses the item ({ps.calls[0]['url']})")
+    check(ps.calls[0]["headers"].get("If-Unmodified-Since-Version") == "42",
+          "carrying the version it read, so a concurrent edit wins instead of us")
+    check(ps.calls[0]["json"] == {"contentType": "application/pdf"},
+          "and sends ONLY the changed field -- Zotero leaves the rest untouched")
+
+    ps2 = FakePatchSession([FakeResp(412)])
+    check(za.ZoteroWriter(FakeZ(ps2)).patch_item("V1", 1, {"filename": "x.pdf"}) is False,
+          "a 412 is reported as a conflict, never retried: a retry would "
+          "overwrite whatever edit caused it")
+
     print("\nPEP 723 headers: eleven copies of the dependency list, kept honest")
 
     # There is no pyproject.toml here on purpose -- every script carries its own

@@ -61,7 +61,7 @@ Four scripts break that on purpose:
 | `inbox.py` | Mendeley | attaches a PDF to a reference, creating the reference from its DOI if it is new |
 | `mendeley_push.py` | Mendeley | adds one reference, from an arXiv ID or a DOI |
 | `mendeley_edit.py` | Mendeley | corrects fields on a reference that already exists |
-| `zotero_attach.py` | Zotero | uploads the mirrored PDFs into attachments that already exist |
+| `zotero_attach.py` | Zotero | uploads the mirrored PDFs into attachments that already exist, and corrects each one's filename and content type to match |
 
 The three Mendeley scripts are interactive by default. `--dry-run` is the safe
 thing to run and the right thing to show someone before a batch. `--yes` is for a

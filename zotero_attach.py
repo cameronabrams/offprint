@@ -11,10 +11,30 @@ parent, and nothing behind it. The bytes are in `<out>/pdf/`, evacuated from
 Mendeley by `mendeley_mirror.py --backfill`, and that archive is now the only
 copy of them that is not behind a subscription.
 
-This script fills those attachments in. It does not create them: where Zotero
-has no `imported_file` attachment for a record, that is reported, because
-inventing an item is a different kind of write from supplying bytes for one that
-exists, and nobody has asked for the first.
+This script fills those attachments in, and makes each one describe the file it
+is given. It does not create them: where Zotero has no `imported_file`
+attachment for a record, that is reported, because inventing an item is a
+different kind of write from supplying bytes for one that exists.
+
+Two things arrived wrong through the migration, from Mendeley rather than
+because of Zotero, and both are corrected by a PATCH before the upload:
+
+- **The filename is Mendeley's.** The archive names every attachment
+  `<citekey>` plus its real extension, which is the name `library.bib`,
+  `text/<key>.md` and `findings/` all already use. One of them is the mangled
+  `...biolo.-_charmm_g`.
+- **The content type can be wrong.** `Vanommeslaeghe2009Charmm` declares
+  `application/octet-stream` for a complete PDF, so Zotero would store a PDF it
+  does not treat as one. Only the bytes decide that, and a type is never
+  invented: bytes that are not a PDF keep whatever type the item declares.
+
+Zotero's PATCH is a real partial merge — "Properties not included in the
+uploaded JSON are left untouched on the server" — which is what makes it safe to
+point at 2,740 items. Only fields that actually differ are sent, so a re-run
+after a partial failure writes nothing. A 412 means the item changed since this
+run read it; that is reported and the item is left alone, never re-read and
+retried, because a retry would overwrite whatever that edit was. `--no-metadata`
+turns all of this off and uploads bytes only.
 
     uv run --script zotero_attach.py                 # dry run: GETs only
     uv run --script zotero_attach.py --yes           # the real thing
@@ -54,7 +74,8 @@ import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from mendeley_mirror import DEFAULT_OUT, load_json, load_removed, mirror_state_dir  # noqa: E402
+from mendeley_mirror import (DEFAULT_OUT, load_json, load_removed,  # noqa: E402
+                             looks_like_pdf, mirror_state_dir)
 from zotero_migrate import Zotero, load_zotero_credentials  # noqa: E402
 
 MAX_TRIES = 5
@@ -108,6 +129,43 @@ def pair_attachments(locals_: list, items: list) -> tuple[list, str | None]:
 
     return [], (f"{len(locals_)} attachments with no unambiguous pairing "
                 f"(archive {local_suffixes}, zotero {zotero_suffixes})")
+
+
+def plan_metadata(item: dict, path: Path, is_pdf: bool) -> dict:
+    """The fields that should change so Zotero describes the file it is given.
+
+    Two things are wrong on the Zotero side and both came through the migration
+    from Mendeley rather than being introduced by it:
+
+    - **The filename is Mendeley's**, which for one record is the mangled
+      `...biolo.-_charmm_g`. The archive names every attachment `<citekey>` plus
+      its real extension, and that is the name every other part of this system
+      already uses -- `library.bib`, `text/<key>.md`, `findings/`.
+    - **The content type can be wrong.** `Vanommeslaeghe2009Charmm` declares
+      `application/octet-stream` for a complete PDF, so Zotero would hold a PDF
+      it does not treat as one. Only the bytes get to decide that, which is the
+      same rule `looks_like_pdf` exists for.
+
+    Returns only what differs, so a re-run after a partial failure sends
+    nothing. A content type is never *invented*: if the bytes are not a PDF the
+    declared type is left exactly as it is, because this function knows what a
+    PDF looks like and nothing else.
+    """
+    data = item.get("data") or {}
+    want = {}
+    if data.get("filename") != path.name:
+        want["filename"] = path.name
+    if is_pdf and data.get("contentType") != "application/pdf":
+        want["contentType"] = "application/pdf"
+    return want
+
+
+def item_version(item: dict) -> int | None:
+    """The version PATCH must be told, so a concurrent edit loses rather than us."""
+    v = item.get("version")
+    if v is None:
+        v = (item.get("data") or {}).get("version")
+    return v
 
 
 def needs_upload(item: dict) -> bool:
@@ -178,6 +236,27 @@ class ZoteroWriter:
             timeout=600), "upload")
         resp.raise_for_status()
 
+    def patch_item(self, item_key: str, version: int, fields: dict) -> bool:
+        """Change only the named fields on an attachment item.
+
+        Zotero's PATCH is a real partial merge -- "Properties not included in
+        the uploaded JSON are left untouched on the server" -- which is the
+        property that makes this safe to point at 2,740 items. The version
+        precondition means a 412 is a concurrent edit, and the right response to
+        that is to report it and leave the item alone, never to re-read and
+        retry: a retry would quietly overwrite whatever that edit was.
+        """
+        resp = self._retrying(lambda: self.session.patch(
+            f"{self.base}/items/{item_key}",
+            json=fields,
+            headers={"If-Unmodified-Since-Version": str(version),
+                     "Content-Type": "application/json"},
+            timeout=60), f"patch {item_key}")
+        if resp.status_code == 412:
+            return False
+        resp.raise_for_status()
+        return True
+
     def register(self, item_key: str, upload_key: str) -> None:
         resp = self._retrying(lambda: self.session.post(
             f"{self.base}/items/{item_key}/file",
@@ -224,6 +303,9 @@ def main() -> None:
                     help="limit to this citation key (repeatable)")
     ap.add_argument("--limit", type=int, default=0,
                     help="stop after this many uploads, for a cautious first run")
+    ap.add_argument("--no-metadata", action="store_true",
+                    help="upload bytes only; leave each attachment's filename and "
+                         "content type as the migration left them")
     args = ap.parse_args()
 
     out: Path = args.out
@@ -254,7 +336,7 @@ def main() -> None:
     print(f"  mirror  {out}")
     print(f"  records {len(zotero_keys)}\n")
 
-    uploaded = existing = skipped_removed = 0
+    uploaded = existing = skipped_removed = patched = 0
     would_bytes = 0
     problems: list = []
     order_checked = order_agreed = 0
@@ -285,11 +367,37 @@ def main() -> None:
 
         for path, item in pairs:
             item_key = item.get("key") or (item.get("data") or {}).get("key")
+            data = path.read_bytes()
+
+            # Metadata first, so the name the upload is authorized under is the
+            # name the item will carry. Done even for an attachment whose bytes
+            # are already in Zotero: a wrong filename is wrong either way, and
+            # this is the run that is looking at every record.
+            fields = {} if args.no_metadata else plan_metadata(
+                item, path, looks_like_pdf(data))
+            if fields:
+                shown = ", ".join(f"{k}={v!r}" for k, v in sorted(fields.items()))
+                if not args.yes:
+                    print(f"  would patch   {citekey} -> {item_key}  {shown}")
+                    patched += 1
+                else:
+                    version = item_version(item)
+                    if version is None:
+                        problems.append(f"{citekey} ({item_key}): no item version, "
+                                        "cannot PATCH safely")
+                    elif writer.patch_item(item_key, version, fields):
+                        print(f"  patched  {citekey} -> {item_key}  {shown}", flush=True)
+                        patched += 1
+                    else:
+                        problems.append(
+                            f"{citekey} ({item_key}): 412, the item changed since "
+                            "this run read it -- left alone, re-run to pick it up")
+                        continue
+
             if not needs_upload(item):
                 existing += 1
                 continue
-            data = path.read_bytes()
-            filename = (item.get("data") or {}).get("filename") or path.name
+            filename = fields.get("filename") or (item.get("data") or {}).get("filename") or path.name
             would_bytes += len(data)
             label = f"{n}/{len(zotero_keys)}  {citekey} -> {item_key}  {path.name}"
             if not args.yes:
@@ -315,6 +423,9 @@ def main() -> None:
     verb = "uploaded" if args.yes else "would upload"
     print(f"\n{verb}: {uploaded}  ({would_bytes:,} bytes)")
     print(f"already in Zotero: {existing}")
+    if not args.no_metadata:
+        print(f"{'patched' if args.yes else 'would patch'}: {patched} "
+              "(filename and content type made to match the archived file)")
     if skipped_removed:
         print(f"skipped as deliberately removed (.mirror/removed.tsv): {skipped_removed}")
     if order_checked:
@@ -331,7 +442,8 @@ def main() -> None:
         print("\nno ambiguous records")
 
     if not args.yes:
-        print("\nThis was a dry run. Nothing was written. Re-run with --yes to upload.")
+        print("\nThis was a dry run. Nothing was written -- no upload, no PATCH. "
+              "Re-run with --yes.")
 
 
 if __name__ == "__main__":

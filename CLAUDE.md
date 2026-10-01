@@ -145,6 +145,15 @@ where a record's attachments cannot be paired unambiguously it uploads nothing
 for that record. Both are the same rule — guessing writes a paper's PDF under
 another paper's citation key, silently.
 
+It also PATCHes each attachment's `filename` and `contentType` to match the
+archived file. **That is the second thing in this repo that can destroy correct
+metadata**, so it carries the same three properties as `mendeley_edit.py`:
+Zotero's PATCH is a partial merge so unnamed fields survive, only differing
+fields are sent so a re-run writes nothing, and a content type is never invented
+— bytes that are not a PDF keep the type the item declares. A 412 is a
+concurrent edit: report it and leave the item alone. Never re-read and retry,
+which would overwrite the edit that caused the conflict.
+
 `zotero_migrate.Zotero` is read-only and its docstring says so. The write client
 lives in `zotero_attach.py` for exactly that reason: adding a write method there
 would retire a guarantee every other caller is relying on.
