@@ -227,6 +227,53 @@ evidence, not a shortcut taken now.
       since a retry overwrites exactly the edit that caused the conflict.
       `--no-metadata` uploads bytes only.
 
+### What the first dry run found, 2026-10-01 — including two defects in this script
+
+`literature` ran it against `3e35d96` and wrote the log up at
+`~/.local/state/fleet/drops/zotero-attach-dryrun-20261001/`. 2,582 would upload,
+4,212,233,505 bytes; 2,582 + 158 stranded = 2,740 exactly, so every archived file
+is accounted for. Zero already in Zotero, which confirms the 12-item sample as a
+census. `Vanommeslaeghe2009Charmm` is the only content-type correction in the
+whole run; every other PATCH is a filename.
+
+**My estimate of the at-risk set was low, and wrongly scoped.** I said 71 files
+across 62 records from counting `-N` suffixes in the archive. The real figure is
+158 files across 88 records, because `-N` only describes *one* of three ways
+pairing fails. The other two I had not thought of: **24 records whose Zotero item
+has no `imported_file` attachment at all**, and 3 count mismatches. The 61
+no-unambiguous-pairing records are the class I did estimate, and that part was
+close.
+
+**Defect 1: a record with nothing archived was invisible.** `Hoover1979Exact`
+appears nowhere in 5,263 lines. Its only attachment was the PNG that was deleted
+that morning, so it has no archived file, and the problem report was keyed on
+records that *have* files. A record with nothing to upload said nothing at all —
+the same silence 0.12.0 fixed in the extraction report, arriving by a different
+road and in a script written after that fix. Those records are now listed under
+their own heading.
+
+**Defect 2: I asked for a number the code could not produce.** The child-order
+agreement figure was computed only for records already paired by extension, and
+a record pairs by extension only when its extensions differ — which is never the
+case for the records that needed the evidence. The measurement could not fire in
+the one situation it was designed to inform, and it printed nothing at all when
+the count was zero, so its absence was indistinguishable from a zero. I then
+told the library session to report a figure I had never seen the code emit. It is
+gone, replaced by `--pair-by-order`: an explicit, off-by-default guess whose
+proposed pairing the dry run prints for every record it would apply to, so the
+decision is checked by a person rather than inferred from a statistic.
+
+**Pairing now allows the counts to differ**, which fixes two of the three
+mismatches honestly. All three were that morning's deletions — Zotero still holds
+a stub for each removed file — so `Bailey1967Crystal` is one archived `.pdf`
+against a `.pdf` and a `.cif`, and a unique extension match is not a guess.
+`Shan2011How` stays reported: two PDFs among three attachments cannot be told
+apart.
+
+- [ ] **The 24 records with no `imported_file` attachment in Zotero** are a
+      migration finding, not a tool one, and they are the library session's to
+      look at: those papers have a record and no file to put the PDF in.
+
 Once this has run, the exposure in item 1 changes shape: the PDFs stop being a
 single local copy excluded from every replica, and Zotero becomes a second place
 they exist. That does not retire `<out>/pdf/` — a mirror whose bytes live only

@@ -2106,8 +2106,34 @@ def main():
     check(prob3 and "unambiguous" in prob3,
           f"two PDFs on one record are reported, never guessed ({prob3})")
     _p, prob4 = za.pair_attachments(same, one_item)
-    check(prob4 and "against" in prob4, f"a count mismatch is reported ({prob4})")
-    _p, prob5 = za.pair_attachments(one_local, [])
+    check(prob4 and "no unambiguous pairing" in prob4,
+          f"two same-suffix files against one attachment is reported ({prob4})")
+
+    # Counts are ALLOWED to differ. Cameron deleted five non-paper attachments
+    # on 2026-10-01 and Zotero still holds a stub for each, so Bailey1967Crystal
+    # is one archived .pdf against a .pdf and a .cif. One candidate is a match.
+    stubbed = [{"key": "S1", "data": {"linkMode": "imported_file", "filename": "paper.pdf"}},
+               {"key": "S2", "data": {"linkMode": "imported_file", "filename": "struct.cif"}}]
+    pairs5, prob5b = za.pair_attachments([Path("Bailey1967Crystal.pdf")], stubbed)
+    check(prob5b is None and [it["key"] for _p_, it in pairs5] == ["S1"],
+          f"a deleted attachment's stub does not block the one that remains ({prob5b})")
+
+    # But two PDFs against three attachments still cannot be told apart.
+    two_pdfs = [Path("Shan2011How-2.pdf"), Path("Shan2011How-3.pdf")]
+    three = stubbed + [{"key": "S3", "data": {"linkMode": "imported_file",
+                                              "filename": "si.pdf"}}]
+    _p, prob5c = za.pair_attachments(two_pdfs, three)
+    check(prob5c and "no unambiguous pairing" in prob5c,
+          f"two PDFs among three attachments is still reported ({prob5c})")
+
+    # --pair-by-order is the deliberate guess, and only for equal counts.
+    by_order, prob_bo = za.pair_attachments(same, same_items, by_order=True)
+    check(prob_bo is None and [it["key"] for _p_, it in by_order] == ["C1", "C2"],
+          "--pair-by-order pairs equal counts in archive order")
+    _p, prob_bo2 = za.pair_attachments(two_pdfs, three, by_order=True)
+    check(prob_bo2 is not None,
+          "and refuses unequal counts even then: ordering cannot invent a file")
+    _p, prob5 = za.pair_attachments(one_local, [])  # noqa: F841 -- read below
     check(prob5 and "no imported_file" in prob5,
           f"an archived file with nowhere to go is reported, not invented ({prob5})")
     check(za.pair_attachments([], one_item) == ([], None),

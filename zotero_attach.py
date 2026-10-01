@@ -96,17 +96,40 @@ def imported_files(children: list) -> list:
             if (c.get("data") or {}).get("linkMode") == "imported_file"]
 
 
-def pair_attachments(locals_: list, items: list) -> tuple[list, str | None]:
+def zotero_suffix(item: dict) -> str:
+    return Path((item.get("data") or {}).get("filename") or "").suffix.lower()
+
+
+def pair_attachments(locals_: list, items: list,
+                     by_order: bool = False) -> tuple[list, str | None]:
     """Pair archived files with Zotero attachment items.
 
     Returns `(pairs, problem)`. A non-None `problem` means report it and upload
     nothing for this record: a wrong pairing files one paper's PDF under
     another's citation key, which is both silent and very hard to find later.
 
-    `locals_` arrives in archive order -- `<key>`, `<key>-2`, `<key>-3` -- which
-    is Mendeley's attachment order. Zotero's child order is not promised to be
-    the same, so it is never used to decide anything here. It is only measured,
-    by the caller, against pairings that were settled some other way.
+    Three rules, in order.
+
+    **One against one is unambiguous**, whatever the extensions say. That case
+    has to come first, because it is exactly where the extensions disagree for a
+    good reason: `Vanommeslaeghe2009Charmm.pdf` in the archive against a Zotero
+    filename ending `.-_charmm_g`.
+
+    **Otherwise, a local file pairs with the Zotero attachment whose extension
+    it uniquely matches.** Counts are allowed to differ, and they do: Cameron
+    deleted five non-paper attachments from the archive on 2026-10-01 and Zotero
+    still holds a stub for each, so `Bailey1967Crystal` is one archived `.pdf`
+    against a `.pdf` and a `.cif`. One candidate is a match; two is not.
+
+    **Anything else is reported.** Two PDFs on one record cannot be told apart
+    by extension and nothing else here can tell them apart either, which is the
+    honest answer rather than a coin flip.
+
+    `by_order` is the deliberate exception: pair same-count records by archive
+    order, which is Mendeley's attachment order. Zotero's child order is not
+    promised to match it, so this is a GUESS and is off by default. It exists
+    because the alternative for ~61 records is doing them by hand, and the dry
+    run prints the pairing it would use so a person can check a sample first.
     """
     if not locals_:
         return [], None
@@ -115,20 +138,26 @@ def pair_attachments(locals_: list, items: list) -> tuple[list, str | None]:
                     "attachment in Zotero to put them in")
     if len(locals_) == 1 and len(items) == 1:
         return [(locals_[0], items[0])], None
-    if len(locals_) != len(items):
-        return [], (f"{len(locals_)} archived file(s) against "
-                    f"{len(items)} Zotero attachment(s)")
+
+    pairs, claimed = [], set()
+    for path in locals_:
+        cands = [i for i, it in enumerate(items)
+                 if zotero_suffix(it) == path.suffix.lower() and i not in claimed]
+        if len(cands) != 1:
+            pairs = None
+            break
+        claimed.add(cands[0])
+        pairs.append((path, items[cands[0]]))
+    if pairs is not None:
+        return pairs, None
 
     local_suffixes = [p.suffix.lower() for p in locals_]
-    zotero_suffixes = [Path((it.get("data") or {}).get("filename") or "").suffix.lower()
-                       for it in items]
-    if (len(set(local_suffixes)) == len(local_suffixes)
-            and sorted(local_suffixes) == sorted(zotero_suffixes)):
-        by_suffix = dict(zip(zotero_suffixes, items))
-        return [(p, by_suffix[p.suffix.lower()]) for p in locals_], None
-
-    return [], (f"{len(locals_)} attachments with no unambiguous pairing "
-                f"(archive {local_suffixes}, zotero {zotero_suffixes})")
+    zotero_suffixes = [zotero_suffix(it) for it in items]
+    if by_order and len(locals_) == len(items):
+        return list(zip(locals_, items)), None
+    return [], (f"{len(locals_)} archived against {len(items)} in Zotero, no "
+                f"unambiguous pairing (archive {local_suffixes}, "
+                f"zotero {zotero_suffixes})")
 
 
 def plan_metadata(item: dict, path: Path, is_pdf: bool) -> dict:
@@ -303,6 +332,10 @@ def main() -> None:
                     help="limit to this citation key (repeatable)")
     ap.add_argument("--limit", type=int, default=0,
                     help="stop after this many uploads, for a cautious first run")
+    ap.add_argument("--pair-by-order", action="store_true",
+                    help="for records that cannot be paired by extension, pair "
+                         "them by archive order -- a GUESS, since Zotero does "
+                         "not promise to return children in Mendeley's order")
     ap.add_argument("--no-metadata", action="store_true",
                     help="upload bytes only; leave each attachment's filename and "
                          "content type as the migration left them")
@@ -339,7 +372,7 @@ def main() -> None:
     uploaded = existing = skipped_removed = patched = 0
     would_bytes = 0
     problems: list = []
-    order_checked = order_agreed = 0
+    no_archive: list = []
 
     for n, (zkey, citekey) in enumerate(sorted(zotero_keys.items(), key=lambda kv: kv[1]), 1):
         locals_ = [p for p in archived_for(pdf_dir, citekey)
@@ -347,23 +380,29 @@ def main() -> None:
         dropped = [p for p in archived_for(pdf_dir, citekey) if stem_of(p) in removed]
         skipped_removed += len(dropped)
         if not locals_:
+            # A record with nothing archived uploads nothing, and until
+            # 2026-10-01 said nothing either: the problem list was keyed on
+            # records that HAVE files, so `Hoover1979Exact` -- whose only
+            # attachment was a PNG that has since been deleted -- appeared
+            # nowhere in a 5,263-line dry run. That is the same silence
+            # `offprint` 0.12.0 fixed in the extraction report, arriving by a
+            # different road.
+            no_archive.append(f"{citekey} ({zkey})"
+                              + (f", {len(dropped)} removed by hand" if dropped else ""))
             continue
 
         children = z.paged(f"items/{zkey}/children", quiet=True)
         items = imported_files(children)
-        pairs, problem = pair_attachments(locals_, items)
+        pairs, problem = pair_attachments(locals_, items, by_order=args.pair_by_order)
         if problem:
             problems.append(f"{citekey} ({zkey}): {problem}")
+            # Show the pairing --pair-by-order WOULD use, so the dry run is the
+            # place that decision gets checked rather than taken on trust.
+            if not args.pair_by_order and len(locals_) == len(items):
+                guess = ", ".join(f"{p_.name} -> {(it.get('data') or {}).get('filename')!r}"
+                                  for p_, it in zip(locals_, items))
+                problems.append(f"    --pair-by-order would use: {guess}")
             continue
-
-        # Evidence, not a decision: where the pairing was settled by extension,
-        # does Zotero's child order happen to agree? Enough of these and index
-        # order becomes a defensible fallback for the ones that cannot be paired
-        # at all. Too few, and it stays off the table. Either way it decides
-        # nothing in this run.
-        if len(pairs) > 1:
-            order_checked += 1
-            order_agreed += int(pairs == list(zip(locals_, items)))
 
         for path, item in pairs:
             item_key = item.get("key") or (item.get("data") or {}).get("key")
@@ -428,9 +467,11 @@ def main() -> None:
               "(filename and content type made to match the archived file)")
     if skipped_removed:
         print(f"skipped as deliberately removed (.mirror/removed.tsv): {skipped_removed}")
-    if order_checked:
-        print(f"child-order agreement on records paired by extension: "
-              f"{order_agreed}/{order_checked}")
+    if no_archive:
+        print(f"\nno archived file at all -- nothing to upload, and this is the "
+              f"only place they are named ({len(no_archive)}):")
+        for line in no_archive:
+            print(f"  - {line}")
 
     # A pass that examines nothing does not get to report success, and neither
     # does one that silently leaves records out.
