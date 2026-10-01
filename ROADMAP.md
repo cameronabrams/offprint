@@ -159,10 +159,28 @@ currently shouts when that stops being true.
       in nine days" do not read the same. `.mirror/health.json` holds the streak
       and its start; one success clears it.
 
-**Brought forward 2026-09-24.** Cameron's Mendeley membership auto-renews
-2027-01-01 and cancelling is the plan, so the account's behaviour will change on
-a known date. An auth failure arriving as a shrug was a general risk when this
-item was written; with a cancellation date it is a specific one.
+**Brought forward 2026-09-24.** The Mendeley backend is being retired, so the
+account's behaviour will change. An auth failure arriving as a shrug was a
+general risk when this item was written; against an account nobody is
+maintaining it is a specific one.
+
+**Corrected 2026-10-01, and the correction is the point.** What was established
+on 09-24 is that the membership **auto-renews** 2027-01-01 and that cancelling
+was the plan. Four other passages in this file then said the account **lapses**
+2027-01-01 — a near-opposite claim about the same date, since auto-renew means it
+continues unless someone acts. Nobody introduced the error; it arrived by
+repetition, a hedged fact restated until the hedge fell off, and this repo's own
+commit messages and the 09-27 evacuation procedure carry it.
+
+Cameron has not confirmed any lapse date: on 09-28, "what cancellation? that's on
+hold", and on 10-01, "we are migrating away from mendeley altogether" with no
+date. The migration is real; the date is not established and is not stated here
+until he states it. The library session reports he has already downgraded to the
+free tier, which if so is a change in the account's behaviour today and not on
+some future date.
+
+A deadline nobody set is worse than no deadline: it makes a thing look safe until
+a date, and this one was used as the argument for several decisions.
 
 Still open, and now the interesting part: **nothing reads the status file unless
 a person opens it.** The streak is recorded and legible, but a mirror that has
@@ -334,7 +352,7 @@ What happens instead of a migration:
 - **New credentials go to `~/.config/offprint/`**, starting with `zotero.json`.
 - Mendeley's `config.json` and `tokens.json` **stay exactly where they are**.
   Nothing moves, so the hourly refresh and the OAuth tokens are never at risk —
-  re-authorizing is a real cost against an account that lapses 2027-01-01.
+  re-authorizing is a real cost against an account being retired.
 - `config_dir()` reads the new location first and falls back to the old, which
   turns the eventual cleanup into a deletion rather than a migration.
 
@@ -547,7 +565,7 @@ writer, and the library session is raising it with Cameron.
 ## 8. A default refresh erodes the archive that --backfill built
 
 `--backfill` (0.8.0) put 2,745 attachments, 4.48 GB, into `<out>/pdf/` so the
-library would survive the Mendeley account lapsing on 2027-01-01. A default
+library would survive the Mendeley account going away. A default
 refresh — `--attachments text`, which is what the timer and every scheduled entry
 point run — deletes from that directory:
 
@@ -556,11 +574,12 @@ if mode == "text" and local.exists():
     local.unlink()   # the text is the artifact; Mendeley keeps the PDF
 ```
 
-That comment was true when it was written and is now false — but not because of
-the 2027 lapse, which is how this was first argued and is the weaker case. The
-defect stands without any expiry date: `<out>/pdf/` is an archive somebody built
-deliberately, and a refresh deletes from it. The lapse only sets a deadline on
-noticing.
+That comment was true when it was written and is now false — but not because the
+account is going away, which is how this was first argued and is the weaker case.
+That argument has since needed retracting on its own account (see item 2), which
+is the second reason not to have rested on it. The defect stands without any
+expiry date: `<out>/pdf/` is an archive somebody built deliberately, and a
+refresh deletes from it. A deadline only sets a deadline on noticing.
 
 **On a static library the loss is zero**, which is what makes it easy to miss.
 The skip branch fires when the filehash matches and the extract exists, and
@@ -624,11 +643,10 @@ optional.
 
       1. The archive hazard above — **fixed** in `0.11.0`, so this reason no
          longer applies on a machine running that code.
-      2. Cameron is retiring the Mendeley backend. The library is final, the
-         account lapses 2027-01-01, and a refresh against a degrading account
-         would fail loudly and regenerate nothing anyone wants. **This reason
-         still stands**, and it is his decision to reverse, not a defect to
-         repair.
+      2. Cameron is retiring the Mendeley backend. The library is final, and a
+         refresh against an account nobody is maintaining would fail loudly and
+         regenerate nothing anyone wants. **This reason still stands**, and it
+         is his decision to reverse, not a defect to repair.
 
       The reboot on 2026-09-30 is the evidence that the disable holds: the
       archive came back byte-identical at **2,745 files / 4,476,820,874 bytes**,
