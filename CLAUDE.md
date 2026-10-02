@@ -68,6 +68,16 @@ record is deleted. The consequence for anyone pruning by hand is in
 `docs/reference.md`: both halves or neither, because dropping one leaves the key
 reserved and the surviving line pointing at nothing in `library.bib`.
 
+**A dependency belongs to whoever reaches it, and there are two ways to reach
+one.** A module-level `import pymupdf` in a module you import is *yours* —
+`inbox.py:60` is at column 0, so importing one function from it costs the whole
+dependency whatever that function touches. A lazy import inside a function is
+the *caller's*, which no import graph can show. `test_mirror.py` checks both by
+reading the graph and recursing, after getting this wrong three times in one
+day: by missing the lazy case, by then assuming `inbox` was lazy when it is
+not, and by replacing a correct broad rule with a hand-maintained list that went
+stale within the hour.
+
 Two habits that came out of the same failure, and are cheaper than the debugging:
 
 - **Searching for one access pattern is not searching for the accesses.** Every

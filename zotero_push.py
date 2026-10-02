@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["requests>=2.31"]
+# dependencies = ["pymupdf>=1.24", "requests>=2.31"]
 # ///
 """
 zotero_push.py -- add one reference to Zotero, from a DOI or an arXiv id.
@@ -234,9 +234,10 @@ def main() -> int:
         print("\nDry run. Nothing was sent.")
         return 0
 
-    # Credentials are only needed now, which is why a dry run works without a
-    # key at all -- useful for checking what a DOI resolves to before deciding
-    # whether the paper belongs in the library.
+    # Zotero credentials are only needed now, so a dry run runs without a key.
+    # It does still need the MIRROR, because the duplicate check reads
+    # library.bib and citekeys.json -- useful for seeing what a DOI resolves to
+    # before deciding whether the paper belongs in the library.
     api_key, user_id = load_zotero_credentials()
     key = create_item(Zotero(api_key, user_id), item)
     print(f"\ncreated {key}")

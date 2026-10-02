@@ -1263,19 +1263,34 @@ A dry run needs no credentials, because the client is built only at the create
 step — useful for seeing what a DOI resolves to before deciding whether the
 paper belongs in the library at all.
 
-### The dependency rule, wrong in both directions before it was right
+### The dependency rule, wrong three times before it was right
 
-Judging `pymupdf` by a direct `import pymupdf` missed `zotero_source.py`
-calling `harvest_attachments`, and 2,734 extractions failed. Widening it to
-"anything importing from `inbox`" then charged `zotero_push.py` for a
-dependency it never reaches, since `existing_document` only reads
-`library.bib` — and a spurious declaration fails this check too, correctly.
+1. **Judging by a direct `import pymupdf` alone** missed `zotero_source.py`
+   calling `harvest_attachments`, which imports it lazily. 2,734 extractions
+   failed and reported as a successful run.
+2. **Widening it to "anything importing from `inbox`"** caught that — and I then
+   replaced it with a hand-maintained list of PDF-reaching function names, on
+   the belief that `inbox.py` imported `pymupdf` lazily like `mendeley_mirror`
+   does. **It does not: `inbox.py:60`, column 0.** So `zotero_push.py` shipped a
+   header that could not run, and the library session hit it on the first dry
+   run. *The broad rule had been right, and I narrowed it on an assumption
+   nobody checked — including me, in the same session that keeps writing down
+   "verify, do not recall".*
+3. **The function-name list was also incomplete**, which the suite caught at
+   once: `get_pdf.py` imports `pymupdf` itself, lazily, to page-count a cached
+   PDF, and no name in the list appeared in it.
 
-The rule now names the **functions that reach the PDF stack**, wherever they
-live: `harvest_attachments`, `extract_pdf_text`, `ocr_pdf_text`, `has_content`,
-`pdf_text`, `pdf_metadata_dois`, `identify`. A dependency belongs to whoever
-reaches it, and the honest way to say that is to name the reaching, not the
-module.
+The rule is now **derived from the import graph** rather than from any list.
+A script needs `pymupdf` if it imports it at any indentation of its own; or if
+it imports a local module whose import *runs* `import pymupdf`, found by reading
+that module and recursing; or if it calls one of the three functions in
+`mendeley_mirror` that import it lazily, which no import graph can show.
+
+Column 0 matters in exactly one of those three and not the others, and that
+distinction is the whole content of the rule: **a module-level import in a
+module you import is yours; a lazy import is the caller's.** The library
+session's one-line statement of it is better than the three paragraphs it took
+to get there.
 
 ## 16. `zotero_delete.py` — built 2026-10-02, from what was done by hand
 

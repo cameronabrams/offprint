@@ -3416,17 +3416,53 @@ def main():
         wants = set()
         if re.search(r"^\s*import requests", body, re.M) or "from mendeley_mirror import" in body:
             wants.add(PINS["requests"])
-        # The rule names the FUNCTIONS that reach the PDF stack, wherever they
-        # live, rather than the modules that contain them. Two earlier versions
-        # were wrong in opposite directions: judging by a direct `import
-        # pymupdf` missed zotero_source.py calling harvest_attachments, and
-        # then "anything importing from inbox" charged zotero_push.py for a
-        # dependency it never reaches, since existing_document only reads
-        # library.bib. A spurious declaration fails this check too, and should.
-        PDF_REACHING = ("harvest_attachments", "extract_pdf_text", "ocr_pdf_text",
-                        "has_content", "pdf_text", "pdf_metadata_dois", "identify")
+        # Two ways a script ends up needing the PDF stack, and this got it
+        # wrong three times before getting it right.
+        #
+        #   1. It imports a local module whose import ALONE runs
+        #      `import pymupdf` -- inbox.py does, at column 0. Importing one
+        #      function from it costs the whole dependency, whatever that
+        #      function touches. Derived from the import graph below rather
+        #      than from a list of module names, because a list goes stale and
+        #      a graph does not.
+        #   2. It calls something that imports pymupdf LAZILY, inside a
+        #      function. mendeley_mirror does that, so the call site owns the
+        #      dependency and nothing in the import graph can show it.
+        #
+        # The errors so far: judging by a direct import alone missed
+        # zotero_source calling harvest_attachments, and 2,734 extractions
+        # failed. Then "anything importing from inbox" was replaced by a
+        # function-name list on the belief that inbox imported lazily -- it
+        # does not, and zotero_push shipped a header that could not run. The
+        # broad rule had been right and was narrowed on an assumption nobody
+        # checked.
+        LAZY_REACHING = ("harvest_attachments", "extract_pdf_text", "ocr_pdf_text")
+
+        def imports_pymupdf_on_import(mod: str, seen=None) -> bool:
+            seen = seen if seen is not None else set()
+            if mod in seen:
+                return False
+            seen.add(mod)
+            src_path = HERE / f"{mod}.py"
+            if not src_path.exists():
+                return False
+            text = src_path.read_text(encoding="utf-8")
+            h = re.search(r"^# /// script$(.*?)^# ///$", text, re.S | re.M)
+            tail = text[h.end():] if h else text
+            if re.search(r"^import pymupdf", tail, re.M):   # column 0 = on import
+                return True
+            return any(imports_pymupdf_on_import(m.group(1), seen)
+                       for m in re.finditer(r"^from (\w+) import", tail, re.M))
+
+        # Its OWN import counts at any indentation -- get_pdf.py imports
+        # pymupdf inside a function to page-count a cached PDF, and that is
+        # still its dependency. Column 0 matters only in the transitive check
+        # above, where the question is whether importing a module RUNS the
+        # import.
         if (re.search(r"^\s*import pymupdf", body, re.M)
-                or any(re.search(rf"\b{n}\b", body) for n in PDF_REACHING)):
+                or any(imports_pymupdf_on_import(m.group(1))
+                       for m in re.finditer(r"^from (\w+) import", body, re.M))
+                or any(re.search(rf"\b{n}\b", body) for n in LAZY_REACHING)):
             wants.add(PINS["pymupdf"])
 
         check(declared == wants,
