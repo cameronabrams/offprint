@@ -548,6 +548,70 @@ they exist. That does not retire `<out>/pdf/` — a mirror whose bytes live only
 behind a service is the thing this tool exists to avoid — but it does end the
 period where one disk on panacea is the only copy.
 
+## 12. The cutover happened — `--retire`, and what is now stranded
+
+Cameron to the library session, 2026-10-02: *"we are not using Mendeley at all
+now. Zotero is now the remote."*
+
+**So `~/Sync/mendeley` is a frozen snapshot**, as of the last refresh,
+2026-09-30 16:21 UTC. Checked rather than assumed: only `mendeley_mirror.py`
+writes `library.bib`, `index.md`, `folders.json`, `text/` and `annotations/`,
+and nothing else in the repo can un-freeze them.
+
+### The part that fails silently, and why the obvious fix does not fire
+
+`mirror-status.md` reads `**ok**` and "Everything in this folder is current as
+of the run above". Both were true on 09-30 and neither is now — and the
+library's own `CLAUDE.md` says *"Check it before concluding that something is
+absent from the library."* That instruction is now unsound and nothing in the
+file says so.
+
+Same family as the silent `not-pdf` skip and the counter that said 123, with one
+difference that matters: **the line is not missing, it is confidently wrong, and
+it will keep being wrong forever.** `write_status` runs only during a refresh.
+When refreshes stop, the status file freezes too — so changing the code that
+writes it changes nothing. The fix has to be a deliberate one-time write.
+
+`--retire [REASON]` is that write, `0.15.0`:
+
+- rewrites `mirror-status.md` as a standing notice naming the date, what is
+  still true (`library.bib`, `text/`, `annotations/`, `pdf/` remain a valid
+  snapshot — quoting and citing are as sound as ever), and the one consequence
+  the library's instructions rest on: **absence here is no longer evidence of
+  absence**;
+- removes the false sentence rather than leaving it under the banner, where a
+  skimming reader meets it first;
+- leaves `.mirror/retired.json`, which makes a later refresh **refuse** rather
+  than fail — writing `**FAILED**` over the notice would replace the one
+  sentence this folder still needs with a transient one;
+- is undone by deleting that file.
+
+**Its limit, stated rather than discovered later: Cameron's two laptops run
+older code and will not honour the marker.** If their Windows scheduled task
+fires against a retired Mendeley account it will overwrite the notice with a
+`FAILED` banner and sync that. Disabling those tasks is a per-machine action and
+his, not something this repo can reach.
+
+### Stranded with nowhere to write
+
+`mendeley_edit.py` writes to Mendeley. Nothing writes Zotero *item* metadata —
+`zotero_attach.py` PATCHes attachment `filename` and `contentType` only. So the
+library session is holding, with no destination:
+
+- 55 prepared author edits (7 mojibake repairs, 48 refetched author lists), dry-run clean
+- 15 records with scrambled author order
+- 2 merged records (`Daoulas2005Molecular`, `Hirota2000Effect`)
+- and whatever `doixref.py` turns up across the other ~2,270
+
+- [ ] **`zotero_edit.py`** — the direct analogue of `mendeley_edit.py`, keyed by
+      citation key through `citekeys.json`, PATCHing `creators` and fields on a
+      Zotero item. The groundwork exists: `ZoteroWriter.patch_item` already does
+      a version-preconditioned partial merge, and Zotero's PATCH leaves unnamed
+      fields alone, which is the property `mendeley_edit.py` had to work for.
+      Smaller than item 1 and it unblocks 72 prepared edits today.
+- [ ] **A Zotero-backed `mendeley_mirror.py`** — item 1, now the live question
+      rather than the contingency it was written as.
+
 ## 2. Make a failing refresh loud
 
 **Why.** The failure this tool is least equipped to notice is silent

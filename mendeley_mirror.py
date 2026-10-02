@@ -37,7 +37,7 @@ Usage:
 
 from __future__ import annotations
 
-__version__ = "0.14.0"
+__version__ = "0.15.0"
 """The tool's version, and the only place it is written down.
 
 It exists so a mirror can say what produced it. Extraction behaviour has changed
@@ -1750,6 +1750,64 @@ def record_health(mirror_dir: Path, ok: bool, kind: str = "", now: str = "") -> 
     return h
 
 
+def retired_marker(out: Path) -> Path:
+    return mirror_state_dir(out) / "retired.json"
+
+
+def load_retired(out: Path) -> dict:
+    """Has this mirror been declared frozen? `{}` means no."""
+    return load_json(retired_marker(out), {}) or {}
+
+
+def write_retired_status(out: Path, info: dict) -> None:
+    """Replace mirror-status.md with a banner a frozen mirror keeps saying.
+
+    This exists because the obvious fix does not fire. `write_status` runs only
+    during a refresh, so when refreshes stop, the status file freezes too --
+    still reading `**ok**` and "Everything in this folder is current as of the
+    run above", for as long as anyone cares to read it. Both sentences were true
+    on 2026-09-30 and neither is true now, and the library's own CLAUDE.md
+    tells every session to check this file before concluding a paper is absent.
+
+    That is the same failure as the silent `not-pdf` skip and the counter that
+    said 123: a status line that cannot report the one state that matters. The
+    difference is that here the line is not missing, it is confidently wrong,
+    and nothing will ever rewrite it unless something writes it once on purpose.
+
+    What stays true is said as plainly as what does not: the extracts, the
+    bibliography and the annotations are a valid snapshot of the library AS OF
+    the freeze. It is only currency that is gone.
+    """
+    when = info.get("retired_at", "")[:16].replace("T", " ")
+    reason = info.get("reason") or "the backend was retired"
+    lines = [
+        "# Mirror status — FROZEN",
+        "",
+        f"- **this mirror stopped being updated on {when} UTC**",
+        f"- reason: {reason}",
+        f"- last successful refresh: {info.get('last_ok', 'unknown')}",
+        f"- written by offprint {__version__}",
+        "",
+        "**Do not read this folder as current.** Nothing refreshes it. A paper",
+        "added to the library after the date above does **not** appear here, and",
+        "no amount of re-reading this file will say otherwise -- it no longer",
+        "changes.",
+        "",
+        "What is still true: `library.bib`, `index.md`, `text/`, `annotations/`",
+        "and `pdf/` are a valid snapshot of the library as it stood at that",
+        "moment. Quoting an extract, citing a key, and reading a page marker are",
+        "all as sound as they were. It is only *currency* that is gone.",
+        "",
+        "So: **absence here is no longer evidence of absence.** Before concluding",
+        "the library does not have a paper, check the live library rather than",
+        "this folder.",
+        "",
+    ]
+    if info.get("successor"):
+        lines += [f"The live library is now {info['successor']}.", ""]
+    (out / "mirror-status.md").write_text("\n".join(lines), encoding="utf-8")
+
+
 def failure_advice(kind: str, streak: int) -> list[str]:
     """What the reader should do about it, which is different for each kind."""
     if kind == "auth":
@@ -1846,6 +1904,12 @@ def main() -> int:
                          "machine's guess at the characters and not the paper's words")
     ap.add_argument("--no-pdfs", action="store_true",
                     help=argparse.SUPPRESS)  # old spelling of --attachments none
+    ap.add_argument("--retire", metavar="REASON", nargs="?", const="the backend was retired",
+                    help="declare this mirror frozen: rewrite mirror-status.md as a "
+                         "standing staleness notice and refuse further refreshes. "
+                         "Undone by deleting .mirror/retired.json")
+    ap.add_argument("--successor", metavar="WHERE",
+                    help="with --retire, where the live library now is")
     ap.add_argument("--backfill", action="store_true",
                     help="with --attachments keep: also download attachments whose "
                          "text is already extracted, so every file lands in "
@@ -1874,6 +1938,36 @@ def main() -> int:
     out.mkdir(parents=True, exist_ok=True)
     started = datetime.now(timezone.utc)
     mirror_dir = mirror_state_dir(out)
+
+    if args.retire is not None:
+        prev = ""
+        status = out / "mirror-status.md"
+        if status.exists():
+            m = re.search(r"last successful run: (\S+ \S+ \S+)",
+                          status.read_text(encoding="utf-8"))
+            if m:
+                prev = m.group(1)
+        info = {"retired_at": datetime.now(timezone.utc).isoformat(),
+                "reason": args.retire, "last_ok": prev or "unknown",
+                "successor": args.successor or "", "by": f"offprint {__version__}"}
+        save_json(retired_marker(out), info)
+        write_retired_status(out, info)
+        note(f"mirror declared frozen: {out/'mirror-status.md'} now says so, and a "
+             f"refresh from this clone will refuse to run.")
+        note("Undo by deleting " + str(retired_marker(out)))
+        return 0
+
+    retired = load_retired(out)
+    if retired:
+        # A refusal rather than a failure: a retired mirror is a decision, and
+        # writing **FAILED** over the standing notice would replace the one
+        # sentence this folder still needs with a transient one.
+        note(f"This mirror was declared frozen on "
+             f"{retired.get('retired_at', '')[:10]}: {retired.get('reason', '')}")
+        note("Refusing to refresh. Delete "
+             f"{retired_marker(out)} if that was wrong.")
+        return 0
+
     lock = acquire_lock(mirror_dir)
     if lock is None:
         write_log(mirror_dir)

@@ -2392,6 +2392,42 @@ def main():
           "a 412 is reported as a conflict, never retried: a retry would "
           "overwrite whatever edit caused it")
 
+    print("\na frozen mirror has to be able to say so")
+
+    # mirror-status.md is written ONLY by a refresh. When refreshes stop it
+    # freezes too -- still reading **ok** and "Everything in this folder is
+    # current", forever, while the library's own CLAUDE.md tells every session
+    # to check it before concluding a paper is absent. The line is not missing;
+    # it is confidently wrong, and nothing rewrites it on its own.
+    frz = tmp / "frozen"
+    frz.mkdir()
+    (frz / "mirror-status.md").write_text(
+        "# Mirror status\n\n- last attempt: 2026-09-30 16:21 UTC — **ok** (0.3 min)\n"
+        "- last successful run: 2026-09-30 16:21 UTC\n\n"
+        "Everything in this folder is current as of the run above.\n",
+        encoding="utf-8")
+    info = {"retired_at": "2026-10-02T14:00:00+00:00",
+            "reason": "Mendeley retired; Zotero is the remote",
+            "last_ok": "2026-09-30 16:21 UTC", "successor": "Zotero"}
+    mm.write_retired_status(frz, info)
+    frozen = (frz / "mirror-status.md").read_text(encoding="utf-8")
+    check("FROZEN" in frozen and "2026-10-02 14:00" in frozen,
+          "the banner names the date the mirror stopped")
+    check("**ok**" not in frozen and "current as of the run above" not in frozen,
+          "and the sentence that is now false is GONE, not left below the banner "
+          "where a skimming reader would still meet it first")
+    check("absence here is no longer evidence of absence" in frozen,
+          "it states the consequence the library's CLAUDE.md depends on")
+    check("still true" in frozen and "library.bib" in frozen,
+          "and says what REMAINS valid, so a frozen mirror is not mistaken for "
+          "a broken one -- the extracts are as quotable as they ever were")
+    check("Zotero" in frozen, "the successor is named when one is given")
+
+    check(mm.load_retired(frz) == {}, "a mirror with no marker is not retired")
+    mm.save_json(mm.retired_marker(frz), info)
+    check(mm.load_retired(frz)["reason"].startswith("Mendeley retired"),
+          "and the marker is what a later run reads to refuse")
+
     print("\ndoixref: three-way, because the citation key is frozen")
     import doixref as dx
 
