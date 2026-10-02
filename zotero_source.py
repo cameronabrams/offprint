@@ -34,6 +34,7 @@ CLAUDE.md names this as the rule a second backend will be tempted to break.
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 from pathlib import Path
@@ -193,6 +194,112 @@ class ZoteroSource:
         return out
 
 
+ISSN_RE = re.compile(r"^\d{4}-\d{3}[\dXx]$")
+
+
+def looks_like_issn(v: str) -> bool:
+    return bool(ISSN_RE.match((v or "").strip()))
+
+
+def looks_like_isbn(v: str) -> bool:
+    bare = re.sub(r"[^0-9Xx]", "", v or "")
+    return len(bare) in (10, 13)
+
+
+def extra_with(extra: str, label: str, value: str) -> str:
+    """Zotero's `extra`, with `label: value` added and whatever was there kept.
+
+    `extra` is free text and a PATCH replaces it, so an edit that restores a
+    PMID has to carry everything else the field already held. Appending blind
+    would also duplicate a line on a re-run, which is why an existing label is
+    matched before anything is added.
+    """
+    lines = [ln for ln in (extra or "").splitlines() if ln.strip()]
+    if any(ln.strip().lower().startswith(f"{label.lower()}:") for ln in lines):
+        return extra or ""
+    return "\n".join(lines + [f"{label}: {value}"])
+
+
+def rescue_identifiers(out: Path) -> int:
+    """Emit a zotero_edit.py edits file restoring identifiers Zotero does not have.
+
+    `--compare` found 1,174 PMIDs and 31 arXiv ids present in the frozen
+    `library.bib` and absent from Zotero. The migration did not carry them, and
+    **the frozen mirror is currently the only place they exist** -- which makes
+    overwriting `library.bib` with a Zotero-backed refresh a destructive act
+    until this has run.
+
+    Two things it deliberately does not do.
+
+    It does not restore an `isbn` that is not shaped like one. 45 of the frozen
+    bib's 201 `isbn` values are ISSNs that Mendeley mislabelled, and copying a
+    known defect into the live library because it is in a file we trust is how a
+    defect becomes permanent. Those are routed to `ISSN` and reported.
+
+    And it does not append blindly to `extra`: the field is free text, a PATCH
+    replaces it, and a re-run must not double a line.
+    """
+    bib = out / "library.bib"
+    keymap = load_json(mirror_state_dir(out) / "citekeys.json", {})
+    by_citekey = {v: k.split(":", 1)[1] for k, v in keymap.items()
+                  if k.startswith("zotero:")}
+    frozen = {k: f for k, _t, f in parse_bib(bib.read_text(encoding="utf-8"))}
+
+    api_key, user_id = load_zotero_credentials()
+    z = Zotero(api_key, user_id)
+    items = {i.get("key"): (i.get("data") or {}) for i in z.items_top()}
+
+    edits: dict = {}
+    counts = {"pmid": 0, "eprint": 0, "issn": 0, "isbn": 0, "doi": 0, "reclassified": 0}
+    skipped: list = []
+    for citekey, fields in sorted(frozen.items()):
+        item_key = by_citekey.get(citekey)
+        data = items.get(item_key or "")
+        if data is None:
+            skipped.append(f"{citekey}: no Zotero item")
+            continue
+        edit, extra = {}, data.get("extra") or ""
+        for label, field in (("PMID", "pmid"), ("arXiv", "eprint")):
+            want = (fields.get(field) or "").strip()
+            if want and label.lower() not in extra.lower():
+                extra = extra_with(extra, label, want)
+                counts[field] += 1
+        if extra != (data.get("extra") or ""):
+            edit["extra"] = extra
+        for field, zfield in (("doi", "DOI"), ("issn", "ISSN")):
+            want = (fields.get(field) or "").strip()
+            if want and not (data.get(zfield) or "").strip():
+                edit[zfield] = want
+                counts[field] += 1
+        want_isbn = (fields.get("isbn") or "").strip()
+        if want_isbn and not (data.get("ISBN") or "").strip():
+            if looks_like_issn(want_isbn):
+                counts["reclassified"] += 1
+                if not (data.get("ISSN") or "").strip() and "ISSN" not in edit:
+                    edit["ISSN"] = want_isbn
+            elif looks_like_isbn(want_isbn):
+                edit["ISBN"] = want_isbn
+                counts["isbn"] += 1
+            else:
+                skipped.append(f"{citekey}: isbn {want_isbn!r} is neither shape")
+        if edit:
+            edits[citekey] = edit
+
+    path = out / ".mirror" / "rescue-identifiers.json"
+    path.write_text(json.dumps(edits, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"# rescue-identifiers — offprint {__version__}\n")
+    print(f"- records needing an edit: {len(edits)}")
+    for k, v in counts.items():
+        print(f"- {k}: {v}")
+    print(f"- not restorable, named below: {len(skipped)}")
+    print(f"\nwritten to {path}")
+    print("Review it, then: uv run --script zotero_edit.py --edits "
+          f"{path} --dry-run")
+    for line in skipped:
+        print(f"  ! {line}")
+    return 0
+
+
 def compare(out: Path) -> int:
     """Regenerate every entry from Zotero and diff it against the frozen bib.
 
@@ -257,11 +364,16 @@ def compare(out: Path) -> int:
 def main() -> int:
     ap = argparse.ArgumentParser(description="Read a Zotero library as mirror documents.")
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT, help="mirror directory")
+    ap.add_argument("--rescue-identifiers", action="store_true",
+                    help="write a zotero_edit.py edits file restoring identifiers "
+                         "the frozen library.bib has and Zotero does not")
     ap.add_argument("--compare", action="store_true",
                     help="regenerate every BibTeX entry from Zotero and diff it "
                          "against the frozen library.bib")
     ap.add_argument("--version", action="version", version=f"offprint {__version__}")
     args = ap.parse_args()
+    if args.rescue_identifiers:
+        return rescue_identifiers(args.out)
     if args.compare:
         return compare(args.out)
     ap.error("nothing to do yet: --compare is the only mode. The refresh itself "

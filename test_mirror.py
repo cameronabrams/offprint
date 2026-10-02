@@ -2581,6 +2581,29 @@ def main():
           and "Shan, J." in rendered and "{2001}" in rendered,
           f"and the translated document renders as BibTeX\n{rendered[:200]}")
 
+    print("\nzotero_source: rescuing identifiers the migration did not carry")
+
+    # --compare found 1,174 PMIDs and 31 arXiv ids in the frozen library.bib and
+    # none in Zotero. Until they are restored, the frozen mirror is the ONLY
+    # place they exist, which makes overwriting library.bib destructive.
+    check(zs.extra_with("", "PMID", "12345") == "PMID: 12345",
+          "a PMID goes into an empty extra")
+    check(zs.extra_with("Citation Key: X", "PMID", "12345")
+          == "Citation Key: X\nPMID: 12345",
+          "and keeps what extra already held, because a PATCH replaces the field")
+    check(zs.extra_with("PMID: 999", "PMID", "12345") == "PMID: 999",
+          "an existing label is left alone, so a re-run does not double the line")
+
+    # 45 of the frozen bib's 201 isbn values are ISSNs Mendeley mislabelled.
+    # Restoring those as ISBN would make a known defect permanent because it
+    # appears in a file we trust.
+    check(zs.looks_like_issn("1520-6106") and not zs.looks_like_isbn("1520-6106"),
+          "an ISSN is recognised as one even when the frozen bib calls it an isbn")
+    check(zs.looks_like_isbn("978-0-521-42476-2") and not zs.looks_like_issn("978-0-521-42476-2"),
+          "a real ISBN is recognised as one")
+    check(not zs.looks_like_isbn("whatever") and not zs.looks_like_issn("whatever"),
+          "and a value of neither shape is neither -- reported, not guessed at")
+
     print("\ndoixref: three-way, because the citation key is frozen")
     import doixref as dx
 

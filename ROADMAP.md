@@ -164,7 +164,7 @@ annotations and findings all work on a generic document/file/annotation shape.
       for bandwidth, and the citation key is the anchor either way.
 
       Re-extracting also regenerates every extract with current code, which
-      would clear the 2,459 carrying control characters as a side effect. The
+      would clear the 1,087 carrying control characters as a side effect. The
       adoption path does not, and those two facts have to be decided together.
 
 ---
@@ -680,18 +680,71 @@ single `name` and splitting it invents an author; PMID has no Zotero field and
 lives in `extra`; and an unmapped item type degrades to `generic`/`@misc`
 rather than raising.
 
+### What `--compare` found, 2026-10-02 — 1,366 identical, 1,373 differ
+
+**The finding that matters: 1,174 PMIDs are in the frozen `library.bib` and not
+in Zotero.** The migration did not carry them, nothing in either the frozen bib
+or the Zotero record says they were ever there, and for a library this
+biomedical that is the identifier people actually search by. 31 arXiv ids are
+gone the same way.
+
+**So `<out>/library.bib` is currently the only place 1,205 identifiers exist,
+and a Zotero-backed refresh that overwrites it destroys them.** That is the
+whole argument for having built `--compare` before wiring the refresh up: this
+would have been a silent, total loss discovered months later, and the file that
+proved it is the file that would have been overwritten.
+
+`--rescue-identifiers` is the repair rather than a note about it: it writes a
+`zotero_edit.py` edits file restoring PMID and arXiv into Zotero's `extra`, and
+DOI/ISSN/ISBN into their own fields. Two refusals are built in. It never appends
+blindly to `extra` — the field is free text, a PATCH replaces it, and a re-run
+must not double a line. And **it does not restore an `isbn` that is not shaped
+like one**: 45 of the frozen bib's 201 `isbn` values are ISSNs Mendeley
+mislabelled, and copying a known defect into the live library because it sits in
+a file we trust is how a defect becomes permanent. Those are routed to `ISSN`
+and counted as reclassified.
+
+The other differences, with the library session's reading of them:
+
+- **28 journal gained, 54 note lost** — probably the 0.10.0 venue workaround
+  landing properly rather than a regression. Where the venue had nowhere better
+  to go it went into `note`; `Patil2026Structure` has `note = {ChemRxiv}` frozen
+  and none from Zotero. **Confirm before anyone "repairs" it**, because a fix
+  and a regression look identical in a diff.
+- **201 isbn, 25 url, 13 number, 12 volume** — unexamined.
+- **86 authors differ; 55 are the library session's own edits and 31 are
+  neither of ours**, including both year-less patents and `Alberti1998Definition`,
+  the corporate-author `WHO` record. Some of those are likely the single-token
+  author class rather than translation defects.
+
 - [ ] **Run `--compare`.** That is the library session's, and it is the step
       that decides whether this translation is right. Until it has run, nothing
       here is known to be correct — the fixtures only prove the translation does
       what I expected, which is the check that cannot fail.
 - [ ] **Then the three decisions in item 1** become answerable with evidence
       rather than argument.
+**Two numbers in this file about control characters were wrong, measured
+2026-10-02 by the library session against all 2,740 extracts.** The count is
+**1,087**, not 2,459. And the reason given for caring was false: these files are
+*not* invisible to search. GNU grep treats a file as binary on a NUL or an
+encoding error, and **not one of the 2,740 extracts contains a NUL** — `grep -rl`
+finds `Barnett2002Computer` and its 10,024 control bytes without complaint.
+
+The mechanism is real and `test_mirror.py` proves it, using a NUL. What was
+never checked is whether the library's own extracts contain one. They do not, so
+a test that passes has been standing behind a claim about files it does not
+describe — the same shape as a fix verified only against the case that prompted
+it, with the verification one step further from the thing it is trusted for.
+
+Stripping them is a **text-quality** argument, not a findability one. Still worth
+doing at zero network cost; just not for the stated reason.
+
 - [ ] **Re-extraction is now cheap, which changes that decision.** Item 1 framed
       it as trading verification for bandwidth: re-extracting ~2,700 attachments
       meant re-downloading them. It does not any more — `<out>/pdf/` holds every
       one and `find_archived` reads it off local disk, so a full re-extraction
       costs no network at all and would regenerate every extract with current
-      code, clearing the 2,459 that carry control characters. The adoption path
+      code, clearing the 1,087 that carry control characters. The adoption path
       was the right answer to the old question and is probably the wrong answer
       to this one.
 
