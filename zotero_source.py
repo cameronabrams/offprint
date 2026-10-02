@@ -349,9 +349,10 @@ def rescue_identifiers(out: Path) -> int:
 
     edits: dict = {}
     counts = {"pmid": 0, "eprint": 0, "issn": 0, "isbn": 0, "doi": 0, "url": 0,
-              "reclassified": 0}
+              "reclassified": 0, "already_present": 0}
     skipped: list = []
     no_field: list = []
+    already: list = []
     for citekey, fields in sorted(frozen.items()):
         item_key = by_citekey.get(citekey)
         data = items.get(item_key or "")
@@ -386,21 +387,28 @@ def rescue_identifiers(out: Path) -> int:
             counts[field] += 1
         want_isbn = (fields.get("isbn") or "").strip()
         if want_isbn and not (data.get("ISBN") or "").strip():
-            if looks_like_issn(want_isbn) or not can_hold(data, "ISBN"):
-                # Either the value is ISSN-shaped, or the type cannot hold an
-                # ISBN at all -- both say the frozen bib mislabelled it.
-                counts["reclassified"] += 1
-                if can_hold(data, "ISSN") and not (data.get("ISSN") or "").strip() \
-                        and "ISSN" not in edit:
-                    edit["ISSN"] = want_isbn
-                else:
-                    no_field.append(f"{citekey}: isbn {want_isbn!r} on a "
-                                    f"{data.get('itemType')}, which holds neither")
-            elif looks_like_isbn(want_isbn):
+            # Three outcomes that call for OPPOSITE actions, and they were one
+            # message until 2026-10-02: "on a journalArticle, which holds
+            # neither" was printed for 91 records whose type holds an ISSN
+            # perfectly well and already has one. A reader would have concluded
+            # Zotero cannot store an ISSN on a journal article.
+            if looks_like_isbn(want_isbn) and can_hold(data, "ISBN"):
                 edit["ISBN"] = want_isbn
                 counts["isbn"] += 1
+            elif (data.get("ISSN") or "").strip():
+                counts["already_present"] += 1
+                already.append(f"{citekey}: bib isbn {want_isbn!r}; Zotero already "
+                               f"has ISSN {data['ISSN']!r} -- nothing to do")
+            elif can_hold(data, "ISSN") and (looks_like_issn(want_isbn)
+                                             or not can_hold(data, "ISBN")):
+                edit["ISSN"] = want_isbn
+                counts["reclassified"] += 1
+            elif not can_hold(data, "ISSN") and not can_hold(data, "ISBN"):
+                no_field.append(f"{citekey}: a {data.get('itemType')} has neither "
+                                f"an ISSN nor an ISBN field for {want_isbn!r}")
             else:
-                skipped.append(f"{citekey}: isbn {want_isbn!r} is neither shape")
+                skipped.append(f"{citekey}: isbn {want_isbn!r} is neither shape "
+                               "and the record has no ISSN to compare it against")
         if edit:
             edits[citekey] = edit
 
@@ -410,6 +418,7 @@ def rescue_identifiers(out: Path) -> int:
     print(f"- records needing an edit: {len(edits)}")
     for k, v in counts.items():
         print(f"- {k}: {v}")
+    print(f"- already in Zotero in another format, no action: {len(already)}")
     print(f"- not restorable because the item type has no such field: {len(no_field)}")
     print(f"- not restorable, named below: {len(skipped)}")
     print(f"\nwritten to {path}")

@@ -714,11 +714,67 @@ Two other gaps the same run measured, both fixed:
 
 **And a gap that is not one.** 12 lost `volume`s and 13 lost `number`s belong to
 records typed `report`, `book` or `bookSection`, which have no such field in
-Zotero. The data has nowhere to live. That is `TYPE_MAP` damage surfacing a
-third time — `Berman2000Protein`, the PDB paper, is typed as a report and cannot
-hold its own volume. Rescuing those needs the item types corrected, which is a
-PATCH that drops every field the new type lacks, which is why `zotero_edit.py`
-refuses `itemType` and should keep refusing it.
+Zotero. The data has nowhere to live. Rescuing those needs the item types
+corrected, which is a PATCH that drops every field the new type lacks — which is
+why `zotero_edit.py` refuses `itemType` and should keep refusing it.
+
+### Two things this file said with more confidence than it had
+
+**"201 ISBNs lost" was really 9, and "TYPE_MAP damage surfacing a third time"
+was overdrawn.** Both corrected 2026-10-02 by the library session.
+
+Of 192 `isbn` values the rescue refused, **91 are already in Zotero as an ISSN**
+in a different format — `Yang2009Comparison` holds `00219606` against the frozen
+bib's `0021-9606` — and **101 are junk**: `1060510618`, `5143983797`,
+`1493605872292`, none of them an ISSN or an ISBN, and every one of those records
+already carrying a correct ISSN. Nine were real.
+
+The message was wrong for the 91, and wrong in a way that teaches something
+false: *"on a journalArticle, which holds neither"* says the **type** cannot hold
+the value, when the type holds it fine and the value is already there. Those are
+opposite situations calling for opposite actions. Three buckets now — already
+present, nowhere to put it, neither shape — and they are counted separately.
+
+**And the no-field list is not the type inventory**, which this file claimed it
+was. All 192 entries are `journalArticle` records with junk in `isbn`. A report
+typed as a report has no ISBN to refuse, so a mistyped record never appears in
+it at all — `Berman2000Protein` is not there. "Records that refused a field" and
+"records whose type is wrong" are different sets, and treating the first as an
+inventory of the second was an inference with nothing behind it.
+
+### The real type inventory, built by the library session
+
+All 2,739 items paginated and cross-referenced against Crossref's own type:
+**2,687 of 2,739 are `journalArticle`, and of the 2,229 with a cached Crossref
+type, 2,221 agree.** Zotero's types are overwhelmingly right and the damage is
+far smaller than three separate paragraphs of this file implied.
+
+The 8 that disagree: `Flood2018Selective` and `Masaro1999Physical` (book),
+`Katyal2017Expression`, `Murphy2006Csf`, `Naji2005Theoretical` and
+`Wong2011Allosteric` (bookSection), `Vashishta2006Multimillion`
+(conferencePaper), `Patil2026Structure` (preprint).
+
+**The 25 reports fall outside that check because not one has a DOI**, which is
+exactly why they were invisible to it. Read directly, 17 carry a journal venue —
+*Nucleic Acids Research*, *Annu. Rev. Biochem*, *Journal of Virology* eleven
+times — plus `Humphrey1996Vmd`, the VMD paper, which the venue flag missed
+because its `extra` is empty. So roughly 18 of 25 are journal articles. The
+genuine reports are `Snow1991Dilatometry`, the US EPA record and
+`Bindermwoods`.
+
+### Where the reports came from: one bad import, filed two or three times
+
+`Frankel1998Hiv` a/b/c are three records with identical titles.
+`Moore1993Immunochemical`, `Sullivan1993Effect`, `Thali1993Characterization` and
+`Wyatt1992Relationship` are a/b pairs. With the unsuffixed keys that is **5
+papers across 13 records**, and the PDFs are byte-identical within each group —
+Moore's three all `a1a5ddc5`, Wyatt's three all `9a70d7cd`. One bad import batch,
+filed repeatedly, all typed `report`. That is where the report population comes
+from, and it is a library matter rather than a tool one.
+
+Note for whoever prunes them: `citekeys.json` is append-only, so a deleted
+record keeps its key reserved and a key cited in a manuscript keeps resolving.
+Both halves or neither — `docs/reference.md` has the procedure.
 
 ### What `--compare` found, 2026-10-02 — 1,366 identical, 1,373 differ
 

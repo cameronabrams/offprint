@@ -2683,6 +2683,13 @@ def main():
     check(zs.can_hold(article, "ISSN") and not zs.can_hold(book, "volume"),
           "and a report or book has nowhere to put a volume at all")
 
+    # "already present" and "nowhere to put it" call for OPPOSITE actions and
+    # were one message: 91 records whose type holds an ISSN fine, and already
+    # had one, were reported as a type that "holds neither". A reader would
+    # have concluded Zotero cannot store an ISSN on a journal article.
+    check(zs.can_hold({"itemType": "journalArticle", "ISSN": "00219606"}, "ISSN"),
+          "a journalArticle holds an ISSN whether or not one is set")
+
     # arXiv ids arrive bare, prefixed and versioned. A containment test on the
     # word "arXiv" skipped 14 of 31 as already present, which is a different
     # question from whether the ID is there.
