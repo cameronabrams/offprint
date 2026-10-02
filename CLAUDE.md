@@ -40,9 +40,22 @@ lookup that misses on *every* document takes that branch every time. On
 
 So: `keymap` and `state["files"]` are indexed through `qualify()`, always;
 `local_id()` is how a raw id comes back out, and it returns `None` rather than a
-wrong id for another backend's. When the Zotero backend lands this is the rule it
-will be tempted to break, because a second source is exactly the case the bare
-ids have never had to survive.
+wrong id for another backend's.
+
+**The Zotero backend landed on 2026-10-02 and this is where it was handled.**
+`BACKEND` is still `"mendeley"`, and every function that qualifies a stored id
+now takes a `backend` parameter rather than reading that constant:
+`assign_citekeys`, `write_bibtex`, `write_index`, `write_folders` and
+`harvest_attachments`. A Zotero run that used the constant would namespace every
+Zotero id as a Mendeley one, miss all 2,739 existing entries, and mint 2,739 new
+citation keys over the top of keys already cited in manuscripts — silently, and
+indistinguishably from a first run. `test_mirror.py` asserts both halves: the
+right backend keeps the existing key, and the default backend produces the
+second one.
+
+**`qualify_map` is deliberately NOT given the backend.** It migrates *bare* ids,
+and a bare id means Mendeley's by definition, whatever run reads the file. A
+test covers that too, because it looks exactly like an omission.
 
 Since 2026-09-30 `citekeys.json` holds both halves — 2,739 `mendeley:<id>` and
 2,739 `zotero:<key>` entries pointing at the same 2,739 citation keys. Two things

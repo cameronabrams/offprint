@@ -37,7 +37,7 @@ Usage:
 
 from __future__ import annotations
 
-__version__ = "0.16.0"
+__version__ = "0.17.0"
 """The tool's version, and the only place it is written down.
 
 It exists so a mirror can say what produced it. Extraction behaviour has changed
@@ -524,8 +524,21 @@ def qualify_map(d: dict, backend: str = BACKEND) -> tuple[dict, int]:
     return out, moved
 
 
-def assign_citekeys(docs: list, keymap_path: Path) -> dict:
-    """Keys, once assigned to a document id, never change between runs."""
+def assign_citekeys(docs: list, keymap_path: Path,
+                    backend: str = BACKEND) -> dict:
+    """Keys, once assigned to a document id, never change between runs.
+
+    `backend` is threaded rather than taken from the module constant, because
+    the constant is `"mendeley"` and a Zotero run that used it would namespace
+    every Zotero id as a Mendeley one -- miss every existing entry, and assign
+    2,739 brand-new keys over the top of keys already cited in manuscripts.
+    That is the failure the repo's CLAUDE.md names as the one a second backend
+    will be tempted to cause.
+
+    `qualify_map` below is NOT given the backend, and that is deliberate: it
+    migrates *bare* ids, and a bare id means Mendeley's by definition, whatever
+    run is reading the file.
+    """
     keymap, migrated = qualify_map(load_json(keymap_path, {}))
     if migrated:
         # Key text is untouched -- only the id it hangs on changes -- so every
@@ -534,8 +547,8 @@ def assign_citekeys(docs: list, keymap_path: Path) -> dict:
     taken = set(keymap.values())
     # Deterministic order for first assignment, so a fresh run is reproducible.
     for doc in sorted(docs, key=lambda d: (str(d.get("created", "")), d["id"])):
-        if qualify(doc["id"]) not in keymap:
-            keymap[qualify(doc["id"])] = make_citekey(doc, taken)
+        if qualify(doc["id"], backend) not in keymap:
+            keymap[qualify(doc["id"], backend)] = make_citekey(doc, taken)
     save_json(keymap_path, keymap)
     return keymap
 
@@ -774,15 +787,17 @@ def bib_entry(doc: dict, key: str, include_abstract: bool = True) -> str:
     return "\n".join(lines)
 
 
-def write_bibtex(docs: list, keymap: dict, out: Path, include_abstract: bool) -> None:
+def write_bibtex(docs: list, keymap: dict, out: Path, include_abstract: bool,
+                 backend: str = BACKEND) -> None:
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     chunks = [
         f"% Mendeley library mirror -- generated {stamp}",
         f"% {len(docs)} references. Do not edit by hand; edit in Mendeley and re-run.",
         "",
     ]
-    for doc in sorted(docs, key=lambda d: keymap[qualify(d["id"])].lower()):
-        chunks.append(bib_entry(doc, keymap[qualify(doc["id"])], include_abstract))
+    for doc in sorted(docs, key=lambda d: keymap[qualify(d["id"], backend)].lower()):
+        chunks.append(bib_entry(doc, keymap[qualify(doc["id"], backend)],
+                                include_abstract))
         chunks.append("")
     (out / "library.bib").write_text("\n".join(chunks), encoding="utf-8")
 
@@ -791,7 +806,8 @@ def write_bibtex(docs: list, keymap: dict, out: Path, include_abstract: bool) ->
 # index, folders, annotations
 # --------------------------------------------------------------------------
 
-def write_index(docs: list, keymap: dict, files_by_doc: dict, ann_by_doc: dict, out: Path) -> None:
+def write_index(docs: list, keymap: dict, files_by_doc: dict, ann_by_doc: dict,
+                out: Path, backend: str = BACKEND) -> None:
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     lines = [
         "# Library index",
@@ -801,8 +817,8 @@ def write_index(docs: list, keymap: dict, files_by_doc: dict, ann_by_doc: dict, 
         "| key | year | first author | title | journal | doi | text | notes |",
         "|---|---|---|---|---|---|---|---|",
     ]
-    for doc in sorted(docs, key=lambda d: keymap[qualify(d["id"])].lower()):
-        key = keymap[qualify(doc["id"])]
+    for doc in sorted(docs, key=lambda d: keymap[qualify(d["id"], backend)].lower()):
+        key = keymap[qualify(doc["id"], backend)]
         ids = doc.get("identifiers") or {}
         title = (doc.get("title") or "").replace("|", r"\|")
         source = (doc.get("source") or "").replace("|", r"\|")
@@ -820,7 +836,8 @@ def write_index(docs: list, keymap: dict, files_by_doc: dict, ann_by_doc: dict, 
     (out / "index.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def write_folders(folders: list, folder_docs: dict, keymap: dict, out: Path) -> None:
+def write_folders(folders: list, folder_docs: dict, keymap: dict, out: Path,
+                  backend: str = BACKEND) -> None:
     by_id = {f["id"]: f for f in folders}
 
     def full_name(f):
@@ -833,8 +850,8 @@ def write_folders(folders: list, folder_docs: dict, keymap: dict, out: Path) -> 
 
     payload = {
         full_name(f): sorted(
-            keymap[qualify(d)] for d in folder_docs.get(f["id"], [])
-            if qualify(d) in keymap
+            keymap[qualify(d, backend)] for d in folder_docs.get(f["id"], [])
+            if qualify(d, backend) in keymap
         )
         for f in folders
     }
@@ -1323,10 +1340,31 @@ def write_extraction_report(rows: list, out: Path, extracted: int) -> None:
     (out / "extraction-report.md").write_text("\n".join(lines), encoding="utf-8")
 
 
+def mendeley_fetch(client: Mendeley):
+    """The default way to get an attachment's bytes: Mendeley's file endpoint.
+
+    Factored out so the harvest can be pointed at another source. This is the
+    "locate bytes" half of the backend interface ROADMAP item 1 describes, and
+    it is the only part of `harvest_attachments` that knows which service it is
+    talking to.
+    """
+    def fetch(file_id: str) -> bytes:
+        # The download endpoint answers 303 with a signed URL; the
+        # Authorization header must NOT be forwarded to that host.
+        resp = client.get(f"{API}/files/{file_id}", accept="*/*",
+                          allow_redirects=False)
+        if resp.status_code in (301, 302, 303, 307):
+            resp = requests.get(resp.headers["Location"], timeout=180)
+        resp.raise_for_status()
+        return resp.content
+    return fetch
+
+
 def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                         docs_by_id: dict, out: Path, state: dict, mode: str,
                         state_path: Path | None = None, ocr: bool = False,
-                        backfill: bool = False) -> tuple:
+                        backfill: bool = False, fetch=None,
+                        backend: str = BACKEND) -> tuple:
     """Download each attachment, extract its text, and (by default) discard it.
 
     `backfill` is for getting the PDFs themselves onto disk, which a plain
@@ -1353,6 +1391,8 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
         # Not cosmetic: an unqualified file id from a second backend would collide
         # here and skip an extraction as "already done".
         note(f"  namespaced {migrated} attachment ids as {BACKEND}:<id>")
+    fetch = fetch or mendeley_fetch(client)
+    qual = lambda raw: qualify(raw, backend)
     fetched = skipped = failed = reused = unresolved = archived = 0
     withheld = 0
     removed = load_removed(out)
@@ -1368,7 +1408,7 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
             # built from this run's API response are keyed by bare id and do not.
             # This is the one place the two meet, and getting it wrong here skips
             # every attachment without raising anything.
-            key = keymap.get(qualify(doc_id))
+            key = keymap.get(qual(doc_id))
             doc = docs_by_id.get(doc_id)
             if not key or not doc:
                 unresolved += 1
@@ -1378,7 +1418,7 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                 stem = key if i == 0 else f"{key}-{i+1}"
                 is_pdf = "pdf" in (f.get("mime_type") or "").lower()
                 text_target = text_dir / f"{stem}.md"
-                prior = known.get(qualify(f["id"]), {})
+                prior = known.get(qual(f["id"]), {})
                 if prior.get("filehash") == f.get("filehash") and (
                         text_target.exists() or prior.get("status") in ("no-text", "not-pdf")):
                     skipped += 1
@@ -1407,16 +1447,11 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                             withheld += 1
                         elif find_archived(pdf_dir, stem, f) is None:
                             try:
-                                resp = client.get(f"{API}/files/{f['id']}",
-                                                  accept="*/*", allow_redirects=False)
-                                if resp.status_code in (301, 302, 303, 307):
-                                    resp = requests.get(resp.headers["Location"],
-                                                        timeout=180)
-                                resp.raise_for_status()
+                                content = fetch(f["id"])
                                 archive = pdf_dir / (
                                     stem + archive_suffix(
-                                        f, looks_like_pdf(resp.content)))
-                                archive.write_bytes(resp.content)
+                                        f, looks_like_pdf(content)))
+                                archive.write_bytes(content)
                                 archived += 1
                                 progress(f"  {seen}/{total}  archiving {stem[:36]}")
                                 time.sleep(0.2)
@@ -1438,14 +1473,7 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                         data = local.read_bytes()
                         reused += 1
                     else:
-                        # The download endpoint answers 303 with a signed URL; the
-                        # Authorization header must NOT be forwarded to that host.
-                        resp = client.get(f"{API}/files/{f['id']}", accept="*/*",
-                                          allow_redirects=False)
-                        if resp.status_code in (301, 302, 303, 307):
-                            resp = requests.get(resp.headers["Location"], timeout=180)
-                        resp.raise_for_status()
-                        data = resp.content
+                        data = fetch(f["id"])
 
                     sniffed = looks_like_pdf(data)
                     if mode == "keep" and not from_disk:
@@ -1468,7 +1496,7 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                         report.append({"key": stem, "status": "not-pdf",
                                        "title": doc.get("title", ""),
                                        "detail": detail})
-                        known[qualify(f["id"])] = {"filehash": f.get("filehash"),
+                        known[qual(f["id"])] = {"filehash": f.get("filehash"),
                                                    "status": "not-pdf",
                                                    "detail": detail}
                         continue
@@ -1519,7 +1547,7 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                                                      "stripped after extraction"})
                         text_target.write_text(safe, encoding="utf-8")
                         fetched += 1
-                    known[qualify(f["id"])] = {"filehash": f.get("filehash"), "status": status,
+                    known[qual(f["id"])] = {"filehash": f.get("filehash"), "status": status,
                                       "detail": detail, "pages": pages, "chars": chars}
                     stub = pdf_dir / f"{stem}.pdf"
                     if mode == "text" and not from_disk and stub.exists():
@@ -1543,7 +1571,7 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                         time.sleep(0.2)
                 except Exception as exc:  # one bad file shouldn't stop the run
                     failed += 1
-                    known[qualify(f["id"])] = {"filehash": f.get("filehash"), "status": "failed",
+                    known[qual(f["id"])] = {"filehash": f.get("filehash"), "status": "failed",
                                       "detail": str(exc)[:200]}
                     report.append({"key": stem, "status": "failed",
                                    "title": doc.get("title", ""), "detail": str(exc)[:120]})

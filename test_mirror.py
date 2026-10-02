@@ -2510,6 +2510,48 @@ def main():
     check(ok_shape["creators"][0]["lastName"] == "Shan",
           "while Zotero's own shape goes through")
 
+    print("\nthe backend is threaded, not taken from the module constant")
+
+    # CLAUDE.md names this as the rule a second backend will be tempted to
+    # break. A Zotero run that used BACKEND would namespace every Zotero id as
+    # a Mendeley one, miss all 2,739 existing entries, and assign brand-new
+    # keys over the top of keys already cited in manuscripts.
+    zdocs = [{"id": "ZKEY1", "type": "journal", "title": "A paper", "year": 2001,
+              "source": "A Journal",
+              "authors": [{"last_name": "Shan", "first_name": "J."}]}]
+    kpath = tmp / "backend-keys.json"
+    mm.save_json(kpath, {"zotero:ZKEY1": "Shan2001Existing"})
+    km = mm.assign_citekeys(zdocs, kpath, backend="zotero")
+    check(km["zotero:ZKEY1"] == "Shan2001Existing",
+          f"an existing zotero: key is found and KEPT ({km.get('zotero:ZKEY1')})")
+    check(len(km) == 1,
+          f"and no second key is minted for the same paper ({sorted(km)})")
+
+    # The failure it prevents, shown rather than asserted in prose.
+    mm.save_json(kpath, {"zotero:ZKEY1": "Shan2001Existing"})
+    wrong = mm.assign_citekeys(zdocs, kpath)          # defaults to mendeley
+    check(wrong.get("mendeley:ZKEY1") and len(wrong) == 2,
+          f"with the default backend the same record gets a SECOND key "
+          f"({sorted(wrong)})")
+
+    # qualify_map is deliberately NOT given the backend: a bare id means
+    # Mendeley's by definition, whatever run reads the file.
+    bare = tmp / "bare-keys.json"
+    mm.save_json(bare, {"abc123": "Old2001Key"})
+    migrated = mm.assign_citekeys([], bare, backend="zotero")
+    check("mendeley:abc123" in migrated,
+          f"a bare id migrates to mendeley: even on a zotero run ({sorted(migrated)})")
+
+    zkm = {"zotero:ZKEY1": "Shan2001Existing"}
+    zout = tmp / "zbib"
+    zout.mkdir()
+    mm.write_bibtex(zdocs, zkm, zout, include_abstract=False, backend="zotero")
+    check("@article{Shan2001Existing," in (zout / "library.bib").read_text(encoding="utf-8"),
+          "write_bibtex resolves a zotero id through the right namespace")
+    mm.write_index(zdocs, zkm, {}, {}, zout, backend="zotero")
+    check("Shan2001Existing" in (zout / "index.md").read_text(encoding="utf-8"),
+          "and so does write_index")
+
     print("\nzotero_source: a Zotero item in the shape the generators take")
     import zotero_source as zs
 
