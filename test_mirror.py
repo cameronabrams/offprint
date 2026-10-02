@@ -2867,6 +2867,51 @@ def main():
           "a header-only extract is still removed, so a genuine no-text scan "
           "is reported rather than hidden behind an empty file")
 
+    print("\n--ocr must reach the scans it exists to recover")
+
+    # The destructive run left 110 entries as status=no-text. That is in
+    # DONE_STATUSES, and has_artifact is satisfied by the status alone without
+    # a file, so an --ocr recovery run reported "0 extracted, 2730 unchanged"
+    # and never reached a single one of them. The flag was a no-op.
+    odir = tmp / "ocr-retry"
+    (odir / "pdf").mkdir(parents=True)
+    (odir / "pdf" / "Weeks1971Role.pdf").write_bytes(scan_bytes)
+    ofiles = {"d1": [{"id": "o1", "mime_type": "application/pdf", "filehash": "ho"}]}
+
+    # Without --ocr the verdict stands: nothing to gain from re-reading.
+    plain_state = {"files": {mm.qualify("o1"): {"filehash": "ho", "status": "no-text"}}}
+    _pf, ps, _px, _pr = mm.harvest_attachments(
+        NoNetwork(), ofiles, {mm.qualify("d1"): "Weeks1971Role"},
+        {"d1": DOCS[0]}, odir, plain_state, "text")
+    check(ps == 1, f"a plain run still skips a known no-text scan ({ps})")
+
+    # With --ocr it does not: this run carries a reader the last one lacked.
+    _ocr_orig = mm.ocr_pdf_text
+    mm.ocr_pdf_text = lambda data: ("the structure of simple liquids " * 20, 640)
+    ocr_state = {"files": {mm.qualify("o1"): {"filehash": "ho", "status": "no-text"}}}
+    try:
+        of, os_, _ox, orep = mm.harvest_attachments(
+            NoNetwork(), ofiles, {mm.qualify("d1"): "Weeks1971Role"},
+            {"d1": DOCS[0]}, odir, ocr_state, "text", ocr=True)
+    finally:
+        mm.ocr_pdf_text = _ocr_orig
+    check(of == 1 and os_ == 0,
+          f"--ocr RE-EXAMINES a no-text scan: a status is the verdict of the "
+          f"reader that produced it ({of} extracted, {os_} skipped)")
+    check(ocr_state["files"][mm.qualify("o1")]["status"] == "ocr",
+          "and the state records that a stronger reader succeeded")
+    check((odir / "text" / "Weeks1971Role.md").exists()
+          and "ocr: true" in (odir / "text" / "Weeks1971Role.md").read_text(encoding="utf-8"),
+          "with the extract marked, so a later plain run will not delete it")
+
+    # not-pdf is deliberately NOT retried: OCR does not help a video file, and
+    # re-reading those every run would be motion.
+    np_state = {"files": {mm.qualify("o1"): {"filehash": "ho", "status": "not-pdf"}}}
+    _nf, ns, _nx, _nr = mm.harvest_attachments(
+        NoNetwork(), ofiles, {mm.qualify("d1"): "Weeks1971Role"},
+        {"d1": DOCS[0]}, odir, np_state, "text", ocr=True)
+    check(ns == 1, f"--ocr does not retry a not-pdf attachment ({ns})")
+
     print("\na failed extraction is unfinished work, not a result")
 
     # 2026-10-02, the real one: 2,732 attachments were recorded `failed` because

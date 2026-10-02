@@ -37,7 +37,7 @@ Usage:
 
 from __future__ import annotations
 
-__version__ = "0.19.0"
+__version__ = "0.19.1"
 """The tool's version, and the only place it is written down.
 
 It exists so a mirror can say what produced it. Extraction behaviour has changed
@@ -1457,6 +1457,19 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                 # extract that nothing will ever look at again.
                 prior_status = prior.get("status")
                 done_before = prior_status in DONE_STATUSES
+                if ocr and prior_status == "no-text":
+                    # **A status is the verdict of the reader that produced
+                    # it.** `no-text` means the plain reader found nothing, and
+                    # `--ocr` is a different and stronger reader whose entire
+                    # purpose is to re-read exactly those attachments. Treating
+                    # the weaker reader's verdict as final made the flag a
+                    # no-op: on 2026-10-02 an --ocr recovery run reported
+                    # "0 extracted, 2730 unchanged" and never reached one of
+                    # the 110 scans it existed to recover.
+                    #
+                    # `not-pdf` is deliberately NOT here. OCR does not help a
+                    # video file, and retrying those every run would be motion.
+                    done_before = False
                 has_artifact = text_target.exists() or prior_status in ("no-text", "not-pdf")
                 if (done_before and has_artifact
                         and prior.get("filehash") == f.get("filehash")):

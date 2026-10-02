@@ -267,6 +267,13 @@ indistinguishable, later, from what the paper actually said.
 
 Two implementation notes that exist because of real failures:
 
+- **A status is the verdict of the reader that produced it.** `no-text` means
+  the plain reader found nothing; `--ocr` is a stronger reader whose whole
+  purpose is to re-read exactly those. Treating the weaker verdict as final made
+  the flag a no-op — an OCR recovery run on 2026-10-02 reported "0 extracted,
+  2730 unchanged" and reached none of the 110 scans it existed for. So a run
+  carrying a capability the previous run lacked must not inherit its verdict.
+  `not-pdf` is deliberately exempt: OCR does not help a video file.
 - **A run that reads nothing must not delete what an earlier run read.** On
   2026-10-02 a re-extract without `--ocr` read 0 characters from 108 image-only
   scans and unlinked all 108 OCR'd extracts — a deliberate pass's work, gone,

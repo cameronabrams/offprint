@@ -985,6 +985,28 @@ The other differences, with the library session's reading of them:
       record removed from Zotero leaves `text/` and `pdf/` orphans that
       `get_pdf.py --attachments` finds.
 
+### And the recovery run was a no-op — `0.19.1`
+
+`--refresh --ocr` reported **0 extracted, 2730 unchanged** and reached none of
+the 110 scans it existed to recover. The destructive run had left them as
+`status=no-text`, which is in `DONE_STATUSES` — and `has_artifact` is satisfied
+by that status *without a file*, so every one skipped.
+
+**A status is the verdict of the reader that produced it.** `no-text` means the
+plain reader found nothing. `--ocr` is a different and stronger reader, and
+treating the weaker one's verdict as final made the flag a no-op in precisely
+the case it was built for. A run carrying a capability the previous run lacked
+must not inherit its verdict.
+
+`not-pdf` is deliberately exempt — OCR does not help a video file, and retrying
+those every run would be motion.
+
+This is the third consecutive defect in the same conceptual place: what the tool
+is entitled to treat as settled. `failed` was unfinished and looked done; an
+existing extract was evidence and the state was not; `no-text` was a verdict
+that a stronger reader must overturn. Each was found by running the thing and
+counting, and each one made the next visible.
+
 ### The re-extract worked, and destroyed 108 OCR'd extracts — `0.19.0`
 
 Everything the re-extraction was for happened: control characters 1,087 → 1,
