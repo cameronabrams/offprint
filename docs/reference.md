@@ -4,7 +4,54 @@ Command-line options, the tests, and the accumulated small print.
 
 ## Options
 
+### `zotero_source.py` — the refresh
+
 ```
+--refresh              rebuild library.bib, index.md, text/, annotations/
+                       and folders.json from Zotero
+--dry-run              with --refresh: read and report, write nothing
+--ocr                  with --refresh: read scanned attachments that have no
+                       text layer (needs --with rapidocr-onnxruntime)
+--compare              regenerate every BibTeX entry from Zotero and diff it
+                       against the existing library.bib, writing nothing
+--rescue-identifiers   emit a zotero_edit.py edits file restoring identifiers
+                       the bib holds and Zotero does not
+--out DIR              mirror somewhere else
+--version              print the version and exit
+```
+
+**`--ocr` is not only for a first pass.** A `no-text` status is the verdict of
+the *plain* reader, so a run carrying OCR re-examines those attachments rather
+than inheriting it. Without the flag they are skipped, which is correct and is
+also why an OCR recovery run must be given the flag or it does nothing at all.
+
+### `zotero_edit.py` — correcting a record
+
+```
+--edits FILE           JSON, {citekey: {field: value}}, with ZOTERO field names
+--dry-run              show the diff, send nothing
+--yes                  do not ask before sending
+```
+
+### `doixref.py` — each record's DOI against Crossref
+
+```
+--report FILE          write the report here as well as to stdout
+--key KEY              limit to one citation key (repeatable)
+--limit N              stop after this many lookups
+```
+
+Read-only and public; it never writes to the library, and it caches to
+`~/.cache/offprint/` so a re-run resumes.
+
+### `mendeley_mirror.py` — the retired refresh
+
+```
+--retire "REASON"      declare this mirror frozen: rewrite mirror-status.md as
+                       a standing staleness notice and refuse further refreshes
+--successor WHERE      with --retire, where the live library now is
+--backfill             with --attachments keep: download attachments whose text
+                       is already extracted, so every file lands in <out>/pdf/
 run_mirror.bat --reconfigure       re-enter application ID, secret, redirect URL
 run_mirror.bat --attachments keep  keep the PDFs as well as the extracted text
 run_mirror.bat --attachments none  metadata and annotations only
@@ -25,10 +72,19 @@ Three more, not shown above because they are not part of an ordinary refresh:
 ```
 
 There is **no re-extract flag.** A refresh skips any attachment whose file hash
-is unchanged and whose extract already exists, so improving extraction does not
-by itself revisit papers already mirrored. Re-reading one means removing its
-entry from `.mirror/state.json` (keyed by Mendeley *file* id) and refreshing —
-back that file up first.
+is unchanged *and* whose stored status says it was examined. Improving
+extraction does not by itself revisit papers already mirrored; re-reading one
+means removing its entry from `.mirror/state.json` and refreshing — back that
+file up first.
+
+What counts as "examined" is an explicit list — `ok`, `ocr`, `garbled`,
+`no-text`, `not-pdf` — and **anything else, including `failed` and an
+unrecognised value, is unfinished work and gets re-examined.** It is a list of
+what is done rather than of what is not, so a failure status added later
+defaults to being retried. That default is load-bearing: a run that had recorded
+2,732 attachments as `failed` once skipped every one of them on the next pass,
+because a text file from an earlier backend still existed and was mistaken for
+evidence of work.
 
 
 ## Tests

@@ -4,6 +4,24 @@ The one script that can destroy correct metadata rather than merely add wrong me
 
 ## Correcting a reference already in Mendeley
 
+```{note}
+**`zotero_edit.py` is the live one**, since the cutover of 2026-10-02. It takes
+the same edits file keyed by citation key, with **Zotero's field names**:
+`creators` not `authors`, `firstName`/`lastName` not `first_name`/`last_name`,
+and `DOI`/`ISSN`/`ISBN` as separate top-level fields rather than one
+`identifiers` object. A Mendeley field name is refused *by name*, with its
+translation, rather than being silently accepted or dismissed as a typo.
+
+The dangerous field moves with the backend. Mendeley's PATCH replaced the whole
+`identifiers` object, so that one had to be merged by hand. Zotero's PATCH is
+already a partial merge — and `creators` is a **list**, which a PATCH replaces
+whole, editors included. So an edit replaces only the creator types it mentions
+and keeps the ones it does not.
+
+The rest of this page describes `mendeley_edit.py`, and is kept because the
+three properties below are why `zotero_edit.py` has three of its own.
+```
+
 `mendeley_edit.py` PATCHes fields on references that are already there. It is the
 most invasive of the three writers, because it changes metadata rather than
 adding something new — so it is `--dry-run` first, always.

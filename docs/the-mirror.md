@@ -5,7 +5,8 @@ What a refresh writes, what it deliberately throws away, and how to tell a usabl
 ## What happens to the PDFs
 
 Each attachment is downloaded, its text extracted, and the PDF then deleted. You
-read papers in Mendeley; a second copy on disk earns nothing but gigabytes. What
+read papers in a reference manager; a second copy on disk earns nothing but
+gigabytes. What
 stays behind is `text/<citekey>.md`: YAML front matter with title, authors, year,
 and DOI, then the text with `<!-- p. 7 -->` markers so a quote can carry its page.
 
@@ -120,7 +121,7 @@ record is extracted, with all but the first suffixed — so `text/<key>-2.md` is
 needs an extra dependency:
 
 ```
-uv run --with rapidocr-onnxruntime --script mendeley_mirror.py --ocr
+uv run --with rapidocr-onnxruntime --script zotero_source.py --refresh --ocr
 ```
 
 It reads only the attachments that failed the text-layer check. On a large

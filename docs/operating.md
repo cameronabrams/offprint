@@ -3,6 +3,26 @@
 The tool and the library it writes are two directories with different lifetimes,
 and almost every operational rule here follows from that one fact.
 
+## Which backend
+
+**Zotero, since 2026-10-02.** `zotero_source.py --refresh` rebuilds
+`library.bib`, `index.md`, `text/`, `annotations/` and `folders.json` from the
+Zotero API, reading attachment bytes from `<out>/pdf/` and going to the network
+only on a miss.
+
+`mendeley_mirror.py` is the old refresh and is retired. It is **not** dead code:
+it holds every generator — the BibTeX writer, citation-key assignment, text
+extraction, the index — and `zotero_source.py` is a reader that feeds them. What
+changed at the cutover is where documents come from and where bytes come from,
+and nothing else.
+
+The two share `citekeys.json`, which holds a `mendeley:<id>` and a
+`zotero:<key>` entry for every citation key. That is why the migration moved
+2,739 records without a single key changing, and it is the reason the backend is
+passed as a parameter rather than read from a module constant: a Zotero run that
+used the constant would namespace Zotero ids as Mendeley ones, match nothing,
+and mint a fresh key for every paper.
+
 ## The clone is replaceable; the library is not
 
 ```
@@ -18,8 +38,9 @@ means travels *with the library*, not with the code.
 | where | what | why there |
 |---|---|---|
 | the clone | all code | replaceable; nothing generated lives here |
-| `<out>/.mirror/` | `citekeys.json`, `state.json`, `mirror.log` | travels with the library, so every machine agrees what a citation key means and nobody re-extracts everything |
-| `~/.config/mendeley-mirror` (`%LOCALAPPDATA%` on Windows) | application ID, secret, tokens | per-machine on purpose: a public repo and a synced library both stay free of credentials |
+| `<out>/.mirror/` | `citekeys.json`, `state.json`, `removed.tsv`, `pairings.tsv`, `mirror.log` | travels with the library, so every machine agrees what a citation key means and nobody re-extracts everything |
+| `~/.config/offprint` (`%LOCALAPPDATA%` on Windows) | the Zotero API key | per-machine on purpose: a public repo and a synced library both stay free of credentials |
+| `~/.config/mendeley-mirror` | Mendeley's application ID, secret and tokens | the old location, still read; new credentials go to `offprint` |
 | `~/.cache/mendeley-mirror/pdf` | fetched PDFs | outside the library, so pulling one paper's PDF does not sync it to every machine |
 
 **Scripts never locate data relative to themselves.** `DEFAULT_OUT` is an
@@ -48,13 +69,13 @@ Since version `9246b05` the tool no longer *tells* you to do the unsafe thing:
 `inbox.py` works out whether the systemd unit exists and prints the command that
 is safe on the machine you are actually on.
 
-## One direction, and three deliberate exceptions
+## One direction, and five deliberate exceptions
 
-A refresh is strictly one-way, Mendeley to disk. A bad run can lose mirrored
+A refresh is strictly one-way, the service to disk. A bad run can lose mirrored
 files but cannot touch the library, which is what makes it safe to run
-unattended on a schedule.
+unattended.
 
-Four scripts break that on purpose:
+Five scripts break that on purpose:
 
 | script | account | what it does |
 |---|---|---|
@@ -62,6 +83,12 @@ Four scripts break that on purpose:
 | `mendeley_push.py` | Mendeley | adds one reference, from an arXiv ID or a DOI |
 | `mendeley_edit.py` | Mendeley | corrects fields on a reference that already exists |
 | `zotero_attach.py` | Zotero | uploads the mirrored PDFs into attachments that already exist, and corrects each one's filename and content type to match |
+| `zotero_edit.py` | Zotero | corrects fields on a record that already exists |
+
+The three Mendeley ones are retired along with the account. `zotero_edit.py` is
+the one to be most careful with, for the same reason `mendeley_edit.py` was: it
+is the only script that can *destroy* correct metadata rather than merely add
+wrong metadata. See [Correcting a reference](corrections.md).
 
 The three Mendeley scripts are interactive by default. `--dry-run` is the safe
 thing to run and the right thing to show someone before a batch. `--yes` is for a

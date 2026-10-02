@@ -2,6 +2,20 @@
 
 Running the refresh on a schedule, and the one rule that matters: never two at once.
 
+```{warning}
+**The scheduled refresh is retired as of 2026-10-02.** Everything on this page
+drives `mendeley_mirror.py` against a Mendeley account that is no longer in use.
+The systemd timer is **disabled**, not broken, and re-enabling it as a repair is
+the mistake this note exists to prevent — a disabled hourly timer looks like
+something somebody forgot.
+
+`zotero_source.py --refresh` has no scheduled form yet and is run by hand. A
+mirror that has stopped refreshing can be made to say so: `mendeley_mirror.py
+--retire "<reason>"` replaces `mirror-status.md` with a standing notice, because
+otherwise the file keeps repeating the last successful run's **ok** for as long
+as anyone cares to read it.
+```
+
 ## Keeping it fresh automatically
 
 Mendeley has no webhooks, so this is polling — but a run with nothing new to do

@@ -1,12 +1,39 @@
 # Getting started
 
-Registering an API application, authorizing the first run, and doing the same on a second machine. Credentials never leave the machine they were entered on.
+Getting a key, the first run, and doing the same on a second machine.
+Credentials never leave the machine they were entered on.
 
 ## One-time setup
 
-**1. Register an API application.** Go to <https://dev.mendeley.com/myapps.html>
-and sign in with your Mendeley account. Give the app any name (`mendeley-mirror`
-is fine) and enter this exact redirect URL:
+**1. Make a Zotero API key.** Go to <https://www.zotero.org/settings/keys> and
+create one. Read access is all a refresh needs; `zotero_edit.py` and
+`zotero_attach.py` need write access, so grant it only if you intend to use
+them.
+
+**2. Save it.** `~/.config/offprint/zotero.json`, or `%LOCALAPPDATA%\offprint`
+on Windows:
+
+```json
+{ "api_key": "...", "user_id": 1234567 }
+```
+
+The `user_id` is the **number** shown on that page, not your username. The API
+addresses libraries by numeric id and rejects the name, which is a confusing
+failure if you guess.
+
+**3. Refresh.** `uv run --script zotero_source.py --refresh --dry-run` first —
+it reads and reports and writes nothing. Then drop `--dry-run`.
+
+---
+
+## The Mendeley setup, retired
+
+Kept because the Mendeley path still exists in the code and a mirror built
+before 2026-10-02 was made this way.
+
+**Register an API application.** Go to <https://dev.mendeley.com/myapps.html>
+and sign in with your Mendeley account. Give the app any name and enter this
+exact redirect URL:
 
 ```
 http://localhost:8888/callback
