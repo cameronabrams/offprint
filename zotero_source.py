@@ -38,11 +38,15 @@ import json
 import re
 import unicodedata
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from mendeley_mirror import DEFAULT_OUT, __version__, bib_entry, load_json, mirror_state_dir  # noqa: E402
+from mendeley_mirror import (DEFAULT_OUT, __version__, assign_citekeys,  # noqa: E402
+                             bib_entry, harvest_attachments, load_json,
+                             mirror_state_dir, save_json, write_bibtex,
+                             write_extraction_report, write_index, write_status)
 from zotero_migrate import Zotero, load_zotero_credentials, parse_bib, year_of  # noqa: E402
 
 BACKEND = "zotero"
@@ -574,6 +578,98 @@ def rescue_identifiers(out: Path) -> int:
     return 0
 
 
+def zotero_fetch(z: Zotero):
+    """Bytes for one attachment, from Zotero, as a fallback.
+
+    `harvest_attachments` tries `find_archived` first, so on this library every
+    attachment comes off local disk and this is never called. It exists because
+    a miss should be a fetch rather than a failure -- and because Zotero turned
+    out to hold bytes for a large minority of attachments even before the
+    upload, which is the claim this repo got wrong by reading `md5: None` as
+    "no file".
+    """
+    def fetch(item_key: str) -> bytes:
+        resp = z.session.get(f"{z.base}/items/{item_key}/file", timeout=180)
+        resp.raise_for_status()
+        return resp.content
+    return fetch
+
+
+def refresh(out: Path, ocr: bool = False, dry_run: bool = False) -> int:
+    """Rebuild the mirror from Zotero.
+
+    The generators are `mendeley_mirror`'s and are untouched; what changed is
+    where documents come from and where bytes come from. Three things this does
+    NOT do, each said out loud rather than left to be discovered:
+
+    - **It does not write `annotations/`.** Zotero keeps annotations as child
+      items of attachments and `ZoteroSource` does not read them yet. The
+      existing files are left alone. The cost is low and known: the migration
+      found 15 Mendeley annotations, all of them publisher strings like
+      `Publisher: Royal Society of Chemistry`, and not one real highlight.
+    - **It does not write `folders.json`**, for the same reason, and leaves the
+      existing file.
+    - **It does not delete anything.** Records removed from Zotero leave their
+      `text/` and `pdf/` files behind as orphans; `get_pdf.py --attachments`
+      finds those.
+
+    It supersedes `.mirror/retired.json` rather than being blocked by it: that
+    marker says the mirror is frozen *as a Mendeley mirror*, and a Zotero
+    refresh is precisely the thing that stops being true.
+    """
+    api_key, user_id = load_zotero_credentials()
+    z = Zotero(api_key, user_id)
+    src = ZoteroSource(z)
+    mirror = mirror_state_dir(out)
+    started = datetime.now(timezone.utc)
+
+    print(f"offprint {__version__} zotero refresh"
+          f"{' -- DRY RUN, nothing is written' if dry_run else ''}")
+    docs = src.documents()
+    print(f"  documents: {len(docs)}")
+
+    keymap_path = mirror / "citekeys.json"
+    before = set(load_json(keymap_path, {}))
+    keymap = assign_citekeys(docs, keymap_path, backend=BACKEND)
+    minted = len(set(keymap) - before)
+    # A first Zotero refresh should mint ZERO: all 2,739 zotero: entries were
+    # written by zotero_migrate.py in September precisely so no key would move.
+    # A non-zero count here is the failure CLAUDE.md warns about, arriving.
+    print(f"  citation keys: {len(keymap)} known, {minted} newly assigned")
+    if minted:
+        print(f"  ! {minted} keys were MINTED. On this library that should be 0 -- "
+              "every Zotero id already had one. Check the backend namespacing "
+              "before trusting anything below.")
+
+    files = src.files_by_doc([d["id"] for d in docs])
+    print(f"  attachments: {sum(len(v) for v in files.values())}")
+    if dry_run:
+        print("\nDry run. Nothing written: no keys saved, no bib, no extracts.")
+        return 0
+
+    save_json(keymap_path, keymap)
+    write_bibtex(docs, keymap, out, include_abstract=True, backend=BACKEND)
+    docs_by_id = {d["id"]: d for d in docs}
+    state = load_json(mirror / "state.json", {})
+    fetched, skipped, failed, report = harvest_attachments(
+        None, files, keymap, docs_by_id, out, state, "text",
+        state_path=mirror / "state.json", ocr=ocr,
+        fetch=zotero_fetch(z), backend=BACKEND)
+    save_json(mirror / "state.json", state)
+    write_extraction_report(report, out, fetched)
+    write_index(docs, keymap, files, {}, out, backend=BACKEND)
+    print(f"  text: {fetched} extracted, {skipped} unchanged, {failed} failed")
+
+    retired = mirror / "retired.json"
+    if retired.exists():
+        retired.unlink()
+        print("  cleared .mirror/retired.json -- this mirror is live again, "
+              "backed by Zotero")
+    write_status(out, True, started)
+    print(f"\nDone. {len(docs)} references in {out / 'library.bib'}")
+    return 0
+
+
 def compare(out: Path) -> int:
     """Regenerate every entry from Zotero and diff it against the frozen bib.
 
@@ -646,6 +742,12 @@ def compare(out: Path) -> int:
 def main() -> int:
     ap = argparse.ArgumentParser(description="Read a Zotero library as mirror documents.")
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT, help="mirror directory")
+    ap.add_argument("--refresh", action="store_true",
+                    help="rebuild library.bib, index.md and text/ from Zotero")
+    ap.add_argument("--ocr", action="store_true",
+                    help="with --refresh: OCR attachments with no text layer")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="with --refresh: read and report, write nothing")
     ap.add_argument("--rescue-identifiers", action="store_true",
                     help="write a zotero_edit.py edits file restoring identifiers "
                          "the frozen library.bib has and Zotero does not")
@@ -654,12 +756,13 @@ def main() -> int:
                          "against the frozen library.bib")
     ap.add_argument("--version", action="version", version=f"offprint {__version__}")
     args = ap.parse_args()
+    if args.refresh:
+        return refresh(args.out, ocr=args.ocr, dry_run=args.dry_run)
     if args.rescue_identifiers:
         return rescue_identifiers(args.out)
     if args.compare:
         return compare(args.out)
-    ap.error("nothing to do yet: --compare is the only mode. The refresh itself "
-             "is ROADMAP item 1 and is not wired up.")
+    ap.error("pick a mode: --refresh, --compare or --rescue-identifiers.")
     return 2
 
 

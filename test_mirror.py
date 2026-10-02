@@ -2806,6 +2806,72 @@ def main():
           "and a DIFFERENT id is not -- the old test said 'arXiv' appears, "
           "which was true and irrelevant")
 
+    print("\na Zotero refresh, end to end, offline")
+
+    ZITEM = {"key": "ZK1", "data": {
+        "itemType": "journalArticle", "title": "Influence of vinyl ester",
+        "creators": [{"creatorType": "author", "firstName": "J.", "lastName": "Shan"}],
+        "publicationTitle": "Journal of Applied Polymer Science",
+        "volume": "80", "pages": "917-927", "date": "2001", "DOI": "10.1002/app.1171"}}
+    ZCHILD = {"key": "ZA1", "data": {"linkMode": "imported_file",
+                                     "filename": "paper.pdf",
+                                     "contentType": "application/pdf",
+                                     "md5": "deadbeef"}}
+
+    class StubZ:
+        def __init__(self, *a, **kw):
+            self.base, self.session = "https://api/users/1", None
+        def items_top(self): return [ZITEM]
+        def paged(self, path, quiet=False, **kw):
+            return [ZCHILD] if path.endswith("/children") else []
+
+    rout = tmp / "zrefresh"
+    rstate = mm.mirror_state_dir(rout)
+    # The key already exists, written by zotero_migrate in September precisely
+    # so that no key moves on the first Zotero refresh.
+    mm.save_json(rstate / "citekeys.json", {"zotero:ZK1": "Shan2001Influence"})
+    mm.save_json(rstate / "retired.json", {"retired_at": "2026-10-02T00:00:00+00:00",
+                                           "reason": "Mendeley retired"})
+    (rout / "pdf").mkdir(parents=True, exist_ok=True)
+    (rout / "pdf" / "Shan2001Influence.pdf").write_bytes(pdf_bytes)
+
+    _Z, _cred = zs.Zotero, zs.load_zotero_credentials
+    zs.Zotero = StubZ
+    zs.load_zotero_credentials = lambda: ("key", "1")
+    try:
+        rc_ref = zs.refresh(rout)
+    finally:
+        zs.Zotero, zs.load_zotero_credentials = _Z, _cred
+
+    check(rc_ref == 0, "the refresh completes")
+    final_keys = mm.load_json(rstate / "citekeys.json", {})
+    check(final_keys == {"zotero:ZK1": "Shan2001Influence"},
+          f"NO key is minted and none moves -- the whole point of namespacing "
+          f"the ids in September ({final_keys})")
+    bibtext = (rout / "library.bib").read_text(encoding="utf-8")
+    check("@article{Shan2001Influence," in bibtext and "app.1171" in bibtext,
+          "library.bib is rebuilt from Zotero")
+    check((rout / "text" / "Shan2001Influence.md").exists(),
+          "the extract is written")
+    check("<!-- p. 1 -->" in (rout / "text" / "Shan2001Influence.md").read_text(encoding="utf-8"),
+          "with page markers, which are a contract other sessions read")
+    check((rout / "pdf" / "Shan2001Influence.pdf").exists(),
+          "and the archived PDF survives a text-mode refresh, as it has since 0.11.0")
+    check("Shan2001Influence" in (rout / "index.md").read_text(encoding="utf-8"),
+          "index.md is rebuilt")
+    check(not (rstate / "retired.json").exists(),
+          "the frozen marker is cleared: a Zotero refresh is precisely the thing "
+          "that stops 'frozen as a Mendeley mirror' being true")
+    status = (rout / "mirror-status.md").read_text(encoding="utf-8")
+    check("FROZEN" not in status and "**ok**" in status,
+          f"and the standing staleness notice is replaced by a real run\n{status[:120]}")
+
+    # Annotations and folders are NOT written, and the files that exist are left
+    # alone. Said in the docstring; asserted here so it cannot drift into a
+    # silent omission.
+    check(not (rout / "annotations").exists(),
+          "annotations are not sourced from Zotero yet and none is invented")
+
     print("\ndoixref: three-way, because the citation key is frozen")
     import doixref as dx
 

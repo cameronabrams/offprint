@@ -964,6 +964,30 @@ The other differences, with the library session's reading of them:
       that decides whether this translation is right. Until it has run, nothing
       here is known to be correct — the fixtures only prove the translation does
       what I expected, which is the check that cannot fail.
+- [x] **The refresh is wired up**, `zotero_source.py --refresh`, 2026-10-02. The
+      generators are untouched: what changed is where documents come from and
+      where bytes come from. An offline end-to-end test runs it against a
+      stubbed Zotero with the PDF on local disk and asserts the thing that
+      matters most — **no citation key is minted and none moves**, which is the
+      whole purpose of namespacing the ids in September.
+
+      It supersedes `.mirror/retired.json` rather than being blocked by it: that
+      marker says the mirror is frozen *as a Mendeley mirror*, and this is
+      precisely the thing that stops being true. The standing staleness notice
+      is replaced by a real status line on the first successful run.
+
+      **Three things it does not do, said out loud rather than left to be
+      found.** It does not write `annotations/` — Zotero keeps annotations as
+      child items of attachments and `ZoteroSource` does not read them yet; the
+      cost is known and low, since the migration found 15 Mendeley annotations
+      and every one was a publisher string rather than a highlight. It does not
+      write `folders.json`, for the same reason. And it deletes nothing, so a
+      record removed from Zotero leaves `text/` and `pdf/` orphans that
+      `get_pdf.py --attachments` finds.
+
+- [ ] **Annotations and folders from Zotero**, which is what remains before
+      `--refresh` is a complete replacement rather than a replacement for the
+      parts that matter.
 - [ ] **Then the three decisions in item 1** become answerable with evidence
       rather than argument.
 **Two numbers in this file about control characters were wrong, measured
