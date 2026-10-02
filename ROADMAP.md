@@ -1024,9 +1024,27 @@ Nothing was destroyed: `library.bib` and `index.md` were correct throughout, the
 archive was untouched, and the 2,734 `failed` state entries mean a re-run
 retries all of them.
 
-- [ ] **Annotations and folders from Zotero**, which is what remains before
-      `--refresh` is a complete replacement rather than a replacement for the
-      parts that matter.
+- [x] **Annotations and folders from Zotero**, `0.18.0`. `--refresh` is now a
+      complete replacement rather than a replacement for the parts that matter.
+
+      **Zotero hangs an annotation off the ATTACHMENT, not off the record.** A
+      run that walked each record's own children would find none and look
+      exactly like a library with no annotations — which is what this library
+      looks like anyway, so the empty result would have been indistinguishable
+      from working. `annotations_by_doc` takes the attachment map for that
+      reason.
+
+      **Ordering comes from `annotationSortIndex`, not from the rectangles.**
+      PDF coordinates increase *upward*, so sorting highlights by a raw `y`
+      prints every page backwards; the sort index is `pageIndex|offset|y`,
+      already in reading order, and its offset field goes in as the `y` that
+      `annotation_markdown` sorts on. The printed `annotationPageLabel` is
+      preferred over `pageIndex`, because a page label is what a reader cites
+      and the index is zero-based and counts the cover.
+
+      A highlight carrying a comment keeps both: the comment is the reader's
+      own words and the one part of an annotation that cannot be recovered from
+      the PDF.
 - [ ] **Then the three decisions in item 1** become answerable with evidence
       rather than argument.
 **Two numbers in this file about control characters were wrong, measured

@@ -2806,6 +2806,46 @@ def main():
           "and a DIFFERENT id is not -- the old test said 'arXiv' appears, "
           "which was true and irrelevant")
 
+    print("\nZotero annotations hang off the attachment, not the record")
+
+    a_hl = zs.annotation_to_mendeley({"data": {
+        "itemType": "annotation", "annotationType": "highlight",
+        "annotationText": "a passage", "annotationPageLabel": "12",
+        "annotationSortIndex": "00011|000450|00200"}})
+    check(a_hl["type"] == "highlight" and a_hl["text"] == "a passage",
+          "a highlight carries its text")
+    check(a_hl["positions"][0]["page"] == 12,
+          f"the printed page LABEL wins over the index ({a_hl['positions'][0]['page']})")
+    check(a_hl["positions"][0]["top_left"]["y"] == 450,
+          "and the sort offset becomes the y the renderer sorts on")
+
+    # No label: pageIndex is zero-based and counts the cover, so it needs +1.
+    a_nolabel = zs.annotation_to_mendeley({"data": {
+        "itemType": "annotation", "annotationType": "highlight",
+        "annotationText": "x", "annotationSortIndex": "00011|000450|00200"}})
+    check(a_nolabel["positions"][0]["page"] == 12,
+          f"with no label the zero-based index is incremented "
+          f"({a_nolabel['positions'][0]['page']})")
+
+    a_note = zs.annotation_to_mendeley({"data": {
+        "itemType": "annotation", "annotationType": "note",
+        "annotationComment": "my own thought", "annotationPageLabel": "3",
+        "annotationSortIndex": "00002|000010|00010"}})
+    check(a_note["type"] == "note" and a_note["text"] == "my own thought",
+          "a note carries the comment, which is the reader's own words")
+
+    a_both = zs.annotation_to_mendeley({"data": {
+        "itemType": "annotation", "annotationType": "highlight",
+        "annotationText": "quoted", "annotationComment": "disagree",
+        "annotationSortIndex": "00000|000001|00001"}})
+    check("quoted" in a_both["text"] and "disagree" in a_both["text"],
+          f"a highlight WITH a comment keeps both ({a_both['text']!r})")
+
+    a_empty = zs.annotation_to_mendeley({"data": {"itemType": "annotation",
+                                                  "annotationType": "image"}})
+    check(a_empty["type"] == "note" and a_empty["positions"][0]["page"] == 0,
+          "and an image annotation with nothing in it degrades rather than raising")
+
     print("\na Zotero refresh, end to end, offline")
 
     ZITEM = {"key": "ZK1", "data": {
@@ -2818,12 +2858,30 @@ def main():
                                      "contentType": "application/pdf",
                                      "md5": "deadbeef"}}
 
+    # Zotero hangs an annotation off the ATTACHMENT, not off the record, so the
+    # stub has to route children by parent or the test proves nothing.
+    ZANN = {"key": "ZN2", "data": {"itemType": "annotation",
+                                   "annotationType": "highlight",
+                                   "annotationText": "the second passage",
+                                   "annotationPageLabel": "5",
+                                   "annotationSortIndex": "00004|000900|00100"}}
+    ZANN1 = {"key": "ZN1", "data": {"itemType": "annotation",
+                                    "annotationType": "highlight",
+                                    "annotationText": "the first passage",
+                                    "annotationComment": "worth quoting",
+                                    "annotationPageLabel": "5",
+                                    "annotationSortIndex": "00004|000100|00080"}}
+
     class StubZ:
         def __init__(self, *a, **kw):
             self.base, self.session = "https://api/users/1", None
         def items_top(self): return [ZITEM]
         def paged(self, path, quiet=False, **kw):
-            return [ZCHILD] if path.endswith("/children") else []
+            if path == "items/ZK1/children":
+                return [ZCHILD]
+            if path == "items/ZA1/children":
+                return [ZANN, ZANN1]
+            return []
 
     rout = tmp / "zrefresh"
     rstate = mm.mirror_state_dir(rout)
@@ -2869,8 +2927,18 @@ def main():
     # Annotations and folders are NOT written, and the files that exist are left
     # alone. Said in the docstring; asserted here so it cannot drift into a
     # silent omission.
-    check(not (rout / "annotations").exists(),
-          "annotations are not sourced from Zotero yet and none is invented")
+    annpath = rout / "annotations" / "Shan2001Influence.md"
+    check(annpath.exists(), "annotations found through the ATTACHMENT are written")
+    anntext = annpath.read_text(encoding="utf-8")
+    check(anntext.index("the first passage") < anntext.index("the second passage"),
+          "and come out in READING order, from annotationSortIndex -- PDF "
+          "rectangle coordinates increase upward, so a raw y would print every "
+          "page backwards")
+    check("worth quoting" in anntext,
+          "a highlight's comment is kept: it is the reader's own words and the "
+          "one part not recoverable from the PDF")
+    check("p. 5" in anntext,
+          "and the printed page LABEL is used, not the zero-based index")
 
     # A run in which every extraction fails must NOT report ok. write_status was
     # called with a hardcoded True until 2026-10-02, so the first real Zotero

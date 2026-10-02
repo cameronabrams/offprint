@@ -45,8 +45,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from mendeley_mirror import (DEFAULT_OUT, __version__, assign_citekeys,  # noqa: E402
                              bib_entry, harvest_attachments, load_json,
-                             mirror_state_dir, save_json, write_bibtex,
-                             write_extraction_report, write_index, write_status)
+                             annotation_markdown, mirror_state_dir, qualify,
+                             save_json, write_bibtex, write_extraction_report,
+                             write_folders, write_index, write_status)
 from zotero_migrate import Zotero, load_zotero_credentials, parse_bib, year_of  # noqa: E402
 
 BACKEND = "zotero"
@@ -226,6 +227,52 @@ def item_to_doc(item: dict) -> dict:
     return {k: v for k, v in doc.items() if v not in ("", [], None, {})} | {"id": doc["id"]}
 
 
+def annotation_to_mendeley(a: dict) -> dict:
+    """One Zotero annotation in the shape `annotation_markdown` already renders.
+
+    Zotero keeps annotations as child items of the ATTACHMENT, not of the
+    record, which is why a run that only walks an item's own children sees none
+    of them. The fields are `annotationType`, `annotationText` (the highlighted
+    passage), `annotationComment` (what the reader wrote about it),
+    `annotationPageLabel` and `annotationSortIndex`.
+
+    **Ordering comes from `annotationSortIndex`, not from the rectangles.**
+    It is `pageIndex|offset|y`, zero-padded, and already in reading order --
+    whereas PDF rectangle coordinates increase *upward*, so sorting by a raw
+    `y` would print every page backwards. `annotation_markdown` sorts on
+    `(page, top_left.y)`, so the offset field goes in as that `y` and the
+    existing sort comes out right.
+
+    The printed page label is preferred over the index when it is a number,
+    because a page label is what a reader cites; `pageIndex` is zero-based and
+    counts the cover.
+    """
+    data = a.get("data") or a
+    sort = (data.get("annotationSortIndex") or "").split("|")
+    page_label = (data.get("annotationPageLabel") or "").strip()
+    if page_label.isdigit():
+        page = int(page_label)
+    elif sort and sort[0].strip().isdigit():
+        page = int(sort[0]) + 1
+    else:
+        page = 0
+    y = int(sort[1]) if len(sort) > 1 and sort[1].strip().isdigit() else 0
+
+    kind = data.get("annotationType") or "annotation"
+    text = (data.get("annotationText") or "").strip()
+    comment = (data.get("annotationComment") or "").strip()
+    if kind in ("highlight", "underline"):
+        kind = "highlight"
+        # A highlight carrying a comment is two things, and the comment is the
+        # reader's own words -- the part that cannot be recovered from the PDF.
+        if comment:
+            text = f"{text}\n  \n  — {comment}" if text else comment
+    else:
+        kind, text = "note", comment or text
+    return {"type": kind, "text": text,
+            "positions": [{"page": page, "top_left": {"y": y}}]}
+
+
 class ZoteroSource:
     """List documents, files and annotations from a Zotero library.
 
@@ -259,6 +306,43 @@ class ZoteroSource:
             if files:
                 out[key] = files
         return out
+
+    def annotations_by_doc(self, files_by_doc: dict) -> dict:
+        """Annotations for each record, found through its ATTACHMENTS.
+
+        Zotero hangs an annotation off the attachment rather than off the
+        record, so this needs the attachment map rather than the document list.
+        Reading the records' own children would return nothing and look like a
+        library with no annotations -- which is exactly what this library looks
+        like anyway, so the empty result would have been indistinguishable from
+        working.
+        """
+        out = {}
+        for doc_id, files in files_by_doc.items():
+            found = []
+            for f in files:
+                for child in self.z.paged(f"items/{f['id']}/children", quiet=True):
+                    if (child.get("data") or {}).get("itemType") == "annotation":
+                        found.append(annotation_to_mendeley(child))
+            if found:
+                out[doc_id] = found
+        return out
+
+    def collections(self) -> tuple:
+        """Zotero collections as `(folders, folder_docs)`, the shape write_folders takes.
+
+        The migration put the four Mendeley folders inside an import wrapper, so
+        their names gain one level of prefix -- recorded in ROADMAP item 1 when
+        the import was done, and visible here as the parent in each name.
+        """
+        folders, folder_docs = [], {}
+        for c in self.z.paged("collections", quiet=True):
+            data = c.get("data") or {}
+            key = c.get("key") or data.get("key")
+            folders.append({"id": key, "name": data.get("name") or "(unnamed)"})
+            folder_docs[key] = [i.get("key") for i in
+                                self.z.paged(f"collections/{key}/items/top", quiet=True)]
+        return folders, folder_docs
 
 
 ISSN_RE = re.compile(r"^\d{4}-\d{3}[\dXx]$")
@@ -602,16 +686,12 @@ def refresh(out: Path, ocr: bool = False, dry_run: bool = False) -> int:
     where documents come from and where bytes come from. Three things this does
     NOT do, each said out loud rather than left to be discovered:
 
-    - **It does not write `annotations/`.** Zotero keeps annotations as child
-      items of attachments and `ZoteroSource` does not read them yet. The
-      existing files are left alone. The cost is low and known: the migration
-      found 15 Mendeley annotations, all of them publisher strings like
-      `Publisher: Royal Society of Chemistry`, and not one real highlight.
-    - **It does not write `folders.json`**, for the same reason, and leaves the
-      existing file.
     - **It does not delete anything.** Records removed from Zotero leave their
       `text/` and `pdf/` files behind as orphans; `get_pdf.py --attachments`
       finds those.
+    - **It writes `annotations/` only for records that have some**, so a record
+      whose annotations were removed keeps a stale file. Deleting is a separate
+      decision from refreshing and this does not make it.
 
     It supersedes `.mirror/retired.json` rather than being blocked by it: that
     marker says the mirror is frozen *as a Mendeley mirror*, and a Zotero
@@ -662,6 +742,22 @@ def refresh(out: Path, ocr: bool = False, dry_run: bool = False) -> int:
     save_json(keymap_path, keymap)
     write_bibtex(docs, keymap, out, include_abstract=True, backend=BACKEND)
     docs_by_id = {d["id"]: d for d in docs}
+
+    ann_by_doc = src.annotations_by_doc(files)
+    n_ann = sum(len(v) for v in ann_by_doc.values())
+    print(f"  annotations: {n_ann} across {len(ann_by_doc)} record(s)")
+    ann_dir = out / "annotations"
+    if ann_by_doc:
+        ann_dir.mkdir(parents=True, exist_ok=True)
+        for doc_id, anns in ann_by_doc.items():
+            key = keymap[qualify(doc_id, BACKEND)]
+            (ann_dir / f"{key}.md").write_text(
+                annotation_markdown(docs_by_id[doc_id], key, anns), encoding="utf-8")
+
+    folders, folder_docs = src.collections()
+    print(f"  collections: {len(folders)}")
+    if folders:
+        write_folders(folders, folder_docs, keymap, out, backend=BACKEND)
     state = load_json(mirror / "state.json", {})
     fetched, skipped, failed, report = harvest_attachments(
         None, files, keymap, docs_by_id, out, state, "text",
@@ -669,7 +765,7 @@ def refresh(out: Path, ocr: bool = False, dry_run: bool = False) -> int:
         fetch=zotero_fetch(z), backend=BACKEND)
     save_json(mirror / "state.json", state)
     write_extraction_report(report, out, fetched)
-    write_index(docs, keymap, files, {}, out, backend=BACKEND)
+    write_index(docs, keymap, files, ann_by_doc, out, backend=BACKEND)
     print(f"  text: {fetched} extracted, {skipped} unchanged, {failed} failed")
 
     # `write_status(out, True, ...)` was hardcoded here until 2026-10-02, so a
