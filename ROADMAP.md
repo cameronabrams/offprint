@@ -706,11 +706,33 @@ and counted as reclassified.
 
 The other differences, with the library session's reading of them:
 
-- **28 journal gained, 54 note lost** — probably the 0.10.0 venue workaround
-  landing properly rather than a regression. Where the venue had nowhere better
-  to go it went into `note`; `Patil2026Structure` has `note = {ChemRxiv}` frozen
-  and none from Zotero. **Confirm before anyone "repairs" it**, because a fix
-  and a regression look identical in a diff.
+- **28 journal gained, 54 note lost — resolved, and it was half a fix and half
+  a bug of mine.** The library session checked every one. 28 are
+  `journalArticle` with a real `publicationTitle`: exactly the 28 that gained
+  `journal`, the 0.10.0 venue workaround landing properly, and their notes must
+  **not** be restored. The other 26 had no venue from Zotero at all, because the
+  migration parked the venue of every *non*-`journalArticle` in `extra` as a
+  `Publication Title:` line and `zotero_source` did not look there. 20 reports,
+  3 books, a patent, a thesis. **No venue is lost anywhere** — `library.bib` is
+  not load-bearing for venues, only for identifiers. Fixed; the typed field
+  still wins where it exists.
+
+  **The lesson is the library session's and it is the better half of the
+  finding.** Its first answer was "these are a fix", its second was "15 of 18
+  are unrecoverable losses", and both were wrong the same way: each looked only
+  at the one field its hypothesis predicted. The true answer needed checking
+  every venue-bearing field. That is this repo's own rule — *searching for one
+  access pattern is not searching for the accesses* — arriving from the data
+  side, and it is why the second, more alarming answer was no more trustworthy
+  than the first.
+
+- **20 of those 26 are `itemType: report` and are plainly journal articles** —
+  `Berman2000Protein` is the PDB paper in *Nucleic Acids Research*, and six are
+  *Journal of Virology*. That is the old `TYPE_MAP` damage from the Mendeley
+  side, now frozen into Zotero's item types. Reading the venue gives them a
+  venue; it does not make them articles. Changing an item's type is a PATCH that
+  can drop every field the new type does not define, which is why
+  `zotero_edit.py` refuses `itemType` and should keep refusing it.
 - **201 isbn, 25 url, 13 number, 12 volume** — unexamined.
 - **86 authors differ; 55 are the library session's own edits and 31 are
   neither of ours**, including both year-less patents and `Alberti1998Definition`,

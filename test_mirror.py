@@ -2552,6 +2552,32 @@ def main():
         "proceedingsTitle": "Proc. Something"}})
     check(conf["source"] == "Proc. Something", "a conference paper's is proceedingsTitle")
 
+    # 26 records had no venue at all because the migration parked it in `extra`
+    # for every non-journalArticle type, as a "Publication Title:" line.
+    rep = zs.item_to_doc({"key": "K7", "data": {
+        "itemType": "report", "title": "The PDB",
+        "extra": "Publication Title: Nucleic Acids Research\nPMID: 10592235"}})
+    check(rep["source"] == "Nucleic Acids Research",
+          f"a venue parked in extra is read ({rep.get('source')})")
+    check(rep["identifiers"] == {"pmid": "10592235"},
+          "and the other lines of extra still parse")
+
+    # The typed field wins where it exists: for the 28 journalArticles it is the
+    # right answer and extra holds nothing to confuse it.
+    both = zs.item_to_doc({"key": "K8", "data": {
+        "itemType": "journalArticle", "title": "T",
+        "publicationTitle": "Real Journal",
+        "extra": "Publication Title: Something Stale"}})
+    check(both["source"] == "Real Journal",
+          f"the typed field beats extra, never the other way ({both.get('source')})")
+
+    none_ = zs.item_to_doc({"key": "K9", "data": {"itemType": "document", "title": "T",
+                                                  "publisher": "A Press"}})
+    check("source" not in none_ and none_["publisher"] == "A Press",
+          "and a record whose venue is really a publisher keeps it as publisher "
+          "-- conflating the two would duplicate it across the library to "
+          "rescue one record")
+
     # All three of this library's patents have a null date and their year in
     # issueDate. The migration checker missed exactly these and scored 2,735
     # of 2,735 -- a denominator that shrank to fit.

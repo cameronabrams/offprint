@@ -78,6 +78,12 @@ VENUE_FIELDS = ("publicationTitle", "bookTitle", "proceedingsTitle",
 
 PMID_RE = re.compile(r"\bPMID:\s*(\d+)", re.I)
 
+# The migration parked the venue of every NON-journalArticle in `extra`, as a
+# "Publication Title:" line, and reading only the typed fields missed 26 records
+# entirely. The typed field still wins where it exists -- for the 28
+# journalArticles it is the right answer and `extra` holds nothing.
+EXTRA_VENUE_RE = re.compile(r"^[ \t]*Publication Title[ \t]*:[ \t]*(.+)$", re.M | re.I)
+
 
 def person(c: dict) -> dict:
     """One Zotero creator as the generators expect a person.
@@ -129,6 +135,16 @@ def item_to_doc(item: dict) -> dict:
         if (data.get(field) or "").strip():
             venue = data[field].strip()
             break
+    if not venue:
+        # Checked for EVERY type, not only the ones a hypothesis predicted.
+        # The library session's first reading of the 54 missing venues looked
+        # only here and concluded 15 were unrecoverable; its second looked only
+        # at publicationTitle and concluded they were all a fix landing. Both
+        # were wrong in the same way -- the answer needed every venue-bearing
+        # field, and no record's venue turned out to be lost at all.
+        m = EXTRA_VENUE_RE.search(data.get("extra") or "")
+        if m:
+            venue = m.group(1).strip()
 
     # A patent carries no `date`; its year is in `issueDate`. All three of this
     # library's patents read as year-less without this, which is exactly how the
