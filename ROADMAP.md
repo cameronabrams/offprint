@@ -775,6 +775,36 @@ the wrong one. The six cases it was finally fixed against are fixtures in
 `test_mirror.py` now, by name, so the next refactor has to keep agreeing with
 the live library rather than with me.
 
+### The fourth split was real and the right answer was to stop
+
+`issn_differs` was also mislabelled: resolved through Crossref's `/journals`,
+`Brooks2009Charmm`'s `1096-987X` and `0192-8651` are **both** the *Journal of
+Computational Chemistry*, and `Bartesaghi2013Prefusion`'s pair are both *Nature
+Structural & Molecular Biology*. Print and electronic ISSN, both correct, the two
+sources having kept different members of a legitimate pair. Only
+`Bajaj1987Tertiary` is a real mismatch — BBA general against BBA Protein
+Structure.
+
+So a fifth bucket was available. The library session's call, and it is right:
+**a breakdown that needs a fifth axis before it stops implying a problem should
+lead with the verdict instead.** Roughly 105 of 215 are not defects in anything,
+and the other 110 harm nothing — those records already carry a correct ISSN and
+the bib field holding the junk no longer feeds any output. The report now opens
+with *"Nothing to send. No action is required of anyone"* and offers the
+breakdown as a curiosity rather than a work list.
+
+**Knowing when to stop refining a list is part of the craft and not a retreat
+from it.** Four splits each found a true distinction; the fifth would have too;
+and the reader was still going to come away thinking there was something to fix.
+
+**The denominator question, answered from the code rather than deferred.** The
+library session measured 215 where this reports 201 and suspected the gap was
+`--compare`'s lost set. It is not: `rescue_identifiers` walks *every* entry in
+the frozen bib, and the `isbn` branch skips any record whose Zotero item already
+holds an ISBN, because there is nothing to restore for those. The 14 are the
+books Zotero already has right. Benign, and now in the docstring so the next
+person comparing two tallies does not have to re-derive it.
+
 **And the no-field list is not the type inventory**, which this file claimed it
 was. All 192 entries are `journalArticle` records with junk in `isbn`. A report
 typed as a report has no ISBN to refuse, so a mistyped record never appears in

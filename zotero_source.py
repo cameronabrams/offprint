@@ -404,6 +404,13 @@ def rescue_identifiers(out: Path) -> int:
 
     And it does not append blindly to `extra`: the field is free text, a PATCH
     replaces it, and a re-run must not double a line.
+
+    **Population note**, because the counts here differ from a count taken off
+    the bib directly: this walks every entry in the frozen bib, but the `isbn`
+    branch skips any record whose Zotero item **already holds an ISBN** --
+    there is nothing to restore for those. A tally of "every isbn-bearing record
+    with a zotero key" is therefore larger by exactly the books Zotero already
+    has right, and the difference is not a gap in what `--compare` called lost.
     """
     bib = out / "library.bib"
     keymap = load_json(mirror_state_dir(out) / "citekeys.json", {})
@@ -500,6 +507,16 @@ def rescue_identifiers(out: Path) -> int:
     path = out / ".mirror" / "rescue-identifiers.json"
     path.write_text(json.dumps(edits, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"# rescue-identifiers — offprint {__version__}\n")
+    if not edits:
+        # Said FIRST and in these words. This list was split four times, and
+        # every split was a real distinction -- but a breakdown that needs a
+        # fifth axis before it stops implying a problem is a breakdown that
+        # should lead with the verdict. Roughly half of what follows is not a
+        # defect in anything, and the rest sits in a field that no longer feeds
+        # any output, on records that already carry a correct identifier.
+        print("**Nothing to send. No action is required of anyone.**")
+        print("Everything the frozen library.bib held uniquely is in Zotero.")
+        print("The breakdown below is for the curious, not a work list.\n")
     print(f"- records needing an edit: {len(edits)}")
     for k, v in counts.items():
         print(f"- {k}: {v}")
@@ -516,18 +533,24 @@ def rescue_identifiers(out: Path) -> int:
     for line in skipped:
         print(f"  ! {line}")
     if differs:
-        print(f"\nThese {len(differs)} hold an ISSN on both sides and the two do "
-              "not match. A journal has a print and an electronic ISSN and each "
-              "side may have kept a different one, so this is worth a look and "
-              "is not necessarily wrong. Nothing is sent.")
+        print(f"\nThese {len(differs)} hold a DIFFERENT ISSN on each side, and "
+              "most are not a defect: a journal has a print and an electronic "
+              "ISSN, both correct, and the two sources kept different members "
+              "of the pair. `Brooks2009Charmm` has 1096-987X against 0192-8651 "
+              "and Crossref calls both of them the Journal of Computational "
+              "Chemistry. Resolving an ISSN through Crossref's /journals is how "
+              "to tell those from a real mismatch -- `Bajaj1987Tertiary` is one, "
+              "BBA general against BBA Protein Structure. Nothing is sent.")
         for line in differs[:40]:
             print(f"  - {line}")
         if len(differs) > 40:
             print(f"  ... and {len(differs) - 40} more NOT SHOWN")
     if junk:
-        print(f"\nThese {len(junk)} are a finding about the FROZEN BIB: its "
-              "`isbn` field holds a digit string with no ISSN structure at all. "
-              "Nothing is sent for them.")
+        print(f"\nThese {len(junk)} hold a digit string with no ISSN structure "
+              "at all in the frozen bib's `isbn` field. They harm nothing: each "
+              "record already carries a correct ISSN, and that bib field no "
+              "longer feeds any output. Recorded because it says something "
+              "about how the bib was built, not because anyone should act.")
         for line in junk[:40]:
             print(f"  - {line}")
         if len(junk) > 40:
