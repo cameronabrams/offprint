@@ -2690,6 +2690,34 @@ def main():
     check(zs.can_hold({"itemType": "journalArticle", "ISSN": "00219606"}, "ISSN"),
           "a journalArticle holds an ISSN whether or not one is set")
 
+    # One identical ACTION, two different facts, and merging them was the same
+    # conflation one level down. Only the second says the frozen bib is
+    # carrying ~101 junk digit strings in `isbn`.
+    check(zs.same_identifier("0021-9606", "00219606"),
+          "an identifier differing only in punctuation is the same one")
+    check(not zs.same_identifier("1060510618", "0002-7863"),
+          "a junk digit string is NOT the record's ISSN in some other format")
+    check(not zs.same_identifier("", "0002-7863"),
+          "and nothing is not the same as something")
+
+    # Alberty1958Application's url was three URLs joined by a literal \n: a
+    # publisher link, a papers2:// scheme, and a local Mac path under a
+    # stranger's home directory. Offering it put that into a live library.
+    bad = ("http://pubs.acs.org/doi/abs/10.1021/j150560a005"
+           "\\npapers2://publication/uuid/92C01101"
+           "\\nfile:///Users/fingolfn/Dropbox/Papers2/Articles/1958/x.pdf")
+    check(zs.clean_url(bad) == "",
+          f"a concatenation of several urls is refused whole ({zs.clean_url(bad)!r})")
+    check(zs.clean_url("papers2://publication/uuid/92C0") == "",
+          "and so is a non-http scheme on its own")
+    check(zs.clean_url("file:///Users/someone/x.pdf") == "",
+          "and a local filesystem path, which is someone else's machine")
+    check(zs.clean_url("https://doi.org/10.1021/j150560a005")
+          == "https://doi.org/10.1021/j150560a005",
+          "while a single http(s) url passes unchanged")
+    check(zs.clean_url("http://example.org/a b") == "",
+          "a url with whitespace in it is not one url")
+
     # arXiv ids arrive bare, prefixed and versioned. A containment test on the
     # word "arXiv" skipped 14 of 31 as already present, which is a different
     # question from whether the ID is there.

@@ -291,6 +291,34 @@ def norm_arxiv(value: str) -> str:
     return m.group(1).lower() if m else (value or "").strip().lower()
 
 
+def same_identifier(a: str, b: str) -> bool:
+    """Two identifiers that differ only in punctuation or case are the same one."""
+    norm = lambda v: re.sub(r"[^0-9A-Za-z]", "", v or "").upper()
+    return bool(norm(a)) and norm(a) == norm(b)
+
+
+def clean_url(value: str) -> str:
+    """A single http(s) URL, or "" if the value is not one.
+
+    `Alberty1958Application`'s `url` in the frozen bib is three URLs joined by a
+    literal `\n`: a publisher link, a `papers2://` scheme, and a local Mac path
+    under someone else's home directory. Offering that as a `url` put a stranger's
+    filesystem into a live library.
+
+    It does NOT take the first of several and offer that. A concatenation is a
+    defect in the source and which part is canonical is a judgement about
+    someone's library -- the same reason the single-field author names are
+    reported rather than split. The value is refused and named, with its parts
+    shown, so the decision is cheap for whoever makes it.
+    """
+    v = (value or "").strip()
+    if not v or "\\n" in v or "\n" in v or any(c.isspace() for c in v):
+        return ""
+    if not re.match(r"^https?://[^\s]+$", v, re.I):
+        return ""
+    return v
+
+
 def can_hold(data: dict, field: str) -> bool:
     """Does this item's TYPE have that field at all?
 
@@ -349,10 +377,11 @@ def rescue_identifiers(out: Path) -> int:
 
     edits: dict = {}
     counts = {"pmid": 0, "eprint": 0, "issn": 0, "isbn": 0, "doi": 0, "url": 0,
-              "reclassified": 0, "already_present": 0}
+              "reclassified": 0, "already_same": 0, "discarded_junk": 0}
     skipped: list = []
     no_field: list = []
-    already: list = []
+    junk: list = []
+    bad_url: list = []
     for citekey, fields in sorted(frozen.items()):
         item_key = by_citekey.get(citekey)
         data = items.get(item_key or "")
@@ -383,6 +412,9 @@ def rescue_identifiers(out: Path) -> int:
             if not can_hold(data, zfield):
                 no_field.append(f"{citekey}: {zfield} on a {data.get('itemType')}")
                 continue
+            if zfield == "url" and not clean_url(want):
+                bad_url.append(f"{citekey}: {want[:120]!r}")
+                continue
             edit[zfield] = want
             counts[field] += 1
         want_isbn = (fields.get("isbn") or "").strip()
@@ -396,9 +428,15 @@ def rescue_identifiers(out: Path) -> int:
                 edit["ISBN"] = want_isbn
                 counts["isbn"] += 1
             elif (data.get("ISSN") or "").strip():
-                counts["already_present"] += 1
-                already.append(f"{citekey}: bib isbn {want_isbn!r}; Zotero already "
-                               f"has ISSN {data['ISSN']!r} -- nothing to do")
+                # Two different FACTS behind one identical action, and merging
+                # them was the same conflation as "holds neither" a level down.
+                # Only the second says the frozen bib is carrying junk.
+                if same_identifier(want_isbn, data["ISSN"]):
+                    counts["already_same"] += 1
+                else:
+                    counts["discarded_junk"] += 1
+                    junk.append(f"{citekey}: bib isbn {want_isbn!r} is not this "
+                                f"record's ISSN {data['ISSN']!r} in any format")
             elif can_hold(data, "ISSN") and (looks_like_issn(want_isbn)
                                              or not can_hold(data, "ISBN")):
                 edit["ISSN"] = want_isbn
@@ -418,7 +456,10 @@ def rescue_identifiers(out: Path) -> int:
     print(f"- records needing an edit: {len(edits)}")
     for k, v in counts.items():
         print(f"- {k}: {v}")
-    print(f"- already in Zotero in another format, no action: {len(already)}")
+    print(f"- already in Zotero, same value differently formatted: "
+          f"{counts['already_same']}")
+    print(f"- DISCARDED, the bib value is not that record's identifier: {len(junk)}")
+    print(f"- url refused as malformed: {len(bad_url)}")
     print(f"- not restorable because the item type has no such field: {len(no_field)}")
     print(f"- not restorable, named below: {len(skipped)}")
     print(f"\nwritten to {path}")
@@ -426,6 +467,22 @@ def rescue_identifiers(out: Path) -> int:
           f"{path} --dry-run")
     for line in skipped:
         print(f"  ! {line}")
+    if junk:
+        print(f"\nThese {len(junk)} are a finding about the FROZEN BIB, not about "
+              "Zotero: it carries a value in `isbn` that is not that record's "
+              "identifier in any format. Nothing is sent for them.")
+        for line in junk[:40]:
+            print(f"  - {line}")
+        if len(junk) > 40:
+            print(f"  ... and {len(junk) - 40} more NOT SHOWN")
+    if bad_url:
+        print(f"\nThese {len(bad_url)} urls are refused: a url must be one "
+              "http(s) URL with no embedded newline. The frozen bib has records "
+              "holding several joined by a literal backslash-n, including local "
+              "filesystem paths from someone else's machine. Which part is "
+              "canonical is a judgement, so they are named rather than split.")
+        for line in bad_url:
+            print(f"  - {line}")
     if no_field:
         print("\nThe item type has nowhere to put these. That is TYPE_MAP damage "
               "frozen into Zotero's item types, not a rescue gap: a journal "

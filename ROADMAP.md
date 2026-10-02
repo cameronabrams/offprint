@@ -732,8 +732,23 @@ already carrying a correct ISSN. Nine were real.
 The message was wrong for the 91, and wrong in a way that teaches something
 false: *"on a journalArticle, which holds neither"* says the **type** cannot hold
 the value, when the type holds it fine and the value is already there. Those are
-opposite situations calling for opposite actions. Three buckets now — already
-present, nowhere to put it, neither shape — and they are counted separately.
+opposite situations calling for opposite actions.
+
+**The first attempt at fixing that made the same mistake one level down**, and
+the library session caught it by spot-checking six records against the live
+library rather than reading the counts. "Already in Zotero in another format, no
+action" was printed for all 192 — but only 91 are the record's own ISSN
+differently punctuated (`0021-9606` against `00219606`). The other 101 are junk
+digit strings that are **not that record's identifier in any format**:
+`Agarwal2005Role` has `isbn = 1060510618` against an ISSN of `0002-7863`.
+
+The *action* is identical — send nothing — and the *fact* is not. Only the
+second says the frozen bib is carrying a hundred junk values, which is a finding
+about the bib that nobody would ever go looking for. Counted and listed
+separately now: `already_same` and `discarded_junk`.
+
+**A label that merges two facts because they share an action is the same defect
+as a label that merges two actions.** Both were in this file within an hour.
 
 **And the no-field list is not the type inventory**, which this file claimed it
 was. All 192 entries are `journalArticle` records with junk in `isbn`. A report
@@ -741,6 +756,25 @@ typed as a report has no ISBN to refuse, so a mistyped record never appears in
 it at all — `Berman2000Protein` is not there. "Records that refused a field" and
 "records whose type is wrong" are different sets, and treating the first as an
 inventory of the second was an inference with nothing behind it.
+
+### A stranger's filesystem reached the live library
+
+`Alberty1958Application`'s rescued `url` was three URLs joined by a literal
+`\n`: a publisher link, a `papers2://` scheme, and
+`file:///Users/fingolfn/Dropbox/...` — a local path from someone else's Mac, by
+way of an import years ago. It is now in Cameron's live library.
+
+The library session named the miss as its own — it read the tail of the dry run
+rather than the body — and that is right as far as it goes. But **the tool
+offered the value**, and a rescue that hands a third party's filesystem path to
+a live library has no business waiting for a human to catch it. `clean_url()`
+now requires a single `http(s)` URL with no embedded newline and no whitespace.
+
+It does **not** take the first of several and offer that. A concatenation is a
+defect in the source, and which part is canonical is a judgement about someone's
+library — the same reason the single-field author names are reported rather than
+split. The value is refused and named with its parts shown, so the decision is
+cheap for whoever makes it.
 
 ### The real type inventory, built by the library session
 
