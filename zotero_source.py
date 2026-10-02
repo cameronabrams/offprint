@@ -230,14 +230,17 @@ def compare(out: Path) -> int:
             m = re.match(r"\s{2}(\w+)\s*=\s*\{(.*)\},?$", line)
             if m:
                 fresh[m.group(1)] = m.group(2)
-        for field in sorted(set(old[citekey]) | set(fresh)):
-            a, b = old[citekey].get(field), fresh.get(field)
-            if a != b:
-                diffs.append(f"{citekey}  {field}\n    frozen {a!r}\n    zotero {b!r}")
-        if any(d.startswith(citekey + "  ") for d in diffs[-40:]):
-            differs += 1
-        else:
-            same += 1
+        # Counted from THIS record's own differences, not by scanning a window
+        # of the accumulated list. A record is same or differs; nothing about
+        # that is a search problem, and making it one is how a count starts
+        # reporting something adjacent to what its label says.
+        mine = [f"{citekey}  {field}\n    frozen {old[citekey].get(field)!r}"
+                f"\n    zotero {fresh.get(field)!r}"
+                for field in sorted(set(old[citekey]) | set(fresh))
+                if old[citekey].get(field) != fresh.get(field)]
+        diffs.extend(mine)
+        differs += bool(mine)
+        same += not mine
 
     print(f"# zotero_source --compare — offprint {__version__}\n")
     print(f"- documents read from Zotero: {len(docs)}")

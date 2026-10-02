@@ -2510,6 +2510,77 @@ def main():
     check(ok_shape["creators"][0]["lastName"] == "Shan",
           "while Zotero's own shape goes through")
 
+    print("\nzotero_source: a Zotero item in the shape the generators take")
+    import zotero_source as zs
+
+    art = {"key": "ABCD1234", "data": {
+        "itemType": "journalArticle", "title": "Influence of vinyl ester",
+        "creators": [{"creatorType": "author", "firstName": "J.", "lastName": "Shan"},
+                     {"creatorType": "editor", "firstName": "E.", "lastName": "Ed"},
+                     {"creatorType": "author", "name": "IUPAC"}],
+        "publicationTitle": "Journal of Applied Polymer Science",
+        "volume": "80", "issue": "7", "pages": "917-927", "date": "2001-02-14",
+        "DOI": "10.1002/app.1171", "ISSN": "0021-8995",
+        "abstractNote": "An abstract.", "tags": [{"tag": "thermoset"}],
+        "url": "https://example.org/x", "extra": "PMID: 12345678"}}
+    doc = zs.item_to_doc(art)
+    check(doc["id"] == "ABCD1234" and doc["type"] == "journal",
+          "the item key is the document id and the type is mapped")
+    check([a.get("last_name") or a.get("name") for a in doc["authors"]] == ["Shan", "IUPAC"],
+          f"authors are authors only ({doc['authors']})")
+    check(doc["editors"][0]["last_name"] == "Ed", "and the editor goes to editors")
+    check(doc["authors"][1] == {"name": "IUPAC"},
+          "a corporate author stays one field -- splitting it is how a "
+          "bibliography acquires an author called Norway")
+    check(doc["year"] == 2001, f"the year comes off a free-form date ({doc['year']})")
+    check(doc["source"] == "Journal of Applied Polymer Science",
+          "the venue is found for this type -- four types were dropping it in September")
+    check(doc["identifiers"] == {"doi": "10.1002/app.1171", "issn": "0021-8995",
+                                 "pmid": "12345678"},
+          f"DOI and ISSN are separate fields here, and PMID lives in extra ({doc['identifiers']})")
+    check(doc["keywords"] == ["thermoset"] and doc["websites"] == ["https://example.org/x"],
+          "tags become keywords and url becomes websites")
+
+    # Venue by type. bookSection and conferencePaper keep theirs somewhere else,
+    # and that is the bug item 7 was about.
+    chap = zs.item_to_doc({"key": "K2", "data": {
+        "itemType": "bookSection", "title": "A chapter", "bookTitle": "The Book"}})
+    check(chap["source"] == "The Book" and chap["type"] == "book_section",
+          f"a book section's venue is its bookTitle ({chap.get('source')})")
+    conf = zs.item_to_doc({"key": "K3", "data": {
+        "itemType": "conferencePaper", "title": "A talk",
+        "proceedingsTitle": "Proc. Something"}})
+    check(conf["source"] == "Proc. Something", "a conference paper's is proceedingsTitle")
+
+    # All three of this library's patents have a null date and their year in
+    # issueDate. The migration checker missed exactly these and scored 2,735
+    # of 2,735 -- a denominator that shrank to fit.
+    pat = zs.item_to_doc({"key": "K4", "data": {
+        "itemType": "patent", "title": "A patent", "issueDate": "2016-05-03",
+        "assignee": "Drexel"}})
+    check(pat["year"] == 2016 and pat["type"] == "patent",
+          f"a patent's year comes from issueDate ({pat.get('year')})")
+    check(pat["institution"] == "Drexel", "and its assignee is the institution")
+
+    # An unmapped type degrades to generic, which TYPE_MAP renders @misc --
+    # where an unrecognised Mendeley type already went. It must not raise.
+    odd = zs.item_to_doc({"key": "K5", "data": {"itemType": "podcast", "title": "P"}})
+    check(odd["type"] == "generic", f"an unmapped item type degrades ({odd['type']})")
+
+    # Empty fields must not reach the generators as empty strings: bib_entry
+    # tests truthiness, and a record is cleaner without the key at all.
+    bare = zs.item_to_doc({"key": "K6", "data": {"itemType": "book", "title": "B",
+                                                 "volume": "", "publisher": ""}})
+    check("volume" not in bare and "publisher" not in bare and bare["id"] == "K6",
+          f"empty fields are dropped, and the id survives the dropping ({sorted(bare)})")
+
+    # The whole entry has to render, not just translate.
+    rendered = mm.bib_entry(doc, "Shan2001Influence")
+    check("{Journal of Applied Polymer Science}" in rendered
+          and rendered.startswith("@article{Shan2001Influence,")
+          and "Shan, J." in rendered and "{2001}" in rendered,
+          f"and the translated document renders as BibTeX\n{rendered[:200]}")
+
     print("\ndoixref: three-way, because the citation key is frozen")
     import doixref as dx
 

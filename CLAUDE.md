@@ -139,7 +139,7 @@ left to connect the two.
 `mendeley_mirror.py` is the refresh and the module everything else imports.
 `get_pdf.py`, `refs.py`, `inbox.py`, `mendeley_push.py`, `mendeley_edit.py`,
 `finding.py`, `pdbrefs.py`, `pdbxref.py`, `doixref.py`, `zotero_migrate.py`,
-`zotero_attach.py` and `zotero_edit.py` are separate CLIs that reuse its `Mendeley` client,
+`zotero_source.py`, `zotero_attach.py` and `zotero_edit.py` are separate CLIs that reuse its `Mendeley` client,
 `config_dir()`, and `DEFAULT_OUT`. `finding.py` and `pdbrefs.py`
 touch neither Mendeley nor the network; `pdbxref.py` queries RCSB and
 `doixref.py` queries Crossref, both public and unauthenticated, and neither

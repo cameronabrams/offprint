@@ -649,7 +649,51 @@ library session is holding, with no destination:
       where correcting Mendeley would have helped.
 
 - [ ] **A Zotero-backed `mendeley_mirror.py`** — item 1, now the live question
-      rather than the contingency it was written as.
+      rather than the contingency it was written as. **Started 2026-10-02**,
+      with `zotero_source.py`: see below.
+
+## 13. The Zotero-backed refresh — started, and verifiable before it is wired up
+
+`zotero_source.py` translates Zotero items into the document dicts
+`bib_entry`, `assign_citekeys`, `write_index` and `annotation_markdown` already
+take. **The generators do not change**; what changes is where documents come
+from. The whole consumed surface turned out to be 16 fields, which is what makes
+an adapter the right shape rather than a rewrite.
+
+**It was built first because it can be checked before anything is integrated.**
+`library.bib` is a frozen, known-good rendering of the same 2,739 records
+produced by the Mendeley path, and `citekeys.json` holds a verified bijection
+between the two backends' ids. So `--compare` regenerates every entry from
+Zotero and diffs it against that file. The oracle was produced by an independent
+path over the same library, which is the standard this repo keeps failing to
+meet by comparing a thing against a copy of itself.
+
+A difference is either a translation defect or a real improvement, and the diff
+forces someone to say which.
+
+What the translation already has to know, each because of a failure this file
+records: the venue lives in a different field for each item type (four types
+were silently dropping it until 09-30); a patent has no `date` and keeps its
+year in `issueDate` (all three of this library's patents, and the migration
+checker lost exactly those and scored 2,735 of 2,735); a corporate creator has a
+single `name` and splitting it invents an author; PMID has no Zotero field and
+lives in `extra`; and an unmapped item type degrades to `generic`/`@misc`
+rather than raising.
+
+- [ ] **Run `--compare`.** That is the library session's, and it is the step
+      that decides whether this translation is right. Until it has run, nothing
+      here is known to be correct — the fixtures only prove the translation does
+      what I expected, which is the check that cannot fail.
+- [ ] **Then the three decisions in item 1** become answerable with evidence
+      rather than argument.
+- [ ] **Re-extraction is now cheap, which changes that decision.** Item 1 framed
+      it as trading verification for bandwidth: re-extracting ~2,700 attachments
+      meant re-downloading them. It does not any more — `<out>/pdf/` holds every
+      one and `find_archived` reads it off local disk, so a full re-extraction
+      costs no network at all and would regenerate every extract with current
+      code, clearing the 2,459 that carry control characters. The adoption path
+      was the right answer to the old question and is probably the wrong answer
+      to this one.
 
 ## 2. Make a failing refresh loud
 
