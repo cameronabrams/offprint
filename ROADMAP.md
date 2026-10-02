@@ -1198,7 +1198,7 @@ created a Zotero item at all.
 | `inbox.py` | **`zotero_inbox.py`** | done, 2026-10-02 |
 | — | `zotero_attach.py` | fills existing slots only, by design |
 | `mendeley_push.py` | — | **open**, item 15 |
-| — | `zotero_delete.py` | **open**, item 16 |
+| — | `zotero_delete.py` | done, 2026-10-02 |
 
 `get_pdf.py`, `refs.py`, `finding.py`, `doixref.py` and `pdbxref.py` read the
 mirror files and are backend-agnostic by construction. `get_pdf.py` still serves
@@ -1239,19 +1239,50 @@ trap applies — the **issue** year through `csl_year()`, never Crossref's
 `issued`, which is when a work first appeared online and is how CHARMM36m was
 filed as 2016 and cited that way in a manuscript.
 
-## 16. `zotero_delete.py` — a tool for something already done by hand
+## 16. `zotero_delete.py` — built 2026-10-02, from what was done by hand
 
-The library session hand-rolled 16 DELETEs on 2026-10-02: 11 duplicate records
-and 5 byte-less attachment stubs. Exact keys, `If-Unmodified-Since-Version`,
-backed up first, verified after — and it flagged that itself, in the right
-terms: **discipline standing in for a tool, and the next person will not
-necessarily bring it.**
+The library session hand-rolled 16 DELETEs: 11 duplicate records and 5
+byte-less attachment stubs. Exact keys, `If-Unmodified-Since-Version`, backed up
+first, verified after — and it flagged that itself, in the right terms:
+**discipline standing in for a tool, and the next person will not necessarily
+bring it.** Asked what it needed, it specified from those 16 rather than from
+imagination, and the first ask is the one worth keeping.
 
-It would be the most dangerous thing in the repo, so it gets the treatment
-`zotero_edit.py` got: dry-run by default, a backup of every item and its
-children written *before* anything is sent, a version precondition, resolution
-through `citekeys.json` so a key the mirror has never seen is an error, and a
-refusal to delete anything it cannot name.
+**A dry run names what SURVIVES as well as what goes.** *The dangerous deletion
+is not the one you listed, it is the sibling you did not.* Deleting
+`Frankel1998Hiva/b/c` is only correct if `Frankel1998Hiv` is still there and
+still holds its attachment — a fact about the records you are **not** naming,
+which no amount of care about the ones you are naming will tell you. So the
+survivors sharing each title are printed with their attachment counts, and a
+deletion leaving **no** survivor is refused unless `--allow-last-copy` says
+otherwise: that is a paper leaving the library, not a duplicate being tidied,
+and it should have to be spelled.
+
+Siblings are matched by **title**, not by the shape of the key.
+`assign_citekeys` appends a letter only when it must, so two records can
+collide without either being suffixed, and a key-prefix rule would miss exactly
+the pair that looks least like a duplicate.
+
+The backup is automatic, item plus children, written *before* anything is sent,
+to `.mirror/deleted-<timestamp>.json` — in the mirror rather than a cache so it
+travels, because deletion is the one operation here with no undo.
+
+**One correction to the spec, from a mistake this repo already made.** A
+byte-less attachment cannot be identified by `md5: None`. That field says the
+item records no file, which is a different claim: on 2026-10-02, 1,060
+attachments reported `md5: None` and Zotero held bytes for every one of them —
+the error this file had to withdraw in item 1. `--stubs` asks the **file
+endpoint** and treats a 404 as the evidence, which is a read and is
+authoritative.
+
+Two deliberate non-features, both at the library session's request and both
+right. It never touches `citekeys.json`: append-only by design, a deleted key
+stays reserved, and a key cited in a manuscript keeps resolving. And it never
+deletes from `pdf/` or `text/` — `Frankel1998Hiva/b/c` held a *different* scan
+from the record that survived them, so deleting the records was right and
+deleting their archived files would have destroyed a unique copy. Tidying
+orphans needs the uniqueness check in `get_pdf.py --attachments` and is a
+separate, deliberate step.
 
 ## 2. Make a failing refresh loud
 

@@ -2552,6 +2552,58 @@ def main():
     check("Shan2001Existing" in (zout / "index.md").read_text(encoding="utf-8"),
           "and so does write_index")
 
+    print("\nzotero_delete: the dangerous deletion is the sibling you did not list")
+    import zotero_delete as zd
+
+    # The library session's first ask, and the right one. Deleting
+    # Frankel1998Hiva/b/c is only correct if Frankel1998Hiv is still there --
+    # a fact about the records you are NOT naming.
+    entries = {
+        "Frankel1998Hiv":  {"title": "{HIV-1 Tat: from gene to therapy}"},
+        "Frankel1998Hiva": {"title": "{HIV-1 Tat: from gene to therapy}"},
+        "Frankel1998Hivb": {"title": "HIV-1 Tat: from gene to therapy"},
+        "Other2001Paper":  {"title": "Something else entirely"},
+    }
+    sibs = zd.siblings(entries, "Frankel1998Hiva")
+    check(sibs == ["Frankel1998Hiv", "Frankel1998Hivb"],
+          f"siblings are found by TITLE, not by the shape of the key ({sibs})")
+    check("Other2001Paper" not in sibs, "and a different paper is not a sibling")
+    check(zd.siblings(entries, "Other2001Paper") == [],
+          "a record with no twin has no siblings")
+    check(zd.siblings({"K": {"title": ""}}, "K") == [],
+          "and an empty title matches nothing, rather than matching everything")
+
+    # Braces and punctuation must not make two copies of one title look
+    # different -- the bib brace-protects some titles and not others.
+    check(zd.norm_title("{HIV-1 Tat: from gene to therapy}")
+          == zd.norm_title("HIV-1 Tat: from gene to therapy"),
+          "brace protection and punctuation do not split a duplicate set")
+
+    # The correction to the spec: a byte-less attachment is NOT one with
+    # md5: None. That field says the item records no file; on 2026-10-02 1,060
+    # attachments said that and Zotero served bytes for every one.
+    class FakeFileSession:
+        def __init__(self, codes): self.codes, self.asked = codes, []
+        def get(self, url, timeout=None, allow_redirects=None):
+            self.asked.append(url)
+            code = self.codes.get(url.rsplit("/", 2)[-2], 200)
+            class R:
+                status_code = code
+                def raise_for_status(self):
+                    if self.status_code >= 400:
+                        raise AssertionError(f"HTTP {self.status_code}")
+            return R()
+
+    class FakeZD:
+        def __init__(self, codes):
+            self.base, self.session = "https://api/users/9", FakeFileSession(codes)
+
+    zf = FakeZD({"GONE": 404, "HERE": 200})
+    check(not zd.has_bytes(zf, "GONE"), "a 404 from the file endpoint is a stub")
+    check(zd.has_bytes(zf, "HERE"), "and a 200 is not, whatever md5 says")
+    check(any("/file" in u for u in zf.session.asked),
+          f"the FILE endpoint is what gets asked ({zf.session.asked[:1]})")
+
     print("\nzotero_inbox: the only thing here that creates a Zotero item")
     import zotero_inbox as zi
 

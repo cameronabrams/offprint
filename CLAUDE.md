@@ -234,6 +234,16 @@ readable text, and never guesses which record. It reuses `inbox.py`'s
 identification pipeline unchanged, which was always backend-agnostic; only the
 create-and-upload half was Mendeley's.
 
+**`zotero_delete.py` is the only operation here with no undo**, so it is the
+most guarded. A dry run names what **survives** as well as what goes, because
+the dangerous deletion is the sibling nobody listed; a deletion that would leave
+no record sharing that title is refused unless `--allow-last-copy` is passed.
+Siblings match by title rather than by key shape, since `assign_citekeys`
+suffixes only when it must. The backup is automatic and goes to the mirror
+rather than a cache. It touches neither `citekeys.json` nor `pdf/` nor `text/`,
+and `--stubs` identifies a byte-less attachment by asking the **file endpoint**
+— never by `md5: None`, which this repo already read wrong once.
+
 `zotero_migrate.Zotero` is read-only and its docstring says so. The write client
 lives in `zotero_attach.py` for exactly that reason: adding a write method there
 would retire a guarantee every other caller is relying on. `zotero_edit.py`
