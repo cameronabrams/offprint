@@ -14,11 +14,13 @@ deposited structure, read a figure, or check a table.
 **Three sources, in this order, and the first needs nothing.**
 
 1. The local cache, from an earlier fetch.
-2. **`<out>/pdf/`, the archive**, which since the evacuation holds every
-   attachment in the library. No network, no credentials, no account. This is
-   where almost every answer now comes from, and the file is served **in place**
-   -- it belongs to the mirror and this script does not copy, move or quarantine
-   it.
+2. **`<out>/pdf/`, the archive**, when there is one. No network, no
+   credentials, no account, and the file is served **in place** -- it belongs to
+   the mirror and this script does not copy, move or quarantine it.
+   **On this library it is empty**: the archive was deleted on 2026-10-02 once
+   every attachment was verified present in Zotero, having been a transit buffer
+   for the migration rather than a durable store. The branch stays because it is
+   free and is right wherever an archive does exist.
 3. Zotero, for anything the archive does not have yet. A paper filed today is
    the case: `zotero_inbox.py` uploads to Zotero and the archive catches up on
    the next refresh, so between the two it exists only in Zotero.
@@ -512,10 +514,17 @@ def main() -> int:
             print(f"! {key}: the cached PDF has the wrong number of pages for this "
                   f"paper -- moved to {quarantine.name} and re-fetching", file=sys.stderr)
 
-        # The archive, before the network. It holds every attachment in the
-        # library and needs no account. Served IN PLACE: it belongs to the
-        # mirror, so this never copies, renames or quarantines it -- the
-        # cache-hygiene branch above is about files this script put there.
+        # The archive, before the network. **It is empty as of 2026-10-02**:
+        # Cameron deleted all 2,740 files once every attachment was verified
+        # present in Zotero per record, on the grounds that it was a transit
+        # buffer for the Mendeley -> Zotero round trip and never a durable
+        # store. So this branch no longer fires on this library, and is kept
+        # because it costs one dict lookup and is exactly right for a machine
+        # that does hold an archive, or for one rebuilt later.
+        #
+        # Served IN PLACE when it does fire: the file belongs to the mirror, so
+        # this never copies, renames or quarantines it -- the cache-hygiene
+        # branch above is about files this script put there.
         in_archive = archived.get(key)
         if in_archive:
             print(in_archive)

@@ -1462,9 +1462,10 @@ def main():
     check(r.stdout.strip().endswith("Nguyen2019Study.pdf") and r.returncode == 0,
           "a cached PDF is returned without authenticating")
 
-    # The archive, which since the evacuation holds every attachment. It is
-    # tried BEFORE the network and needs no account at all -- which is the whole
-    # point, because the Mendeley path that used to answer here is gone.
+    # The archive is tried BEFORE the network and needs no account at all.
+    # Cameron's own pdf/ was emptied on 2026-10-02 once every attachment was
+    # verified present in Zotero, so this path does not fire on that library --
+    # which is exactly why it is tested here rather than observed there.
     (out / "pdf").mkdir(exist_ok=True)
     (out / "pdf" / "Nguyen2019Study.pdf").write_bytes(b"%PDF-1.4 archived")
     empty_dest = tmp / "dest-empty"

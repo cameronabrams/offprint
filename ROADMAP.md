@@ -142,9 +142,9 @@ annotations and findings all work on a generic document/file/annotation shape.
       What does not survive: "the local archive is the only source of bytes."
       Zotero could already serve a large minority of them before the upload, and
       after it, all 2,608. `find_archived()` is resilience and bandwidth, not
-      the sole supply. `<out>/pdf/` is still the copy that is not behind a
-      service, which is the reason it exists — but that is an argument about
-      durability, not about availability, and the two were run together here.
+      the sole supply. `<out>/pdf/` was the copy that was not behind a service
+      — until 2026-10-02, when Cameron deleted it; see item 19. The durability
+      argument was his to make and he made it differently.
 - [ ] Decide what "primary" means for the writing scripts (`inbox.py`,
       `mendeley_push.py`, `mendeley_edit.py`). They may only ever target one
       account; pointing them at the wrong one is the expensive mistake.
@@ -1223,12 +1223,13 @@ until the next refresh reads it back. So the archive lags by one refresh for a
 newly filed paper. That matters because the archive being complete is the whole
 reason it exists.
 
-- [ ] **Decide whether a text-mode refresh should archive bytes it had to fetch
-      from the network.** It currently writes to `<out>/pdf/` only in `keep`
-      mode. Under Zotero the archive is the service-independent copy, so a
-      refresh that went to the network for bytes arguably owes the archive a
-      copy — which would also close the lag above. It is a behaviour change to
-      what a refresh writes, so it is a decision rather than a tidy-up.
+- [x] **Whether a text-mode refresh should archive bytes it fetched: answered
+      by deletion, 2026-10-02.** The question assumed `<out>/pdf/` was a
+      durable store worth keeping complete. Cameron's view, and his library:
+      it was a **transit buffer** for the Mendeley → Zotero round trip, both
+      ends of which are now done. So a refresh owes it nothing, the `zotero_inbox`
+      lag is not a lag, and the right answer was to stop keeping it rather than
+      to keep it better. See item 19.
 
 ## 18. `get_pdf.py` on Zotero — and the archive answers almost every call
 
@@ -1236,11 +1237,10 @@ Asked for by Cameron 2026-10-02. The script fetched from Mendeley, which is
 retired, so the only thing still working was a cache hit.
 
 **Three sources now, and the first needs nothing.** The cache; then
-`<out>/pdf/`, which since the evacuation holds every attachment in the library;
-then Zotero. The archive is the interesting one: 2,740 files, no network, no
-credentials, no account — so almost every call is now answered without leaving
-the machine, which is a better outcome than porting the Mendeley path would have
-been.
+`<out>/pdf/` when there is one; then Zotero. **That middle source went away the
+same day** — see item 19 — so on this library every call now reaches Zotero. The
+branch stays because it costs a dict lookup and is right for any machine that
+does hold an archive.
 
 **The archived file is served in place.** It belongs to the mirror, so this
 never copies, renames or quarantines it — the cache-hygiene branch that moves a
@@ -1375,6 +1375,39 @@ from the record that survived them, so deleting the records was right and
 deleting their archived files would have destroyed a unique copy. Tidying
 orphans needs the uniqueness check in `get_pdf.py --attachments` and is a
 separate, deliberate step.
+
+## 19. The archive is gone, deliberately, and the durability argument changed
+
+Cameron deleted `<out>/pdf/` on 2026-10-02: all 2,740 files, 4.2 GB. His
+reasoning, from `RENAMED-FROM-mendeley.md` in the library: **it was always a
+transit buffer for the Mendeley → Zotero round trip, not a durable store**, and
+both ends of that trip are done.
+
+**Verified per record before the deletion, not by hash-set membership**: 2,725
+of 2,734 attachments hold exactly the bytes their extract was made from, 4 more
+were uploaded that day and not yet extracted, and 5 were byte-less stubs that
+were removed. That is a stronger check than this repo asked for anywhere.
+
+**This file had the argument the other way round and was wrong about whose it
+was.** `--backfill` was built in September to make a copy that outlived a
+subscription; several entries here call `<out>/pdf/` "the copy that is not
+behind a service, which is the reason it exists". It served that purpose exactly
+once, for the migration, and the premise expired when the papers landed in
+Zotero. Durability of someone's library is their call, not the tool's, and the
+tool's job was to make the copy available for as long as it was wanted.
+
+What follows, and it is stated rather than argued:
+
+- **The PDFs now exist only in Zotero.** That is one service, with an account
+  behind it, and it is a different exposure from yesterday's. Cameron knows; the
+  verification above is what makes it a decision rather than a loss.
+- `find_archived` always misses on this library, so a re-extraction downloads
+  every attachment from Zotero. That works and is slower.
+- `get_pdf.py`'s archive branch never fires here. It stays because it costs a
+  dict lookup and is right for any machine that does hold an archive — including
+  this one, if `--backfill` is ever run again.
+- `--backfill` still works and is still the way to rebuild one. Nothing about it
+  changed; what changed is that nobody currently wants what it produces.
 
 ## 2. Make a failing refresh loud
 
