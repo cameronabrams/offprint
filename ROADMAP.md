@@ -680,6 +680,46 @@ single `name` and splitting it invents an author; PMID has no Zotero field and
 lives in `extra`; and an unmapped item type degrades to `generic`/`@misc`
 rather than raising.
 
+### The identifier rescue ran — 1,174 PMIDs are in Zotero
+
+`patched 1174, conflicts 0`, verified by sampling 12 PMIDs out of the frozen bib
+and finding all 12 in Zotero's `extra`. The carry-forward worked: 149 records
+already had an `extra` and every one was preserved, `arXiv: cond-mat/0510639`
+becoming `arXiv: cond-mat/0510639\nPMID: 16626184`.
+
+**But the library session had to split the file, because the generator emitted
+something its own consumer refuses.** `--rescue-identifiers` assigned a typed
+`ISBN` to 103 records; a sample of 40 were *all* `journalArticle`, which has no
+`ISBN` field. `zotero_edit.py`'s unknown-field guard stopped the run on the
+first one — correctly — and 1,174 PMIDs were queued behind it in the same file.
+
+**A producer that can emit what its own consumer refuses has a missing check,
+not a typo.** The generator routed on the *value's shape* and never asked
+whether the item type had anywhere to put it. Shape alone cannot decide that: an
+ISBN-shaped value on a journal article is a mislabel in the source, exactly like
+the 45 ISSN-shaped `isbn` values already being rerouted, and **the item type is
+what says so**. Every typed field is now checked with `can_hold()` before it is
+offered, and what cannot land is named under its own heading with the type that
+cannot hold it.
+
+Two other gaps the same run measured, both fixed:
+
+- **14 of 31 arXiv ids were skipped as "already present"** on the strength of
+  the word `arXiv` appearing somewhere in `extra`. The ids arrive bare,
+  prefixed and versioned — `1106.1296`, `arXiv:1401.0387v1`, `cond-mat/0510639`
+  — and a containment test on the literal string answered a different question
+  from the one being asked. Ids are normalised now and compared as ids.
+- **25 lost `url`s were not rescued at all** because the generator never looked
+  at `url`. 23 are `journalArticle`, which has the field.
+
+**And a gap that is not one.** 12 lost `volume`s and 13 lost `number`s belong to
+records typed `report`, `book` or `bookSection`, which have no such field in
+Zotero. The data has nowhere to live. That is `TYPE_MAP` damage surfacing a
+third time — `Berman2000Protein`, the PDB paper, is typed as a report and cannot
+hold its own volume. Rescuing those needs the item types corrected, which is a
+PATCH that drops every field the new type lacks, which is why `zotero_edit.py`
+refuses `itemType` and should keep refusing it.
+
 ### What `--compare` found, 2026-10-02 — 1,366 identical, 1,373 differ
 
 **The finding that matters: 1,174 PMIDs are in the frozen `library.bib` and not

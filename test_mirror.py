@@ -2671,6 +2671,32 @@ def main():
     check(not zs.looks_like_isbn("whatever") and not zs.looks_like_issn("whatever"),
           "and a value of neither shape is neither -- reported, not guessed at")
 
+    # The generator emitted a typed ISBN for 103 journalArticles, which have no
+    # ISBN field, and zotero_edit refused the file on the first one -- blocking
+    # 1,174 PMIDs queued behind it. A producer that can emit what its own
+    # consumer refuses has a missing check, not a typo.
+    article = {"itemType": "journalArticle", "ISSN": "", "DOI": "", "url": "",
+               "extra": "", "volume": ""}
+    book = {"itemType": "book", "ISBN": "", "extra": ""}
+    check(not zs.can_hold(article, "ISBN") and zs.can_hold(book, "ISBN"),
+          "the item TYPE decides where a value can go, not the value's shape")
+    check(zs.can_hold(article, "ISSN") and not zs.can_hold(book, "volume"),
+          "and a report or book has nowhere to put a volume at all")
+
+    # arXiv ids arrive bare, prefixed and versioned. A containment test on the
+    # word "arXiv" skipped 14 of 31 as already present, which is a different
+    # question from whether the ID is there.
+    check(zs.norm_arxiv("arXiv:1401.0387v1") == "1401.0387"
+          and zs.norm_arxiv("1106.1296") == "1106.1296"
+          and zs.norm_arxiv("cond-mat/0510639") == "cond-mat/0510639",
+          f"the three forms normalise to the same shape "
+          f"({zs.norm_arxiv('arXiv:1401.0387v1')})")
+    check(zs.norm_arxiv("arXiv:1401.0387v1") in zs.norm_arxiv_all("arXiv: 1401.0387"),
+          "a versioned id is recognised in an unversioned one already present")
+    check(zs.norm_arxiv("2507.07887") not in zs.norm_arxiv_all("arXiv: 1106.1296"),
+          "and a DIFFERENT id is not -- the old test said 'arXiv' appears, "
+          "which was true and irrelevant")
+
     print("\ndoixref: three-way, because the citation key is frozen")
     import doixref as dx
 

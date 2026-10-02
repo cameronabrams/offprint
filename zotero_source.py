@@ -269,6 +269,41 @@ def looks_like_isbn(v: str) -> bool:
     return len(bare) in (10, 13)
 
 
+ARXIV_RE = re.compile(r"(?:arxiv\s*:\s*)?([a-z-]+(?:\.[A-Z]{2})?/\d{7}|\d{4}\.\d{4,5})(?:v\d+)?",
+                      re.I)
+
+
+def norm_arxiv_all(extra: str) -> set:
+    """Every arXiv id already present in `extra`, normalised."""
+    return {m.group(1).lower() for m in ARXIV_RE.finditer(extra or "")}
+
+
+def norm_arxiv(value: str) -> str:
+    """An arXiv id without its prefix or version, for comparing forms.
+
+    The frozen bib holds all three shapes -- `arXiv:1401.0387v1`, `1106.1296`,
+    `cond-mat/0510639` -- and a containment test on the literal string matched
+    none of them against what Zotero already had. 14 of 31 were skipped as
+    "already present" on the strength of the word "arXiv" appearing somewhere in
+    `extra`, which is not the same question.
+    """
+    m = ARXIV_RE.search(value or "")
+    return m.group(1).lower() if m else (value or "").strip().lower()
+
+
+def can_hold(data: dict, field: str) -> bool:
+    """Does this item's TYPE have that field at all?
+
+    Zotero returns every field valid for an item type, including the empty
+    ones, so absence from `data` means the type has no such field -- and
+    `zotero_edit.py` refuses an edit naming one, correctly. A generator that
+    emits what its own consumer refuses has a missing check, not a typo: this
+    one assigned a typed `ISBN` to 103 journalArticles, which have none, and the
+    refusal then blocked 1,174 PMIDs queued behind it in the same file.
+    """
+    return field in data
+
+
 def extra_with(extra: str, label: str, value: str) -> str:
     """Zotero's `extra`, with `label: value` added and whatever was there kept.
 
@@ -313,8 +348,10 @@ def rescue_identifiers(out: Path) -> int:
     items = {i.get("key"): (i.get("data") or {}) for i in z.items_top()}
 
     edits: dict = {}
-    counts = {"pmid": 0, "eprint": 0, "issn": 0, "isbn": 0, "doi": 0, "reclassified": 0}
+    counts = {"pmid": 0, "eprint": 0, "issn": 0, "isbn": 0, "doi": 0, "url": 0,
+              "reclassified": 0}
     skipped: list = []
+    no_field: list = []
     for citekey, fields in sorted(frozen.items()):
         item_key = by_citekey.get(citekey)
         data = items.get(item_key or "")
@@ -322,24 +359,43 @@ def rescue_identifiers(out: Path) -> int:
             skipped.append(f"{citekey}: no Zotero item")
             continue
         edit, extra = {}, data.get("extra") or ""
-        for label, field in (("PMID", "pmid"), ("arXiv", "eprint")):
-            want = (fields.get(field) or "").strip()
-            if want and label.lower() not in extra.lower():
-                extra = extra_with(extra, label, want)
-                counts[field] += 1
+        want_pmid = (fields.get("pmid") or "").strip()
+        if want_pmid and "pmid" not in extra.lower():
+            extra = extra_with(extra, "PMID", want_pmid)
+            counts["pmid"] += 1
+        want_arxiv = (fields.get("eprint") or "").strip()
+        if want_arxiv and norm_arxiv(want_arxiv) not in norm_arxiv_all(extra):
+            extra = extra_with(extra, "arXiv", want_arxiv)
+            counts["eprint"] += 1
         if extra != (data.get("extra") or ""):
             edit["extra"] = extra
-        for field, zfield in (("doi", "DOI"), ("issn", "ISSN")):
+
+        # Every typed field is checked against the item TYPE before it is
+        # offered. Shape alone cannot decide where a value belongs: an
+        # ISBN-shaped value on a journalArticle is a mislabel in the source,
+        # exactly like the 45 ISSN-shaped `isbn` values, and the type is what
+        # says so.
+        for field, zfield in (("doi", "DOI"), ("issn", "ISSN"), ("url", "url")):
             want = (fields.get(field) or "").strip()
-            if want and not (data.get(zfield) or "").strip():
-                edit[zfield] = want
-                counts[field] += 1
+            if not want or (data.get(zfield) or "").strip():
+                continue
+            if not can_hold(data, zfield):
+                no_field.append(f"{citekey}: {zfield} on a {data.get('itemType')}")
+                continue
+            edit[zfield] = want
+            counts[field] += 1
         want_isbn = (fields.get("isbn") or "").strip()
         if want_isbn and not (data.get("ISBN") or "").strip():
-            if looks_like_issn(want_isbn):
+            if looks_like_issn(want_isbn) or not can_hold(data, "ISBN"):
+                # Either the value is ISSN-shaped, or the type cannot hold an
+                # ISBN at all -- both say the frozen bib mislabelled it.
                 counts["reclassified"] += 1
-                if not (data.get("ISSN") or "").strip() and "ISSN" not in edit:
+                if can_hold(data, "ISSN") and not (data.get("ISSN") or "").strip() \
+                        and "ISSN" not in edit:
                     edit["ISSN"] = want_isbn
+                else:
+                    no_field.append(f"{citekey}: isbn {want_isbn!r} on a "
+                                    f"{data.get('itemType')}, which holds neither")
             elif looks_like_isbn(want_isbn):
                 edit["ISBN"] = want_isbn
                 counts["isbn"] += 1
@@ -354,12 +410,21 @@ def rescue_identifiers(out: Path) -> int:
     print(f"- records needing an edit: {len(edits)}")
     for k, v in counts.items():
         print(f"- {k}: {v}")
+    print(f"- not restorable because the item type has no such field: {len(no_field)}")
     print(f"- not restorable, named below: {len(skipped)}")
     print(f"\nwritten to {path}")
     print("Review it, then: uv run --script zotero_edit.py --edits "
           f"{path} --dry-run")
     for line in skipped:
         print(f"  ! {line}")
+    if no_field:
+        print("\nThe item type has nowhere to put these. That is TYPE_MAP damage "
+              "frozen into Zotero's item types, not a rescue gap: a journal "
+              "article typed as a report cannot hold its own volume. Fixing it "
+              "needs the item type changed, which zotero_edit.py refuses by "
+              "design because the PATCH drops every field the new type lacks.")
+        for line in no_field:
+            print(f"  - {line}")
     return 0
 
 
