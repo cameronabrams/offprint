@@ -985,6 +985,36 @@ The other differences, with the library session's reading of them:
       record removed from Zotero leaves `text/` and `pdf/` orphans that
       `get_pdf.py --attachments` finds.
 
+### One attachment the API would not describe stopped the whole run — `0.18.2`
+
+`annotations_by_doc` made **one request per attachment**, 2,745 of them, and
+`items/HNH4IS55/children` — the `.avi` on `Shan2011How` — answers **400**. The
+exception left the refresh with 0 of 2,732 extracted and **no status written at
+all**, so `mirror-status.md` still carried the word of a run that never
+finished.
+
+Three defects in one, all mine and all in code written an hour earlier:
+
+- **The expensive irreplaceable work sat behind the cheap optional work.**
+  Annotations ran before extraction. This library has roughly two annotations
+  and 2,732 extracts; the ordering was exactly backwards. Extraction now runs
+  first, so a failure in the second costs only the second.
+- **A per-item failure aborted the run.** `harvest_attachments` has carried
+  "one bad file shouldn't stop the run" since the beginning, and the new code
+  did not. Annotations and collections now degrade to "could not be read" with
+  the reason, and the refresh continues.
+- **A crash left the previous status standing.** `mendeley_mirror.main()` has
+  always had a handler that writes FAILED on an exception; `refresh()` had
+  nothing equivalent, so an unexpected raise was silent in the one file whose
+  job is to say what happened. It writes the failure now.
+
+**And the design was wrong beneath the bug.** Asking `itemType=annotation` once
+and grouping by `parentItem` replaces 2,745 requests with one, is three orders
+of magnitude faster, and has no per-attachment failure to be killed by. The
+400 that exposed this is now unreachable rather than merely survivable — which
+is the better kind of fix, since the next odd attachment will not need its own
+handler.
+
 ### And the fix for that one was masked by the skip — `0.18.1`
 
 The re-run on `0.17.1` extracted nothing. The 2,732 `failed` entries the broken

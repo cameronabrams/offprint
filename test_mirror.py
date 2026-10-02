@@ -2906,12 +2906,12 @@ def main():
 
     # Zotero hangs an annotation off the ATTACHMENT, not off the record, so the
     # stub has to route children by parent or the test proves nothing.
-    ZANN = {"key": "ZN2", "data": {"itemType": "annotation",
+    ZANN = {"key": "ZN2", "data": {"itemType": "annotation", "parentItem": "ZA1",
                                    "annotationType": "highlight",
                                    "annotationText": "the second passage",
                                    "annotationPageLabel": "5",
                                    "annotationSortIndex": "00004|000900|00100"}}
-    ZANN1 = {"key": "ZN1", "data": {"itemType": "annotation",
+    ZANN1 = {"key": "ZN1", "data": {"itemType": "annotation", "parentItem": "ZA1",
                                     "annotationType": "highlight",
                                     "annotationText": "the first passage",
                                     "annotationComment": "worth quoting",
@@ -2919,14 +2919,18 @@ def main():
                                     "annotationSortIndex": "00004|000100|00080"}}
 
     class StubZ:
+        """One query for all annotations, which is what the API is asked now."""
+        annotations_raise = False
         def __init__(self, *a, **kw):
             self.base, self.session = "https://api/users/1", None
         def items_top(self): return [ZITEM]
         def paged(self, path, quiet=False, **kw):
+            if path == "items" and kw.get("itemType") == "annotation":
+                if type(self).annotations_raise:
+                    raise RuntimeError("400 Client Error on items/HNH4IS55/children")
+                return [ZANN, ZANN1]
             if path == "items/ZK1/children":
                 return [ZCHILD]
-            if path == "items/ZA1/children":
-                return [ZANN, ZANN1]
             return []
 
     rout = tmp / "zrefresh"
@@ -2985,6 +2989,31 @@ def main():
           "one part not recoverable from the PDF")
     check("p. 5" in anntext,
           "and the printed page LABEL is used, not the zero-based index")
+
+    # One attachment the API will not describe must not take down 2,732
+    # extractions. The .avi on Shan2011How answers 400 on its children endpoint,
+    # and annotations ran BEFORE extraction, so the whole run did nothing and
+    # wrote no status at all.
+    dout = tmp / "zdegrade"
+    dstate = mm.mirror_state_dir(dout)
+    mm.save_json(dstate / "citekeys.json", {"zotero:ZK1": "Shan2001Influence"})
+    (dout / "pdf").mkdir(parents=True, exist_ok=True)
+    (dout / "pdf" / "Shan2001Influence.pdf").write_bytes(pdf_bytes)
+    _Z2, _c2 = zs.Zotero, zs.load_zotero_credentials
+    zs.Zotero = StubZ
+    zs.load_zotero_credentials = lambda: ("key", "1")
+    StubZ.annotations_raise = True
+    try:
+        rc_deg = zs.refresh(dout)
+    finally:
+        StubZ.annotations_raise = False
+        zs.Zotero, zs.load_zotero_credentials = _Z2, _c2
+    check(rc_deg == 0, f"the run still succeeds when annotations fail ({rc_deg})")
+    check((dout / "text" / "Shan2001Influence.md").exists(),
+          "and the EXTRACTION still happened -- the expensive irreplaceable "
+          "work no longer sits behind the cheap optional work")
+    check(not (dout / "annotations").exists(),
+          "while no annotations are invented out of a failed query")
 
     # A run in which every extraction fails must NOT report ok. write_status was
     # called with a hardcoded True until 2026-10-02, so the first real Zotero

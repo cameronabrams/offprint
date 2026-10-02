@@ -308,24 +308,37 @@ class ZoteroSource:
         return out
 
     def annotations_by_doc(self, files_by_doc: dict) -> dict:
-        """Annotations for each record, found through its ATTACHMENTS.
+        """Annotations for each record, in ONE query, grouped by parent.
 
         Zotero hangs an annotation off the attachment rather than off the
-        record, so this needs the attachment map rather than the document list.
-        Reading the records' own children would return nothing and look like a
-        library with no annotations -- which is exactly what this library looks
-        like anyway, so the empty result would have been indistinguishable from
-        working.
+        record, so these have to be matched back through the attachment map.
+
+        **It asks for every annotation at once rather than walking each
+        attachment's children.** The first version made one request per
+        attachment -- 2,745 of them -- and `items/HNH4IS55/children`, the `.avi`
+        on `Shan2011How`, answers **400**. One attachment the API would not
+        describe took down a run that had 2,732 extractions still to do. Asking
+        `itemType=annotation` once is faster by three orders of magnitude and
+        has no per-attachment failure to be killed by.
+
+        A failure here degrades to "no annotations" and says so. Annotations are
+        the smallest thing this refresh produces -- this library has roughly two
+        -- and they have no business being able to stop the extraction.
         """
-        out = {}
-        for doc_id, files in files_by_doc.items():
-            found = []
-            for f in files:
-                for child in self.z.paged(f"items/{f['id']}/children", quiet=True):
-                    if (child.get("data") or {}).get("itemType") == "annotation":
-                        found.append(annotation_to_mendeley(child))
-            if found:
-                out[doc_id] = found
+        owner = {f["id"]: doc_id
+                 for doc_id, files in files_by_doc.items() for f in files}
+        out: dict = {}
+        try:
+            anns = self.z.paged("items", quiet=True, itemType="annotation")
+        except Exception as exc:
+            print(f"  ! annotations could not be read ({type(exc).__name__}: "
+                  f"{exc}); continuing without them")
+            return {}
+        for a in anns:
+            parent = (a.get("data") or {}).get("parentItem")
+            doc_id = owner.get(parent)
+            if doc_id:
+                out.setdefault(doc_id, []).append(annotation_to_mendeley(a))
         return out
 
     def collections(self) -> tuple:
@@ -336,7 +349,13 @@ class ZoteroSource:
         the import was done, and visible here as the parent in each name.
         """
         folders, folder_docs = [], {}
-        for c in self.z.paged("collections", quiet=True):
+        try:
+            raw = self.z.paged("collections", quiet=True)
+        except Exception as exc:
+            print(f"  ! collections could not be read ({type(exc).__name__}: "
+                  f"{exc}); continuing without them")
+            return [], {}
+        for c in raw:
             data = c.get("data") or {}
             key = c.get("key") or data.get("key")
             folders.append({"id": key, "name": data.get("name") or "(unnamed)"})
@@ -743,11 +762,34 @@ def refresh(out: Path, ocr: bool = False, dry_run: bool = False) -> int:
     write_bibtex(docs, keymap, out, include_abstract=True, backend=BACKEND)
     docs_by_id = {d["id"]: d for d in docs}
 
+    # EXTRACTION FIRST. Annotations and collections used to run before it, so
+    # when one attachment's children endpoint answered 400 the exception left
+    # 2,732 extractions undone and no status written at all. Order the expensive
+    # irreplaceable work ahead of the cheap optional work, so that a failure in
+    # the second costs only the second.
+    try:
+        state = load_json(mirror / "state.json", {})
+        fetched, skipped, failed, report = harvest_attachments(
+            None, files, keymap, docs_by_id, out, state, "text",
+            state_path=mirror / "state.json", ocr=ocr,
+            fetch=zotero_fetch(z), backend=BACKEND)
+        save_json(mirror / "state.json", state)
+        write_extraction_report(report, out, fetched)
+        print(f"  text: {fetched} extracted, {skipped} unchanged, {failed} failed")
+    except Exception as exc:
+        # A crash must not leave the previous run's status standing. Without
+        # this, mirror-status.md keeps whatever it last said -- which on
+        # 2026-10-02 would have been the word of a run that never finished.
+        write_status(out, False, started, f"{type(exc).__name__}: {exc}", "unknown")
+        print(f"\n! the refresh raised: {type(exc).__name__}: {exc}")
+        print("  mirror-status.md records the failure.")
+        raise
+
     ann_by_doc = src.annotations_by_doc(files)
     n_ann = sum(len(v) for v in ann_by_doc.values())
     print(f"  annotations: {n_ann} across {len(ann_by_doc)} record(s)")
-    ann_dir = out / "annotations"
     if ann_by_doc:
+        ann_dir = out / "annotations"
         ann_dir.mkdir(parents=True, exist_ok=True)
         for doc_id, anns in ann_by_doc.items():
             key = keymap[qualify(doc_id, BACKEND)]
@@ -758,15 +800,7 @@ def refresh(out: Path, ocr: bool = False, dry_run: bool = False) -> int:
     print(f"  collections: {len(folders)}")
     if folders:
         write_folders(folders, folder_docs, keymap, out, backend=BACKEND)
-    state = load_json(mirror / "state.json", {})
-    fetched, skipped, failed, report = harvest_attachments(
-        None, files, keymap, docs_by_id, out, state, "text",
-        state_path=mirror / "state.json", ocr=ocr,
-        fetch=zotero_fetch(z), backend=BACKEND)
-    save_json(mirror / "state.json", state)
-    write_extraction_report(report, out, fetched)
     write_index(docs, keymap, files, ann_by_doc, out, backend=BACKEND)
-    print(f"  text: {fetched} extracted, {skipped} unchanged, {failed} failed")
 
     # `write_status(out, True, ...)` was hardcoded here until 2026-10-02, so a
     # run in which all 2,734 extractions failed wrote **ok** and "Everything in
