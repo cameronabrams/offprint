@@ -267,6 +267,15 @@ indistinguishable, later, from what the paper actually said.
 
 Two implementation notes that exist because of real failures:
 
+- **A run that reads nothing must not delete what an earlier run read.** On
+  2026-10-02 a re-extract without `--ocr` read 0 characters from 108 image-only
+  scans and unlinked all 108 OCR'd extracts — a deliberate pass's work, gone,
+  with nothing warning. The state could not help: under a new backend the prior
+  entry is keyed by a different id and knows nothing of the OCR run. **The
+  extract itself is the only durable evidence, which is why it carries
+  `ocr: true`**, and the guard reads the file rather than the state. Same family
+  as the 0.11.0 archive erosion — a run destroying an artifact it did not
+  create, on the assumption that its own result is authoritative.
 - **An extract can exist and say nothing.** Some attachments are image-only scans
   whose only text is a stamp (`Reproduced with permission of the copyright owner`)
   repeated on every page. `content_chars()` discards lines that repeat across most

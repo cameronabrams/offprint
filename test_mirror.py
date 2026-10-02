@@ -2806,6 +2806,67 @@ def main():
           "and a DIFFERENT id is not -- the old test said 'arXiv' appears, "
           "which was true and irrelevant")
 
+    print("\na run that reads nothing does not delete what an earlier run read")
+
+    # 2026-10-02: a re-extract WITHOUT --ocr read 0 characters from 108
+    # image-only scans and unlinked all 108 OCR'd extracts. Deliberate work,
+    # gone, nothing warning. Same family as the 0.11.0 archive erosion -- a run
+    # destroying an artifact it did not create, on the assumption that its own
+    # result is authoritative.
+    check(mm.content_of_extract("") == 0, "no file is no content")
+    only_head = "---\ntitle: X\nocr: true\n---\n\n<!-- p. 1 -->\n\n"
+    check(mm.content_of_extract(only_head) == 0,
+          f"front matter and page markers are not content, so a header-only "
+          f"file does not outrank a fresh read of zero "
+          f"({mm.content_of_extract(only_head)})")
+    real = only_head + "The CHARMM general force field was parameterised against"
+    check(mm.content_of_extract(real) > 40, "while a real body counts")
+
+    # The scan: a PDF with no text layer, and an OCR'd extract already on disk.
+    import pymupdf as _fitz
+    blank = _fitz.open()
+    blank.new_page()
+    scan_bytes = blank.tobytes()
+
+    sdir = tmp / "ocr-kept"
+    (sdir / "text").mkdir(parents=True)
+    (sdir / "pdf").mkdir(parents=True)
+    (sdir / "pdf" / "Weeks1971Role.pdf").write_bytes(scan_bytes)
+    ocr_extract = ("---\ntitle: Role of repulsive forces\nocr: true\n---\n\n"
+                   "<!-- p. 1 -->\n\nthe structure of simple liquids is "
+                   "determined by repulsive forces\n")
+    (sdir / "text" / "Weeks1971Role.md").write_text(ocr_extract, encoding="utf-8")
+    sfiles = {"d1": [{"id": "s1", "mime_type": "application/pdf", "filehash": "hs"}]}
+    sst = {}
+    _sf, _ss, _sx, srep = mm.harvest_attachments(
+        NoNetwork(), sfiles, {mm.qualify("d1"): "Weeks1971Role"},
+        {"d1": DOCS[0]}, sdir, sst, "text")
+    check((sdir / "text" / "Weeks1971Role.md").exists(),
+          "an OCR'd extract SURVIVES a plain re-extract that reads nothing")
+    check("repulsive forces" in (sdir / "text" / "Weeks1971Role.md").read_text(encoding="utf-8"),
+          "with its text intact, not truncated or rewritten")
+    check(sst["files"][mm.qualify("s1")]["status"] == "ocr",
+          f"and the state records it as ocr, so index.md does not say the paper "
+          f"has no extract ({sst['files'][mm.qualify('s1')]['status']})")
+    kept_rows = [r for r in srep if r["status"] == "ocr"]
+    check(kept_rows and "not given --ocr" in kept_rows[0]["detail"],
+          f"the report SAYS it was kept and why, since nothing else could "
+          f"({kept_rows[0]['detail'] if kept_rows else None})")
+
+    # The guard must not keep a file that is empty, or a genuine no-text scan
+    # would never be reported again.
+    edir = tmp / "ocr-empty"
+    (edir / "text").mkdir(parents=True)
+    (edir / "pdf").mkdir(parents=True)
+    (edir / "pdf" / "Weeks1971Role.pdf").write_bytes(scan_bytes)
+    (edir / "text" / "Weeks1971Role.md").write_text(only_head, encoding="utf-8")
+    est = {}
+    mm.harvest_attachments(NoNetwork(), sfiles, {mm.qualify("d1"): "Weeks1971Role"},
+                           {"d1": DOCS[0]}, edir, est, "text")
+    check(not (edir / "text" / "Weeks1971Role.md").exists(),
+          "a header-only extract is still removed, so a genuine no-text scan "
+          "is reported rather than hidden behind an empty file")
+
     print("\na failed extraction is unfinished work, not a result")
 
     # 2026-10-02, the real one: 2,732 attachments were recorded `failed` because

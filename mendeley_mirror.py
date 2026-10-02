@@ -37,7 +37,7 @@ Usage:
 
 from __future__ import annotations
 
-__version__ = "0.18.2"
+__version__ = "0.19.0"
 """The tool's version, and the only place it is written down.
 
 It exists so a mirror can say what produced it. Extraction behaviour has changed
@@ -957,6 +957,19 @@ def load_removed(out: Path) -> dict:
 # being retried, not to being skipped.
 DONE_STATUSES = ("ok", "ocr", "garbled", "no-text", "not-pdf")
 
+
+def content_of_extract(text: str) -> int:
+    """How much actual body an existing `text/<key>.md` carries.
+
+    The front matter and the page markers are not content, so a file holding
+    nothing but a header does not count as better than a fresh read of zero.
+    """
+    if not text:
+        return 0
+    body = text.split("---", 2)[-1] if text.startswith("---") else text
+    body = re.sub(r"<!-- p\. \d+ -->", "", body)
+    return len(body.strip())
+
 PDF_MAGIC = b"%PDF-"
 
 
@@ -1399,6 +1412,7 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
         # here and skip an extraction as "already done".
         note(f"  namespaced {migrated} attachment ids as {BACKEND}:<id>")
     fetch = fetch or mendeley_fetch(client)
+    kept = 0
     qual = lambda raw: qualify(raw, backend)
     fetched = skipped = failed = reused = unresolved = archived = 0
     withheld = 0
@@ -1541,9 +1555,39 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                             detail += f", {content} once page-repeated lines are dropped"
                         if ocr:
                             detail += "; OCR could not read it either"
-                        report.append({"key": stem, "status": status,
-                                       "title": doc.get("title", ""), "detail": detail})
-                        text_target.unlink(missing_ok=True)
+                        # NEVER delete an extract that has content because THIS
+                        # run produced none. On 2026-10-02 a re-extract without
+                        # --ocr read 0 characters from 108 image-only scans and
+                        # unlinked all 108 OCR'd extracts -- work from a
+                        # deliberate pass, gone, with nothing warning. Same
+                        # family as the 0.11.0 archive erosion: a run destroying
+                        # an artifact it did not create, on the assumption that
+                        # its own result is the authoritative one.
+                        #
+                        # The state cannot help here, which is the part worth
+                        # knowing: under a new backend the prior entry is keyed
+                        # by a different id and knows nothing of the OCR pass.
+                        # The extract itself is the only durable evidence, which
+                        # is exactly why it carries `ocr: true`.
+                        existing = ""
+                        if text_target.exists():
+                            existing = text_target.read_text(encoding="utf-8",
+                                                             errors="replace")
+                        if content_of_extract(existing) > content:
+                            kept += 1
+                            was_ocr = "ocr: true" in existing[:400]
+                            status = "ocr" if was_ocr else "ok"
+                            detail = (f"kept the existing extract, which has "
+                                      f"{len(existing)} characters; this run read "
+                                      f"{chars}" + ("" if ocr else " and was not given --ocr"))
+                            if was_ocr:
+                                report.append({"key": stem, "status": "ocr",
+                                               "title": doc.get("title", ""),
+                                               "detail": detail})
+                        else:
+                            report.append({"key": stem, "status": status,
+                                           "title": doc.get("title", ""), "detail": detail})
+                            text_target.unlink(missing_ok=True)
                     else:
                         status, detail = ("ocr", "read by OCR") if from_ocr else ("ok", "")
                         if garble and not from_ocr:
@@ -1619,6 +1663,10 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
         note(f"  re-used {reused} PDFs already on disk (no re-download)")
     if archived or unarchived:
         note(f"  archived {archived} attachment files that were already extracted")
+        if kept:
+            note(f"  {kept} existing extracts were KEPT: this run read nothing "
+                 "from those attachments and an earlier pass had read something. "
+                 "Re-run with --ocr to refresh them.")
         if withheld:
             word = "attachment" if withheld == 1 else "attachments"
             note(f"  {withheld} {word} not archived: .mirror/removed.tsv lists "

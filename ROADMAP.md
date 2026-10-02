@@ -985,6 +985,38 @@ The other differences, with the library session's reading of them:
       record removed from Zotero leaves `text/` and `pdf/` orphans that
       `get_pdf.py --attachments` finds.
 
+### The re-extract worked, and destroyed 108 OCR'd extracts — `0.19.0`
+
+Everything the re-extraction was for happened: control characters 1,087 → 1,
+page markers intact, `pdf/` untouched, annotations and collections read. And
+extracts went **2,740 → 2,632**, with `ocr: true` going **109 → 0**.
+
+A plain re-extract of an image-only scan reads 0 characters, which is the
+`no-text` branch — and that branch did `text_target.unlink(missing_ok=True)`.
+108 extracts produced by a deliberate OCR pass in September were deleted by a
+run that had read nothing. `text/Weeks1971Role.md` is simply gone.
+
+**Nothing warned, and from inside the run nothing could.** That is the part
+worth keeping. The state cannot help: under the new backend the prior entry is
+keyed by a Zotero id and knows nothing about an OCR pass performed under
+Mendeley ids. **The extract itself is the only durable evidence that it was
+OCR'd — which is exactly why it carries `ocr: true`** — so the guard has to read
+the file, not the state.
+
+The rule now: **a result of nothing never deletes an extract that has
+something.** If this run read less than the file already holds, the file stays,
+the state records `ocr` or `ok` rather than `no-text`, and the report says the
+extract was kept and that `--ocr` was not given. A header-only file is still
+removed, so a genuine no-text scan is reported rather than hidden behind an
+empty extract.
+
+Same family as the 0.11.0 archive erosion, and the resemblance is exact: a run
+destroying an artifact it did not create, on the assumption that its own result
+is the authoritative one. That one was about bytes and this one about text, and
+both were found by someone counting files afterwards.
+
+Recovery is an `--ocr` pass, which regenerates them.
+
 ### One attachment the API would not describe stopped the whole run — `0.18.2`
 
 `annotations_by_doc` made **one request per attachment**, 2,745 of them, and
