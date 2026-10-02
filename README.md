@@ -36,6 +36,7 @@ offprint/                      ← this repo, clone it where you like
 ├── zotero_attach.py       upload the mirrored PDFs into Zotero's attachments
 ├── zotero_inbox.py        file a PDF you downloaded onto the record it belongs to
 ├── zotero_delete.py       remove a record or a byte-less attachment
+├── zotero_push.py         add one reference to Zotero, from a DOI or arXiv id
 ├── inbox.py               file PDFs you saved into inbox/ (Mendeley, retired)
 ├── mendeley_push.py       add one reference to Mendeley (retired)
 ├── mendeley_edit.py       correct fields in Mendeley (retired)

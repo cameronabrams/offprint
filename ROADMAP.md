@@ -1197,7 +1197,7 @@ created a Zotero item at all.
 | `mendeley_edit.py` | `zotero_edit.py` | done |
 | `inbox.py` | **`zotero_inbox.py`** | done, 2026-10-02 |
 | — | `zotero_attach.py` | fills existing slots only, by design |
-| `mendeley_push.py` | — | **open**, item 15 |
+| `mendeley_push.py` | `zotero_push.py` | done, 2026-10-02 |
 | — | `zotero_delete.py` | done, 2026-10-02 |
 
 `get_pdf.py`, `refs.py`, `finding.py`, `doixref.py` and `pdbxref.py` read the
@@ -1230,14 +1230,52 @@ reason it exists.
       copy — which would also close the lag above. It is a behaviour change to
       what a refresh writes, so it is a decision rather than a tidy-up.
 
-## 15. `mendeley_push.py` has no Zotero counterpart — adding a reference by DOI
+## 15. `zotero_push.py` — adding a reference by DOI or arXiv id, built 2026-10-02
 
-Not needed this week, and it is the other half of "how does a paper get into the
-library". `zotero_inbox.py` deliberately refuses to create a record: adding a
-reference is a different operation with different metadata risks, and the year
-trap applies — the **issue** year through `csl_year()`, never Crossref's
-`issued`, which is when a work first appeared online and is how CHARMM36m was
-filed as 2016 and cited that way in a manuscript.
+The last of the four gaps. `from_doi` and `from_arxiv` are reused from
+`mendeley_push.py` unchanged — resolution through doi.org content negotiation
+answers for DataCite DOIs that `api.crossref.org` 404s on, and none of that was
+ever Mendeley-specific. Only the create half was.
+
+`csl_year()` decides the year, as it must: CSL `issued` is the earliest date a
+work appeared, so an Advance Access paper arrives a year early. CHARMM36m went
+online in November 2016, appeared in the January 2017 issue, and was filed and
+cited as 2016 before anyone noticed.
+
+**Fields are checked against Zotero's own template for the item type**, fetched
+from `/items/new`, and anything with nowhere to go is reported. Zotero **ignores
+an unknown field silently** rather than refusing it, so a value sent to a field
+the type lacks does not fail — it vanishes. A `report` has no `volume` and no
+`publicationTitle`, and without the template a pushed report would quietly lose
+both. This is the same hazard `zotero_edit.py` guards by requiring a field to
+exist on the item being edited; here there is no item yet, so the template is
+the equivalent.
+
+Two refusals. It will not create a record the library already has, checked by
+DOI and then by normalized title through the same `existing_document` the inbox
+uses — a duplicate is not a tidy-up later, it is two citation keys for one paper
+and `assign_citekeys` will mint the second one happily. And **it does not assign
+a citation key**: the key comes from the next refresh, where `assign_citekeys`
+mints it once and keeps it forever. A key invented here would be a second
+authority for the one thing in this system that must have exactly one.
+
+A dry run needs no credentials, because the client is built only at the create
+step — useful for seeing what a DOI resolves to before deciding whether the
+paper belongs in the library at all.
+
+### The dependency rule, wrong in both directions before it was right
+
+Judging `pymupdf` by a direct `import pymupdf` missed `zotero_source.py`
+calling `harvest_attachments`, and 2,734 extractions failed. Widening it to
+"anything importing from `inbox`" then charged `zotero_push.py` for a
+dependency it never reaches, since `existing_document` only reads
+`library.bib` — and a spurious declaration fails this check too, correctly.
+
+The rule now names the **functions that reach the PDF stack**, wherever they
+live: `harvest_attachments`, `extract_pdf_text`, `ocr_pdf_text`, `has_content`,
+`pdf_text`, `pdf_metadata_dois`, `identify`. A dependency belongs to whoever
+reaches it, and the honest way to say that is to name the reaching, not the
+module.
 
 ## 16. `zotero_delete.py` — built 2026-10-02, from what was done by hand
 

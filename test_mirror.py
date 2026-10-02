@@ -2552,6 +2552,77 @@ def main():
     check("Shan2001Existing" in (zout / "index.md").read_text(encoding="utf-8"),
           "and so does write_index")
 
+    print("\nzotero_push: the item type decides where the metadata can go")
+    import zotero_push as zp
+
+    # Zotero IGNORES an unknown field silently rather than refusing it, so a
+    # value sent to a field the type does not have simply vanishes. The
+    # template is the authoritative list, and anything with nowhere to go is
+    # REPORTED -- which is how you find out a report has no volume rather than
+    # wondering where the volume went.
+    article_tpl = {"itemType": "journalArticle", "title": "", "creators": [],
+                   "publicationTitle": "", "volume": "", "issue": "", "pages": "",
+                   "date": "", "DOI": "", "ISSN": "", "abstractNote": "", "extra": ""}
+    doc = {"type": "journal", "title": "A paper", "year": 2017,
+           "source": "J. Chem. Theory Comput.", "volume": "13", "pages": "1-10",
+           "authors": [{"first_name": "J.", "last_name": "Huang"}],
+           "identifiers": {"doi": "10.1021/acs.jctc.1a", "issn": "1549-9618"}}
+    item, dropped = zp.doc_to_zotero(doc, article_tpl)
+    check(item["itemType"] == "journalArticle" and item["title"] == "A paper",
+          "a journal article maps across")
+    check(item["publicationTitle"] == "J. Chem. Theory Comput.",
+          f"the venue goes to the field this TYPE uses ({item.get('publicationTitle')})")
+    check(item["date"] == "2017", "the year is the issue year, as a date string")
+    check(item["creators"][0] == {"creatorType": "author", "firstName": "J.",
+                                  "lastName": "Huang"},
+          f"creators are Zotero-shaped, not Mendeley-shaped ({item['creators'][0]})")
+    check(item["DOI"] == "10.1021/acs.jctc.1a" and item["ISSN"] == "1549-9618",
+          "identifiers are separate top-level fields here")
+    check(dropped == [], f"and nothing was dropped ({dropped})")
+
+    # A report has no volume and no publicationTitle. The values must be NAMED,
+    # not quietly discarded -- the same defect that let a typed ISBN reach 103
+    # journal articles.
+    report_tpl = {"itemType": "report", "title": "", "creators": [], "date": "",
+                  "institution": "", "reportNumber": "", "DOI": "", "extra": ""}
+    rdoc = dict(doc, type="report")
+    ritem, rdropped = zp.doc_to_zotero(rdoc, report_tpl)
+    check("volume" not in ritem and "publicationTitle" not in ritem,
+          "a report is not given fields it does not have")
+    check(any("volume" in d for d in rdropped) and any("venue" in d for d in rdropped),
+          f"and both are reported as having nowhere to go ({rdropped})")
+
+    # arXiv has no field of its own; Zotero's own translators use extra, which
+    # is where zotero_source reads it back from.
+    pre_tpl = {"itemType": "preprint", "title": "", "creators": [], "date": "",
+               "repository": "", "DOI": "", "extra": ""}
+    pdoc = {"type": "working_paper", "title": "A preprint", "year": 2025,
+            "source": "arXiv", "authors": [],
+            "identifiers": {"arxiv": "2507.07887"}}
+    pitem, _pd = zp.doc_to_zotero(pdoc, pre_tpl)
+    check(pitem.get("repository") == "arXiv",
+          f"a preprint's venue is its repository ({pitem.get('repository')})")
+    check("arXiv: 2507.07887" in pitem.get("extra", ""),
+          f"and the arXiv id goes to extra, round-tripping with zotero_source "
+          f"({pitem.get('extra')!r})")
+    import zotero_source as _zs
+    check(_zs.norm_arxiv(pitem["extra"]) == "2507.07887",
+          f"and the rescue path reads that id straight back out "
+          f"({_zs.norm_arxiv(pitem['extra'])})")
+
+    check(zp.TO_ZOTERO_TYPE["journal"] == "journalArticle"
+          and zp.TO_ZOTERO_TYPE["working_paper"] == "preprint",
+          "the type map is the inverse of the one the reader uses")
+    # Out and back: every type this writes must be one the reader recognises,
+    # or a record pushed today reads as `generic` on the next refresh.
+    unknown = [m for m, z_ in zp.TO_ZOTERO_TYPE.items()
+               if z_ not in _zs.ITEM_TYPES and z_ != "document"]
+    check(not unknown,
+          f"every type it writes is one zotero_source reads back ({unknown})")
+    check(_zs.ITEM_TYPES[zp.TO_ZOTERO_TYPE["conference_proceedings"]]
+          == "conference_proceedings",
+          "and a type survives the round trip unchanged")
+
     print("\nzotero_delete: the dangerous deletion is the sibling you did not list")
     import zotero_delete as zd
 
@@ -3345,13 +3416,17 @@ def main():
         wants = set()
         if re.search(r"^\s*import requests", body, re.M) or "from mendeley_mirror import" in body:
             wants.add(PINS["requests"])
-        # ...and reached THROUGH inbox.py, whose has_content and pdf_text use
-        # it. The rule was extended once already, for harvest_attachments; this
-        # is the same trap one import further out, and it is why the check is
-        # written as "who reaches the PDF stack" rather than "who imports it".
+        # The rule names the FUNCTIONS that reach the PDF stack, wherever they
+        # live, rather than the modules that contain them. Two earlier versions
+        # were wrong in opposite directions: judging by a direct `import
+        # pymupdf` missed zotero_source.py calling harvest_attachments, and
+        # then "anything importing from inbox" charged zotero_push.py for a
+        # dependency it never reaches, since existing_document only reads
+        # library.bib. A spurious declaration fails this check too, and should.
+        PDF_REACHING = ("harvest_attachments", "extract_pdf_text", "ocr_pdf_text",
+                        "has_content", "pdf_text", "pdf_metadata_dois", "identify")
         if (re.search(r"^\s*import pymupdf", body, re.M)
-                or re.search(r"\b(harvest_attachments|extract_pdf_text|ocr_pdf_text)\b", body)
-                or "from inbox import" in body):
+                or any(re.search(rf"\b{n}\b", body) for n in PDF_REACHING)):
             wants.add(PINS["pymupdf"])
 
         check(declared == wants,

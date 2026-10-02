@@ -274,7 +274,10 @@ past a paywall. The two acquisition paths that write to the live account are
 `inbox.py` (a PDF the human saved into `<out>/inbox/`) and `mendeley_push.py` (a
 reference with no PDF behind it).
 
-Both take the **issue** year through `csl_year()`, never Crossref's `issued`.
+`zotero_push.py` is the live one; `inbox.py` and `mendeley_push.py` are its
+retired Mendeley counterparts, and `zotero_inbox.py` files a PDF onto a record
+that already exists. All take the **issue** year through `csl_year()`, never
+Crossref's `issued`.
 `issued` is the date a work first appeared *online*, so an Advance Access paper
 arrives a year early — that is how CHARMM36m was filed as 2016 and cited that way
 in a manuscript before anyone noticed. If you add another acquisition path, call
