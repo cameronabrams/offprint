@@ -750,6 +750,31 @@ separately now: `already_same` and `discarded_junk`.
 **A label that merges two facts because they share an action is the same defect
 as a label that merges two actions.** Both were in this file within an hour.
 
+**And then it happened a third time, in the fix.** `already_same` was decided by
+a normalised whole-string equality, which reported 41 same / 160 junk against
+the library session's measured 91 / 101. The frozen bib's `isbn` often holds a
+**pair** with PubMed's labels — `1091-6490 (Electronic)\r0027-8424 (Linking)` —
+which is the journal's electronic and print ISSN, and Zotero stores one of the
+two. `Yun2008Mutation` and `Yao2015Viral` carry the *identical* bib value and
+Zotero kept the opposite member in each. Calling those "not this record's
+identifier in any format" is simply false, and it was about to be printed as a
+finding someone would act on.
+
+The test is now whether the value **contains** an ISSN-shaped token matching the
+record's, not whether the whole string equals it — and the remainder splits
+again, because it is still two things: a value with ISSN structure matching
+nothing is a genuine disagreement about which ISSN the journal has
+(`Bajaj1987Tertiary`, `0006-3002` against `01674838`), and a value with no ISSN
+structure at all (`1060510618`, `3014024724`) is the junk worth reporting.
+
+Three rounds of the same mistake, each one caught by the library session reading
+records rather than counts. The pattern underneath all three: **when an output
+groups things by what the tool will do about them, it will keep merging facts
+that deserve to be said separately** — the action is the obvious axis and it is
+the wrong one. The six cases it was finally fixed against are fixtures in
+`test_mirror.py` now, by name, so the next refactor has to keep agreeing with
+the live library rather than with me.
+
 **And the no-field list is not the type inventory**, which this file claimed it
 was. All 192 entries are `journalArticle` records with junk in `isbn`. A report
 typed as a report has no ISBN to refuse, so a mistyped record never appears in

@@ -297,6 +297,46 @@ def same_identifier(a: str, b: str) -> bool:
     return bool(norm(a)) and norm(a) == norm(b)
 
 
+ISSN_TOKEN = re.compile(r"\b\d{4}-?\d{3}[\dXx]\b")
+
+
+def issn_tokens(value: str) -> set:
+    """Every ISSN-shaped token in a string, normalised.
+
+    The word boundaries matter: they are what stops an eight-digit window
+    inside `1493605872292` from reading as an ISSN. A thirteen-digit run has no
+    boundary in the middle of it, so a genuine junk string yields nothing and a
+    real ISSN yields itself.
+    """
+    return {re.sub(r"[^0-9Xx]", "", t).upper() for t in ISSN_TOKEN.findall(value or "")}
+
+
+def classify_isbn_value(value: str, zotero_issn: str) -> str:
+    """`same`, `differs` or `junk` -- three facts behind one action.
+
+    The frozen bib's `isbn` field often holds a PAIR with labels, as PubMed
+    renders them: `1091-6490 (Electronic)\r0027-8424 (Linking)`. That is the
+    journal's electronic and print ISSN, and Zotero stores one of the two --
+    `Yun2008Mutation` and `Yao2015Viral` carry the identical bib value and
+    Zotero kept the opposite member in each. A whole-string comparison calls
+    both of those "not this record's identifier in any format", which is false,
+    and it was about to be presented as a finding someone would act on.
+
+    So the test is whether the value CONTAINS an ISSN-shaped token matching the
+    record's, not whether the whole string equals it. What is left over splits
+    again: a value with ISSN structure that matches nothing is a real
+    disagreement about which ISSN this journal has, and a value with no ISSN
+    structure at all -- `1060510618`, `3014024724` -- is the junk worth
+    reporting. Same action, three different things to say.
+    """
+    toks = issn_tokens(value)
+    if not toks:
+        return "junk"
+    if toks & issn_tokens(zotero_issn):
+        return "same"
+    return "differs"
+
+
 def clean_url(value: str) -> str:
     """A single http(s) URL, or "" if the value is not one.
 
@@ -377,10 +417,12 @@ def rescue_identifiers(out: Path) -> int:
 
     edits: dict = {}
     counts = {"pmid": 0, "eprint": 0, "issn": 0, "isbn": 0, "doi": 0, "url": 0,
-              "reclassified": 0, "already_same": 0, "discarded_junk": 0}
+              "reclassified": 0, "already_same": 0, "issn_differs": 0,
+              "discarded_junk": 0}
     skipped: list = []
     no_field: list = []
     junk: list = []
+    differs: list = []
     bad_url: list = []
     for citekey, fields in sorted(frozen.items()):
         item_key = by_citekey.get(citekey)
@@ -431,12 +473,17 @@ def rescue_identifiers(out: Path) -> int:
                 # Two different FACTS behind one identical action, and merging
                 # them was the same conflation as "holds neither" a level down.
                 # Only the second says the frozen bib is carrying junk.
-                if same_identifier(want_isbn, data["ISSN"]):
+                verdict = classify_isbn_value(want_isbn, data["ISSN"])
+                if verdict == "same":
                     counts["already_same"] += 1
+                elif verdict == "differs":
+                    counts["issn_differs"] += 1
+                    differs.append(f"{citekey}: bib {want_isbn!r} vs Zotero ISSN "
+                                   f"{data['ISSN']!r} -- both ISSN-shaped, neither matches")
                 else:
                     counts["discarded_junk"] += 1
-                    junk.append(f"{citekey}: bib isbn {want_isbn!r} is not this "
-                                f"record's ISSN {data['ISSN']!r} in any format")
+                    junk.append(f"{citekey}: bib isbn {want_isbn!r} has no ISSN "
+                                f"structure at all (Zotero has {data['ISSN']!r})")
             elif can_hold(data, "ISSN") and (looks_like_issn(want_isbn)
                                              or not can_hold(data, "ISBN")):
                 edit["ISSN"] = want_isbn
@@ -458,7 +505,8 @@ def rescue_identifiers(out: Path) -> int:
         print(f"- {k}: {v}")
     print(f"- already in Zotero, same value differently formatted: "
           f"{counts['already_same']}")
-    print(f"- DISCARDED, the bib value is not that record's identifier: {len(junk)}")
+    print(f"- bib and Zotero hold DIFFERENT ISSNs for the record: {len(differs)}")
+    print(f"- bib value has no ISSN structure at all: {len(junk)}")
     print(f"- url refused as malformed: {len(bad_url)}")
     print(f"- not restorable because the item type has no such field: {len(no_field)}")
     print(f"- not restorable, named below: {len(skipped)}")
@@ -467,10 +515,19 @@ def rescue_identifiers(out: Path) -> int:
           f"{path} --dry-run")
     for line in skipped:
         print(f"  ! {line}")
+    if differs:
+        print(f"\nThese {len(differs)} hold an ISSN on both sides and the two do "
+              "not match. A journal has a print and an electronic ISSN and each "
+              "side may have kept a different one, so this is worth a look and "
+              "is not necessarily wrong. Nothing is sent.")
+        for line in differs[:40]:
+            print(f"  - {line}")
+        if len(differs) > 40:
+            print(f"  ... and {len(differs) - 40} more NOT SHOWN")
     if junk:
-        print(f"\nThese {len(junk)} are a finding about the FROZEN BIB, not about "
-              "Zotero: it carries a value in `isbn` that is not that record's "
-              "identifier in any format. Nothing is sent for them.")
+        print(f"\nThese {len(junk)} are a finding about the FROZEN BIB: its "
+              "`isbn` field holds a digit string with no ISSN structure at all. "
+              "Nothing is sent for them.")
         for line in junk[:40]:
             print(f"  - {line}")
         if len(junk) > 40:

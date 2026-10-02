@@ -2700,6 +2700,38 @@ def main():
     check(not zs.same_identifier("", "0002-7863"),
           "and nothing is not the same as something")
 
+    # The six the library session read off the live library. The frozen bib's
+    # `isbn` often holds a PAIR with PubMed's labels, and Zotero kept one of the
+    # two -- Yun and Yao carry the IDENTICAL bib value and Zotero kept the
+    # opposite member in each. A whole-string comparison called both of those
+    # "not this record's identifier in any format", which is false, and it was
+    # about to be reported as a finding someone would act on.
+    cases = [
+        ("Zhao2008Identification", "1520-4995 (Electronic)\r0006-2960 (Linking)",
+         "1520-4995", "same"),
+        ("Yun2008Mutation", "1091-6490 (Electronic)\r0027-8424 (Linking)",
+         "0027-8424", "same"),
+        ("Yao2015Viral", "1091-6490 (Electronic)\r0027-8424 (Linking)",
+         "1091-6490", "same"),
+        ("Zhou2001Free", "0027-8424 (Print)\r0027-8424 (Linking)", "0027-8424", "same"),
+        ("Sundquist2012Hiv", "2157-1422 (Electronic)", "21571422", "same"),
+        ("Bajaj1987Tertiary", "0006-3002 (Print)", "01674838", "differs"),
+    ]
+    for key, bib, zot, want in cases:
+        got = zs.classify_isbn_value(bib, zot)
+        check(got == want, f"{key}: {bib[:38]!r} vs {zot!r} is {want} (got {got})")
+
+    # The genuine junk: digit strings with no ISSN structure. The word
+    # boundaries are what stop an eight-digit window inside a thirteen-digit
+    # run from reading as one.
+    for junk in ("1060510618", "5143983797", "1493605872292", "3014024724"):
+        check(zs.classify_isbn_value(junk, "0002-7863") == "junk",
+              f"{junk} has no ISSN structure and is junk")
+    check(zs.issn_tokens("1493605872292") == set(),
+          f"a 13-digit run yields no ISSN token ({zs.issn_tokens('1493605872292')})")
+    check(zs.issn_tokens("2157-1422 (Electronic)") == {"21571422"},
+          "while a labelled ISSN yields exactly itself")
+
     # Alberty1958Application's url was three URLs joined by a literal \n: a
     # publisher link, a papers2:// scheme, and a local Mac path under a
     # stranger's home directory. Offering it put that into a live library.
