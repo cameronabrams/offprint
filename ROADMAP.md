@@ -865,6 +865,18 @@ Note for whoever prunes them: `citekeys.json` is append-only, so a deleted
 record keeps its key reserved and a key cited in a manuscript keeps resolving.
 Both halves or neither — `docs/reference.md` has the procedure.
 
+**Closed 2026-10-02.** Cameron approved the sweep and `library` ran it. The 11
+suffixed extracts were **moved, not deleted**, to
+`~/.local/state/fleet/drops/orphan-text-20261002/`, and `text/` now has zero
+keys missing from `library.bib`. The 5 plain-key records and their extracts
+survive.
+
+Two things that session did unprompted and that are worth naming, because both
+are conventions this repo had to learn the hard way: it reported **what
+survives** alongside what moved, which is `zotero_delete.py`'s whole design
+principle arriving from the other side; and it moved rather than deleted, which
+is what every destructive path here now does. Neither was in the handover.
+
 ### What `--compare` found, 2026-10-02 — 1,366 identical, 1,373 differ
 
 **The finding that matters: 1,174 PMIDs are in the frozen `library.bib` and not
