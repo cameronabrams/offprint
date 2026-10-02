@@ -138,8 +138,8 @@ left to connect the two.
 
 `mendeley_mirror.py` is the refresh and the module everything else imports.
 `get_pdf.py`, `refs.py`, `inbox.py`, `mendeley_push.py`, `mendeley_edit.py`,
-`finding.py`, `pdbrefs.py`, `pdbxref.py`, `doixref.py`, `zotero_migrate.py` and
-`zotero_attach.py` are separate CLIs that reuse its `Mendeley` client,
+`finding.py`, `pdbrefs.py`, `pdbxref.py`, `doixref.py`, `zotero_migrate.py`,
+`zotero_attach.py` and `zotero_edit.py` are separate CLIs that reuse its `Mendeley` client,
 `config_dir()`, and `DEFAULT_OUT`. `finding.py` and `pdbrefs.py`
 touch neither Mendeley nor the network; `pdbxref.py` queries RCSB and
 `doixref.py` queries Crossref, both public and unauthenticated, and neither
@@ -155,8 +155,15 @@ has changed before, so check it rather than assuming it.
 
 ## Direction of travel
 
+Since 2026-10-02 **Zotero is the remote and Mendeley is retired**, so the three
+`mendeley_*` writers have no live account to write to and `~/Sync/mendeley` is a
+frozen snapshot — `--retire` makes it say so. The rules below still describe how
+they work, because the next backend's writers are built in their image and
+`mendeley_edit.py`'s three properties are the reason `zotero_edit.py` has three
+of its own.
+
 The refresh is strictly one-way: Mendeley to disk. A bad run can lose mirrored
-files but cannot touch the library. Four scripts break that on purpose —
+files but cannot touch the library. Five scripts break that on purpose —
 `inbox.py` attaches files to references and can create them, `mendeley_push.py`
 POSTs a new reference, `mendeley_edit.py` PATCHes fields on a reference that
 already exists, and `zotero_attach.py` uploads the archive into Zotero. The three
@@ -181,9 +188,25 @@ fields are sent so a re-run writes nothing, and a content type is never invented
 concurrent edit: report it and leave the item alone. Never re-read and retry,
 which would overwrite the edit that caused the conflict.
 
+`zotero_edit.py` is `mendeley_edit.py` for the live backend, and **the dangerous
+field moved**. Mendeley kept DOI, ISSN and PMID in one nested object its PATCH
+replaced wholesale, which is why `identifiers` is merged by hand there. Zotero's
+PATCH is a top-level partial merge, so those are separate fields and that hazard
+is gone — and it reappears in `creators`, a list that a PATCH replaces entire,
+editors included. So an edit replaces only the creator types it mentions and
+keeps the ones it does not. Don't "simplify" that into assigning `creators`
+directly; it drops an editor the first time someone fixes an author list.
+
+Its third property is new and belongs to this backend: **an unknown field name
+is an error.** Zotero returns every field valid for an item's type including the
+empty ones, so a name that is not already a key of `data` is a typo — and a typo
+that reached Zotero would be ignored server-side, which is a silent no-op
+wearing the clothes of a successful edit.
+
 `zotero_migrate.Zotero` is read-only and its docstring says so. The write client
 lives in `zotero_attach.py` for exactly that reason: adding a write method there
-would retire a guarantee every other caller is relying on.
+would retire a guarantee every other caller is relying on. `zotero_edit.py`
+imports that client rather than growing a second one.
 
 **`mendeley_edit.py` is the one to be most careful with**, because it is the only
 one that can *destroy* correct metadata rather than merely add wrong metadata.

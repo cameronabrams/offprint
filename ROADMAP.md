@@ -603,12 +603,29 @@ library session is holding, with no destination:
 - 2 merged records (`Daoulas2005Molecular`, `Hirota2000Effect`)
 - and whatever `doixref.py` turns up across the other ~2,270
 
-- [ ] **`zotero_edit.py`** — the direct analogue of `mendeley_edit.py`, keyed by
-      citation key through `citekeys.json`, PATCHing `creators` and fields on a
-      Zotero item. The groundwork exists: `ZoteroWriter.patch_item` already does
-      a version-preconditioned partial merge, and Zotero's PATCH leaves unnamed
-      fields alone, which is the property `mendeley_edit.py` had to work for.
-      Smaller than item 1 and it unblocks 72 prepared edits today.
+- [x] **`zotero_edit.py`**, built 2026-10-02. Same edits-file format as
+      `mendeley_edit.py` and keyed the same way, so the 55 prepared edits port
+      across unchanged.
+
+      **The dangerous field moved, and that is the finding worth keeping.**
+      Mendeley kept DOI, ISSN and PMID in one nested object its PATCH replaced
+      wholesale, which is why `identifiers` is merged by hand there. Zotero's
+      PATCH is a top-level partial merge, so those are separate fields and the
+      hazard is simply gone — and it **reappears one level down**, in
+      `creators`, a list that a PATCH replaces entire, editors and translators
+      included. The same protection therefore sits in a different place: an edit
+      replaces only the creator types it mentions and keeps the ones it does
+      not. Porting the old guard literally would have protected a field that no
+      longer needs it and left the one that does exposed.
+
+      Order is used exactly as written, because order is the correction in 15 of
+      this library's records rather than an incidental detail.
+
+      A third property is new and belongs to this backend: **an unknown field
+      name is an error.** Zotero returns every field valid for an item's type
+      including the empty ones, so a name that is not already a key of `data` is
+      a typo — and a typo that reached Zotero would be ignored server-side,
+      which is a silent no-op wearing the clothes of a successful edit.
 - [ ] **A Zotero-backed `mendeley_mirror.py`** — item 1, now the live question
       rather than the contingency it was written as.
 

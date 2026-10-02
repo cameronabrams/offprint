@@ -2428,6 +2428,59 @@ def main():
     check(mm.load_retired(frz)["reason"].startswith("Mendeley retired"),
           "and the marker is what a later run reads to refuse")
 
+    print("\nzotero_edit: creators is the list that gets replaced wholesale")
+    import zotero_edit as ze
+
+    item = {"itemType": "journalArticle", "title": "T", "volume": "80",
+            "DOI": "10.1002/app.1171", "pages": "917-927",
+            "creators": [{"creatorType": "author", "firstName": "K.", "lastName": "Won"},
+                         {"creatorType": "editor", "firstName": "E.", "lastName": "Ed"}]}
+
+    # The whole point. Zotero's PATCH is a top-level partial merge, so DOI and
+    # ISSN are safe without any help -- but creators is a LIST, and sending one
+    # replaces the list, editor included. Same risk mendeley_edit.py guards
+    # `identifiers` against, one level down.
+    patch, lines = ze.plan_patch(item, {"creators": [{"lastName": "Shan", "firstName": "J."}]})
+    check([c["lastName"] for c in patch["creators"]] == ["Shan", "Ed"],
+          f"an author edit replaces the author and KEEPS the editor "
+          f"({[c['lastName'] for c in patch['creators']]})")
+    check(patch["creators"][0]["creatorType"] == "author",
+          "and an entry with no creatorType is an author")
+
+    # Order IS the correction in 15 of this library's records.
+    reordered = ze.merge_creators(
+        [{"creatorType": "author", "lastName": "B"}, {"creatorType": "author", "lastName": "A"}],
+        [{"lastName": "A"}, {"lastName": "B"}])
+    check([c["lastName"] for c in reordered] == ["A", "B"],
+          "the given order is used exactly, because order is the payload")
+
+    # A corporate author must not be rewritten into first/last.
+    corp = ze.norm_creator({"name": "IUPAC"})
+    check(corp == {"creatorType": "author", "name": "IUPAC"},
+          f"a single-field name stays single-field ({corp})")
+
+    check(ze.plan_patch(item, {"volume": "80"})[0] == {},
+          "a value already equal to Zotero's is skipped, so a re-run after a "
+          "partial failure sends nothing")
+    cleared, _l = ze.plan_patch(item, {"volume": None})
+    check(cleared == {"volume": ""},
+          f"an explicit null clears a scalar, since a merge that protects good "
+          f"data must not make bad data undeletable ({cleared})")
+    wiped, _l = ze.plan_patch(item, {"creators": None})
+    check(wiped == {"creators": []}, f"and null on creators empties it ({wiped})")
+
+    # Must REFUSE: Zotero returns every field valid for the item type, including
+    # empty ones, so a name that is not already a key is a typo -- and a typo
+    # sent to Zotero is ignored silently, which is a no-op dressed as an edit.
+    import subprocess as _sp3
+    rc_f = _sp3.run([sys.executable, "-c",
+                     f"import sys; sys.path.insert(0, {str(Path(__file__).parent)!r});"
+                     "import zotero_edit as z;"
+                     "z.plan_patch({'title': 'T'}, {'ttile': 'X'})"],
+                    capture_output=True, text=True)
+    check(rc_f.returncode != 0 and "is not a field of this item type" in rc_f.stderr,
+          f"an unknown field name stops the run ({rc_f.stderr.strip()[:70]})")
+
     print("\ndoixref: three-way, because the citation key is frozen")
     import doixref as dx
 
