@@ -2473,13 +2473,42 @@ def main():
     # empty ones, so a name that is not already a key is a typo -- and a typo
     # sent to Zotero is ignored silently, which is a no-op dressed as an edit.
     import subprocess as _sp3
-    rc_f = _sp3.run([sys.executable, "-c",
-                     f"import sys; sys.path.insert(0, {str(Path(__file__).parent)!r});"
-                     "import zotero_edit as z;"
-                     "z.plan_patch({'title': 'T'}, {'ttile': 'X'})"],
-                    capture_output=True, text=True)
+
+    def _ze(expr: str):
+        return _sp3.run([sys.executable, "-c",
+                         f"import sys; sys.path.insert(0, {str(Path(__file__).parent)!r});"
+                         f"import zotero_edit as z; {expr}"],
+                        capture_output=True, text=True)
+
+    rc_f = _ze("z.plan_patch({'title': 'T'}, {'ttile': 'X'})")
     check(rc_f.returncode != 0 and "is not a field of this item type" in rc_f.stderr,
           f"an unknown field name stops the run ({rc_f.stderr.strip()[:70]})")
+
+    # "the format ports unchanged" was claimed in this repo on 2026-10-02 and
+    # was wrong. The library session's mendeley_edit-shaped file was rejected on
+    # its first record -- correctly -- but a refusal that does not say what to
+    # write instead is a dead end, and the claim was the kind someone acts on
+    # with --yes.
+    rc_m = _ze("z.plan_patch({'title': 'T'}, {'authors': []})")
+    check(rc_m.returncode != 0 and "Zotero wants creators" in rc_m.stderr,
+          f"a Mendeley field name is named as one, with its translation "
+          f"({rc_m.stderr.strip()[:70]})")
+    rc_y = _ze("z.plan_patch({'title': 'T'}, {'year': 2001})")
+    check(rc_y.returncode != 0 and "Zotero wants date" in rc_y.stderr,
+          "and so is year -> date")
+
+    # The worst of the shape mistakes: Mendeley's person dict would be accepted
+    # as a creator with empty names, and Zotero would store blank authors -- an
+    # edit that looks successful and destroys the field it meant to repair.
+    rc_c = _ze("z.plan_patch({'creators': []}, "
+               "{'creators': [{'first_name': 'J.', 'last_name': 'Shan'}]})")
+    check(rc_c.returncode != 0 and "firstName/lastName" in rc_c.stderr,
+          f"Mendeley's person shape is refused, not stored as empty names "
+          f"({rc_c.stderr.strip()[:70]})")
+    ok_shape, _l = ze.plan_patch({"creators": []},
+                                 {"creators": [{"firstName": "J.", "lastName": "Shan"}]})
+    check(ok_shape["creators"][0]["lastName"] == "Shan",
+          "while Zotero's own shape goes through")
 
     print("\ndoixref: three-way, because the citation key is frozen")
     import doixref as dx

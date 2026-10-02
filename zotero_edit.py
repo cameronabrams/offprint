@@ -7,7 +7,14 @@
 zotero_edit.py -- correct fields on records already IN Zotero.
 
 The direct counterpart of `mendeley_edit.py`, for the backend that is now live.
-Same shape, same cautions, same edits-file format keyed by CITATION KEY:
+Same cautions, same keying by CITATION KEY -- but **the field names are Zotero's,
+not Mendeley's, and an edits file written for the old script will not run here.**
+This docstring said "ports unchanged" on 2026-10-02 and that was wrong: the
+library session's file needed `authors` -> `creators` and
+`first_name`/`last_name` -> `firstName`/`lastName`. The unknown-field check
+stopped it on the first record, which is what that check is for, but a claim
+someone acts on with `--yes` has no business being wrong. The translations are
+listed in `MENDELEY_FIELDS` and named in the error.
 
     uv run --script zotero_edit.py --edits fixes.json --dry-run   # always first
     uv run --script zotero_edit.py --edits fixes.json             # asks before sending
@@ -79,6 +86,24 @@ from zotero_migrate import Zotero, load_zotero_credentials  # noqa: E402
 
 AUTHOR = "author"
 
+# Named in the error rather than silently translated. Accepting a Mendeley field
+# name would be guessing at what someone meant about their own library; saying
+# which Zotero field they want costs one line and is the difference between a
+# refusal and a dead end.
+MENDELEY_FIELDS = {
+    "authors": "creators",
+    "editors": 'creators, with "creatorType": "editor"',
+    "source": "publicationTitle, bookTitle or proceedingsTitle, by item type",
+    "identifiers": "DOI, ISSN and ISBN, which are separate top-level fields here",
+    "year": "date",
+    "city": "place",
+    "abstract": "abstractNote",
+    "keywords": "tags",
+    "institution": "university on a thesis, institution on a report",
+    "websites": "url",
+    "type": "itemType, which this script will not change",
+}
+
 
 def die(msg: str):
     sys.exit(f"error: {msg}")
@@ -88,6 +113,22 @@ def show(label: str, value) -> str:
     if isinstance(value, (dict, list)):
         return f"{label}: {json.dumps(value, ensure_ascii=False)}"
     return f"{label}: {value!r}"
+
+
+def check_creator_shape(creators: list) -> None:
+    """Refuse Mendeley's person shape, and say what Zotero's is.
+
+    `{"first_name": ..., "last_name": ...}` is what the Mendeley scripts take.
+    Passed here it would be accepted as a creator with empty names, and Zotero
+    would store a record with blank authors -- a successful-looking edit that
+    destroys the field it was meant to repair.
+    """
+    for c in creators or []:
+        wrong = sorted(k for k in c if k in ("first_name", "last_name"))
+        if wrong:
+            die(f"creator entries use firstName/lastName, not "
+                f"{'/'.join(wrong)} -- that is Mendeley's shape. Zotero also "
+                f'accepts a single "name" for a corporate author.')
 
 
 def norm_creator(c: dict) -> dict:
@@ -130,11 +171,16 @@ def plan_patch(data: dict, edits: dict) -> tuple[dict, list[str]]:
     lines: list[str] = []
     for field, new_value in edits.items():
         if field not in data:
+            hint = MENDELEY_FIELDS.get(field)
+            if hint:
+                die(f"{field!r} is Mendeley's field name. Zotero wants {hint}.")
             die(f"{field!r} is not a field of this item type. Zotero returns "
                 f"every valid field including the empty ones, so this is a typo "
                 f"-- and Zotero would ignore it silently rather than refuse it.")
         old_value = data.get(field)
         if field == "creators":
+            if new_value is not None:
+                check_creator_shape(new_value)
             merged = [] if new_value is None else merge_creators(old_value, new_value)
             if merged == (old_value or []):
                 continue

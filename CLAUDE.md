@@ -197,6 +197,13 @@ editors included. So an edit replaces only the creator types it mentions and
 keeps the ones it does not. Don't "simplify" that into assigning `creators`
 directly; it drops an editor the first time someone fixes an author list.
 
+**Its edits file is not `mendeley_edit.py`'s**, whatever the similarity
+suggests: `authors` is `creators`, `first_name`/`last_name` are
+`firstName`/`lastName`, and the identifiers are separate top-level fields. This
+repo claimed otherwise on 2026-10-02 and the claim reached a peer about to run
+`--yes`. Mendeley's field names and person shape are both refused by name now,
+with the translation in the error.
+
 Its third property is new and belongs to this backend: **an unknown field name
 is an error.** Zotero returns every field valid for an item's type including the
 empty ones, so a name that is not already a key of `data` is a typo — and a typo

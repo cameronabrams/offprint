@@ -603,9 +603,24 @@ library session is holding, with no destination:
 - 2 merged records (`Daoulas2005Molecular`, `Hirota2000Effect`)
 - and whatever `doixref.py` turns up across the other ~2,270
 
-- [x] **`zotero_edit.py`**, built 2026-10-02. Same edits-file format as
-      `mendeley_edit.py` and keyed the same way, so the 55 prepared edits port
-      across unchanged.
+- [x] **`zotero_edit.py`**, built 2026-10-02. Keyed the same way as
+      `mendeley_edit.py`, and **the edits-file format does NOT port unchanged** —
+      this file claimed it did, and it was wrong. The library session's
+      Mendeley-shaped file needed `authors` → `creators` and
+      `first_name`/`last_name` → `firstName`/`lastName`.
+
+      The unknown-field check stopped it on the first record, which is exactly
+      what it is for; under a silent no-op it would have sent 55 patches, exited
+      clean, and left the library unrepaired while reporting success. But a
+      claim someone acts on with `--yes` has no business being wrong, so: the
+      Mendeley field names are now named as Mendeley's and translated in the
+      error, and Mendeley's person shape is refused rather than stored as a
+      creator with empty names — which would be an edit that looks successful
+      and destroys the field it meant to repair.
+
+      All 55 went through after the translation: 0 conflicts, verified from
+      Zotero rather than from the tool's own count — zero `??` in the 7 mojibake
+      records, and 6 of the 48 re-read with full author lists.
 
       **The dangerous field moved, and that is the finding worth keeping.**
       Mendeley kept DOI, ISSN and PMID in one nested object its PATCH replaced
@@ -626,6 +641,13 @@ library session is holding, with no destination:
       including the empty ones, so a name that is not already a key of `data` is
       a typo — and a typo that reached Zotero would be ignored server-side,
       which is a silent no-op wearing the clothes of a successful edit.
+- [x] **The damage was not a Mendeley artefact.** The library session checked
+      Zotero's own pre-edit records and found `Gonz??lez-Nilo`, `C??sar Augusto
+      F` and a single-author `Y. Tamai` there too, so the migration carried the
+      defects across intact rather than introducing or healing them. Fixing
+      Zotero was the right and only target — there was never a version of this
+      where correcting Mendeley would have helped.
+
 - [ ] **A Zotero-backed `mendeley_mirror.py`** — item 1, now the live question
       rather than the contingency it was written as.
 
