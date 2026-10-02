@@ -1185,6 +1185,74 @@ doing at zero network cost; just not for the stated reason.
       was the right answer to the old question and is probably the wrong answer
       to this one.
 
+## 14. The toolkit after the cutover — what has a Zotero counterpart and what does not
+
+Cameron, 2026-10-02: *"your toolkit is still incomplete!"* The library session
+checked the clone rather than recalling it, and was right: nothing in the repo
+created a Zotero item at all.
+
+| Mendeley tool | Zotero counterpart | state |
+|---|---|---|
+| `mendeley_mirror.py --refresh` | `zotero_source.py --refresh` | done |
+| `mendeley_edit.py` | `zotero_edit.py` | done |
+| `inbox.py` | **`zotero_inbox.py`** | done, 2026-10-02 |
+| — | `zotero_attach.py` | fills existing slots only, by design |
+| `mendeley_push.py` | — | **open**, item 15 |
+| — | `zotero_delete.py` | **open**, item 16 |
+
+`get_pdf.py`, `refs.py`, `finding.py`, `doixref.py` and `pdbxref.py` read the
+mirror files and are backend-agnostic by construction. `get_pdf.py` still serves
+from `~/.cache/mendeley-mirror/pdf/` and works unchanged.
+
+**The blocking gap was filing a PDF fetched by hand.** Ten of the eleven papers
+on the current fetch list are published versions of records that already hold a
+preprint, so filing one means creating a *second* attachment on an existing
+record — and `zotero_attach.py` has no way to create an attachment at all. There
+was no route from a downloaded PDF into the library except dragging it onto the
+item in the Zotero client.
+
+`zotero_inbox.py` closes it, and reuses `inbox.py`'s identification pipeline
+unchanged: the DOI out of the filename, the PDF metadata and the first page,
+resolved through Crossref and checked against the page in front of you. That
+half was always backend-agnostic; only create-and-upload was Mendeley's.
+
+**One known consequence, stated rather than discovered.** It uploads to Zotero
+and does not write to `<out>/pdf/`, because the stem an attachment is archived
+under depends on its position in the record's attachment list and is not known
+until the next refresh reads it back. So the archive lags by one refresh for a
+newly filed paper. That matters because the archive being complete is the whole
+reason it exists.
+
+- [ ] **Decide whether a text-mode refresh should archive bytes it had to fetch
+      from the network.** It currently writes to `<out>/pdf/` only in `keep`
+      mode. Under Zotero the archive is the service-independent copy, so a
+      refresh that went to the network for bytes arguably owes the archive a
+      copy — which would also close the lag above. It is a behaviour change to
+      what a refresh writes, so it is a decision rather than a tidy-up.
+
+## 15. `mendeley_push.py` has no Zotero counterpart — adding a reference by DOI
+
+Not needed this week, and it is the other half of "how does a paper get into the
+library". `zotero_inbox.py` deliberately refuses to create a record: adding a
+reference is a different operation with different metadata risks, and the year
+trap applies — the **issue** year through `csl_year()`, never Crossref's
+`issued`, which is when a work first appeared online and is how CHARMM36m was
+filed as 2016 and cited that way in a manuscript.
+
+## 16. `zotero_delete.py` — a tool for something already done by hand
+
+The library session hand-rolled 16 DELETEs on 2026-10-02: 11 duplicate records
+and 5 byte-less attachment stubs. Exact keys, `If-Unmodified-Since-Version`,
+backed up first, verified after — and it flagged that itself, in the right
+terms: **discipline standing in for a tool, and the next person will not
+necessarily bring it.**
+
+It would be the most dangerous thing in the repo, so it gets the treatment
+`zotero_edit.py` got: dry-run by default, a backup of every item and its
+children written *before* anything is sent, a version precondition, resolution
+through `citekeys.json` so a key the mirror has never seen is an error, and a
+refusal to delete anything it cannot name.
+
 ## 2. Make a failing refresh loud
 
 **Why.** The failure this tool is least equipped to notice is silent

@@ -152,7 +152,8 @@ left to connect the two.
 `mendeley_mirror.py` is the refresh and the module everything else imports.
 `get_pdf.py`, `refs.py`, `inbox.py`, `mendeley_push.py`, `mendeley_edit.py`,
 `finding.py`, `pdbrefs.py`, `pdbxref.py`, `doixref.py`, `zotero_migrate.py`,
-`zotero_source.py`, `zotero_attach.py` and `zotero_edit.py` are separate CLIs that reuse its `Mendeley` client,
+`zotero_source.py`, `zotero_attach.py`, `zotero_edit.py` and `zotero_inbox.py`
+are separate CLIs that reuse its `Mendeley` client,
 `config_dir()`, and `DEFAULT_OUT`. `finding.py` and `pdbrefs.py`
 touch neither Mendeley nor the network; `pdbxref.py` queries RCSB and
 `doixref.py` queries Crossref, both public and unauthenticated, and neither
@@ -222,6 +223,16 @@ is an error.** Zotero returns every field valid for an item's type including the
 empty ones, so a name that is not already a key of `data` is a typo — and a typo
 that reached Zotero would be ignored server-side, which is a silent no-op
 wearing the clothes of a successful edit.
+
+**`zotero_inbox.py` is the only script in the repo that creates a Zotero
+item**, and it creates exactly one kind: a child attachment on a record that
+already exists. `zotero_attach.py` fills slots; it cannot make one, which is why
+a paper fetched by hand had no route into the library. Four refusals keep that
+narrow — it never creates a *record*, never attaches bytes a record already
+holds (checked by md5 before anything is created), never files a PDF with no
+readable text, and never guesses which record. It reuses `inbox.py`'s
+identification pipeline unchanged, which was always backend-agnostic; only the
+create-and-upload half was Mendeley's.
 
 `zotero_migrate.Zotero` is read-only and its docstring says so. The write client
 lives in `zotero_attach.py` for exactly that reason: adding a write method there

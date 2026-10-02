@@ -1,5 +1,26 @@
 # Adding papers to the library
 
+
+```{note}
+**`zotero_inbox.py` is the live one**, since the cutover of 2026-10-02:
+
+    uv run --script zotero_inbox.py              # dry run over <out>/inbox/
+    uv run --script zotero_inbox.py --yes
+    uv run --script zotero_inbox.py --key Abrams2013Enhanced paper.pdf --yes
+
+It reuses the identification described on this page unchanged — that half was
+never Mendeley-specific. What differs is the other half: it **creates an
+attachment** on a record that already exists, and it will not create a *record*.
+A paper not already in `library.bib` is reported, not added.
+
+It refuses three further things, each because the alternative is a library that
+is wrong rather than one that is missing something: a file whose bytes are
+already attached to that record (checked by md5 before anything is created), a
+PDF with no readable text, and a record it had to guess at.
+
+The archive lags by one refresh for a newly filed paper: the bytes go to Zotero,
+and `<out>/pdf/` gets its copy when the next refresh fetches them back.
+```
 Two paths into Mendeley: a PDF you downloaded by hand, and a reference with no PDF behind it. Both write to your live account, and both ask before they do.
 
 ## Filing PDFs you downloaded yourself

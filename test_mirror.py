@@ -2552,6 +2552,59 @@ def main():
     check("Shan2001Existing" in (zout / "index.md").read_text(encoding="utf-8"),
           "and so does write_index")
 
+    print("\nzotero_inbox: the only thing here that creates a Zotero item")
+    import zotero_inbox as zi
+
+    # Re-running, or filing the same download twice, must attach nothing. Two
+    # attachments on one record is ordinary, so nothing downstream would flag a
+    # duplicate -- it has to be refused here or not at all.
+    body_bytes = b"%PDF-1.4 the paper"
+    import hashlib as _h
+    kids = [{"key": "AT1", "data": {"linkMode": "imported_file",
+                                    "md5": _h.md5(body_bytes).hexdigest()}},
+            {"key": "AT2", "data": {"linkMode": "imported_file", "md5": "0" * 32}}]
+    check(zi.already_attached(kids, body_bytes) == "AT1",
+          "a file whose bytes are already attached is recognised")
+    check(zi.already_attached(kids, b"%PDF-1.4 something else") == "",
+          "and a different file is not")
+    check(zi.already_attached([], body_bytes) == "",
+          "a record with no attachments has nothing to duplicate")
+
+    zdir = tmp / "zinbox"
+    zstate = mm.mirror_state_dir(zdir)
+    mm.save_json(zstate / "citekeys.json", {"zotero:ZK9": "Shan2001Influence",
+                                            "mendeley:m9": "Shan2001Influence"})
+    check(zi.zotero_key_for(zdir, "Shan2001Influence") == "ZK9",
+          "a citation key resolves through citekeys.json to the ZOTERO half")
+    check(zi.zotero_key_for(zdir, "Nothing2001Here") == "",
+          "and an unknown key resolves to nothing, rather than to the Mendeley id")
+
+    # What it must refuse. Each of these is a library that is WRONG rather than
+    # a library that is missing something.
+    notpdf = zdir / "notapdf.pdf"
+    notpdf.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 64)
+    key_, why_ = zi.plan_one(zdir, notpdf, "")
+    check(key_ == "" and "not a PDF" in why_,
+          f"a file that is not a PDF by its bytes is refused ({why_})")
+
+    blank = zdir / "blank.pdf"
+    blankdoc = _fitz.open()
+    blankdoc.new_page()
+    blank.write_bytes(blankdoc.tobytes())
+    key_b, why_b = zi.plan_one(zdir, blank, "")
+    check(key_b == "" and "no readable text" in why_b,
+          f"a scan with no text layer is refused, because one filed silently "
+          f"looks complete and cannot be quoted ({why_b})")
+
+    # --key skips identification, which is the whole point of having it: the
+    # operator has decided, and the tool does not second-guess a decision it
+    # could not have made itself.
+    real = zdir / "real.pdf"
+    real.write_bytes(pdf_bytes)
+    key_f, why_f = zi.plan_one(zdir, real, "Shan2001Influence")
+    check(key_f == "Shan2001Influence" and "--key" in why_f,
+          f"--key names the record and skips identification ({key_f}, {why_f})")
+
     print("\nzotero_source: a Zotero item in the shape the generators take")
     import zotero_source as zs
 
@@ -3240,8 +3293,13 @@ def main():
         wants = set()
         if re.search(r"^\s*import requests", body, re.M) or "from mendeley_mirror import" in body:
             wants.add(PINS["requests"])
-        if re.search(r"^\s*import pymupdf", body, re.M) or re.search(
-                r"\b(harvest_attachments|extract_pdf_text|ocr_pdf_text)\b", body):
+        # ...and reached THROUGH inbox.py, whose has_content and pdf_text use
+        # it. The rule was extended once already, for harvest_attachments; this
+        # is the same trap one import further out, and it is why the check is
+        # written as "who reaches the PDF stack" rather than "who imports it".
+        if (re.search(r"^\s*import pymupdf", body, re.M)
+                or re.search(r"\b(harvest_attachments|extract_pdf_text|ocr_pdf_text)\b", body)
+                or "from inbox import" in body):
             wants.add(PINS["pymupdf"])
 
         check(declared == wants,
