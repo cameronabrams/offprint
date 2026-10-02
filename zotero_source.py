@@ -11,7 +11,7 @@ Zotero items into the document dicts that `bib_entry`, `assign_citekeys`,
 change at all and the thing that changes is where documents come from.
 
 **It can be verified before it is integrated, which is why it was built first.**
-`~/Sync/mendeley/library.bib` is a frozen, known-good rendering of the same
+`~/Sync/library/library.bib` is a frozen, known-good rendering of the same
 2,739 records produced by the Mendeley path, and `citekeys.json` holds a
 verified bijection between the two backends' ids. So this module can regenerate
 every entry from Zotero and diff it against that file:

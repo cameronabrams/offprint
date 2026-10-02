@@ -53,11 +53,11 @@ offprint/                      ← this repo, clone it where you like
 ```
 
 The mirror itself is everything the refresh writes. It defaults to
-`~/Sync/mendeley` (`%USERPROFILE%\Sync\mendeley` on Windows); `--out` sends it
-anywhere else. The directory still carries the old backend's name, which is
-cosmetic and deliberate — renaming it would break every machine's sync
-configuration to fix a word. Every file in it is generated — edit in Zotero, not
-here.
+`~/Sync/library` (`%USERPROFILE%\Sync\library` on Windows); `--out` sends it
+anywhere else. It was `~/Sync/mendeley` until 2026-10-02 and both names still
+resolve, because there is one clone and no pull step: a machine renamed later,
+or not at all, keeps working. Every file in it is generated — edit in Zotero,
+not here.
 
 **One exception, added deliberately: `findings/`.** It is the only hand-written
 directory in the mirror, it is never touched by a refresh, and it holds the record
@@ -66,7 +66,7 @@ outside so it syncs to every machine and greps beside `text/` — a record that 
 machine-local is a record nobody else can check. See [Findings](findings.md).
 
 ```
-Sync/mendeley/                 ← the library, and only the library
+Sync/library/                  ← the library, and only the library
 ├── mirror-status.md       last attempt, last success, last error
 ├── CLAUDE.md              orientation for a Claude session opened on this folder
 ├── library.bib            every reference, stable citation keys

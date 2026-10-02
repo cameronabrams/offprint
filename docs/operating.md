@@ -27,7 +27,7 @@ and mint a fresh key for every paper.
 
 ```
 ~/Git/offprint     the tool      replaceable — `git pull` is the update mechanism
-~/Sync/mendeley           the library   generated, but expensive to regenerate
+~/Sync/library            the library   generated, but expensive to regenerate
 ```
 
 Delete the clone and a fresh one restores the tool with nothing lost. Delete the

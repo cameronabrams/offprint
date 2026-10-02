@@ -15,7 +15,7 @@ refresh; those belong to the session that owns the library.
 ## The one structural rule
 
 Scripts never locate data relative to themselves. `DEFAULT_OUT` in
-`mendeley_mirror.py` is an absolute path (`~/Sync/mendeley`, which resolves on
+`mendeley_mirror.py` is an absolute path (`~/Sync/library`, which resolves on
 Windows too), and every entry point takes `--out`. That is what lets the clone
 sit anywhere while the library sits in a synced folder. Don't introduce a
 `Path(__file__).parent / "text"` or a bare relative path — it will work in
@@ -180,7 +180,7 @@ has changed before, so check it rather than assuming it.
 ## Direction of travel
 
 Since 2026-10-02 **Zotero is the remote and Mendeley is retired**, so the three
-`mendeley_*` writers have no live account to write to and `~/Sync/mendeley` is a
+`mendeley_*` writers have no live account to write to and `~/Sync/library` is a
 frozen snapshot — `--retire` makes it say so. The rules below still describe how
 they work, because the next backend's writers are built in their image and
 `mendeley_edit.py`'s three properties are the reason `zotero_edit.py` has three

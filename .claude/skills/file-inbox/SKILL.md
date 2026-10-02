@@ -9,14 +9,22 @@ The loop is: identify → **search the library first** → dry run → file only
 is new → refresh → verify. Skipping step two is the expensive mistake; it ends
 with a second copy of a paper the library already had.
 
-Paths: mirror is `~/Sync/mendeley` (`DEFAULT_OUT`, absolute on purpose — every
+**STALE BEYOND THE PATHS, 2026-10-02.** This skill drives `inbox.py`, which
+POSTs to Mendeley, and Mendeley is retired. The live tool is
+`zotero_inbox.py`: it takes the same `<out>/inbox/` directory and reuses this
+same identification, but creates a **Zotero** attachment on a record that
+already exists, and refuses to create a record. `zotero_push.py` adds a
+reference. The identification half of what follows still holds; every command
+naming `inbox.py` does not. Rewriting it properly is open work.
+
+Paths: mirror is `~/Sync/library` (`DEFAULT_OUT`, absolute on purpose — every
 entry point also takes `--out`). Scripts are run from the clone with
 `uv run --script`, never a bare `python`.
 
 ## 1. Inventory
 
 ```
-date -u; ls -la ~/Sync/mendeley/inbox/
+date -u; ls -la ~/Sync/library/inbox/
 ```
 
 Note the clock now — you need it at step 6. Files usually arrive under whatever
@@ -25,7 +33,7 @@ name the publisher gave them, which tells you nothing reliable.
 ## 2. Identify each PDF from its own first page
 
 ```
-cd ~/Sync/mendeley/inbox && for f in *.pdf; do echo "=== $f ==="; \
+cd ~/Sync/library/inbox && for f in *.pdf; do echo "=== $f ==="; \
   pdftotext -f 1 -l 1 "$f" - 2>/dev/null | head -40; done
 ```
 
@@ -57,7 +65,7 @@ Search by **DOI, title, author, and subject** — a hit on any one is enough to
 stop, and a miss on the method alone proves nothing.
 
 ```
-cd ~/Sync/mendeley
+cd ~/Sync/library
 grep -in -e "<doi-fragment>" -e "<distinctive title words>" -e "<lead author>" library.bib
 grep -rl "<doi-fragment>" text/          # careful, see below
 grep -rlie "<subject phrase>" text/      # subject, not just method
@@ -135,7 +143,7 @@ changed** — as of 2026-09-08 it is a systemd user timer on the Linux host at
 
 ```
 date -u; systemctl --user list-timers mendeley-mirror.timer
-ls ~/Sync/mendeley/.mirror/run.lock* 2>/dev/null || echo "no locks"
+ls ~/Sync/library/.mirror/run.lock* 2>/dev/null || echo "no locks"
 ```
 
 **Where the schedule is a systemd timer, refresh by starting its service** — it
@@ -153,7 +161,7 @@ advisory.
 ## 8. Verify, then report
 
 ```
-cd ~/Sync/mendeley
+cd ~/Sync/library
 grep -A9 "@article{<Key>" library.bib
 ls -la text/<Key>.md && grep -c "<!-- p\." text/<Key>.md
 ls .mirror/            # citekeys.json, mirror.log, state.json — nothing else

@@ -37,7 +37,7 @@ Usage:
 
 from __future__ import annotations
 
-__version__ = "0.22.0"
+__version__ = "0.23.0"
 """The tool's version, and the only place it is written down.
 
 It exists so a mirror can say what produced it. Extraction behaviour has changed
@@ -91,7 +91,31 @@ ACCEPT = {
     "folders": "application/vnd.mendeley-folder.1+json",
 }
 
-DEFAULT_OUT = Path.home() / "Sync" / "mendeley"
+def _default_out() -> Path:
+    """Where the library lives, preferring its new name and accepting the old.
+
+    Renamed `~/Sync/mendeley` -> `~/Sync/library` on 2026-10-02, because the
+    directory had outlived the service it was named after: nothing in it is
+    Mendeley's any more and the backend is Zotero.
+
+    **Both are accepted, and that is not politeness.** There is one clone and no
+    pull step, so a hard switch would break every tool in the window between
+    saving this file and the `mv` — and Cameron's two Windows laptops share the
+    folder over Syncthing and will be renamed at some other time, or not at all.
+    A machine mid-migration keeps working either way.
+
+    Same pattern as `zotero_config_dir()`, and the same end: when nothing is
+    left on the old name this becomes a deletion rather than a migration.
+    """
+    new, old = Path.home() / "Sync" / "library", Path.home() / "Sync" / "mendeley"
+    if new.is_dir():
+        return new
+    if old.is_dir():
+        return old
+    return new          # a fresh install gets the new name
+
+
+DEFAULT_OUT = _default_out()
 
 # Set by --quiet, for scheduled runs: no progress spam, no prompts that would
 # block forever with nobody at the keyboard.

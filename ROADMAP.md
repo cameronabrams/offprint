@@ -553,7 +553,7 @@ period where one disk on panacea is the only copy.
 Cameron to the library session, 2026-10-02: *"we are not using Mendeley at all
 now. Zotero is now the remote."*
 
-**So `~/Sync/mendeley` is a frozen snapshot**, as of the last refresh,
+**So the mirror is a frozen snapshot**, as of the last refresh,
 2026-09-30 16:21 UTC. Checked rather than assumed: only `mendeley_mirror.py`
 writes `library.bib`, `index.md`, `folders.json`, `text/` and `annotations/`,
 and nothing else in the repo can un-freeze them.
@@ -1539,6 +1539,38 @@ missing, so it is read from the numbering.
       shipping.
 
 ---
+
+## 17. The library directory, renamed — `~/Sync/mendeley` -> `~/Sync/library`
+
+Cameron, 2026-10-02. The directory had outlived the service it was named after:
+nothing in it is Mendeley's any more.
+
+**Both names resolve, and that is not politeness.** There is one clone on this
+machine and no pull step, so a hard switch would have broken every tool in the
+window between saving `DEFAULT_OUT` and the `mv` — and the two Windows laptops
+share the folder over Syncthing and will be renamed at some other time, or not
+at all. `_default_out()` prefers `library`, accepts `mendeley`, and gives a
+fresh install the new name. Same pattern as `zotero_config_dir()`, and the same
+end: when nothing is left on the old name it becomes a deletion rather than a
+migration.
+
+Changed in sixteen places: `DEFAULT_OUT`, the README and `docs/index.md`
+premise and trees, `docs/operating.md`'s table, two structural rules in
+`CLAUDE.md`, a docstring in `zotero_source.py`, and six live commands in the
+`file-inbox` skill.
+
+**Two things this is NOT.** `~/.config/mendeley-mirror` and
+`~/.cache/mendeley-mirror` keep their names — they are per-machine, invisible,
+and moving credentials is a real cost against no benefit. New credentials
+already go to `~/.config/offprint/`. And the README's claim that renaming the
+directory "would break every machine's sync configuration to fix a word" is
+withdrawn: it was an argument against doing it, Cameron decided otherwise, and
+the tolerant default is what makes the cost smaller than that sentence claimed.
+
+**What the repo cannot reach**, and is Cameron's: the Syncthing folder
+configuration on panacea and both laptops, and the library session's working
+directory — which under the 2026-09-18 split *is its identity*, so it is told
+rather than left to discover it.
 
 ## Renamed, and what still carries the old name
 
