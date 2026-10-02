@@ -37,7 +37,7 @@ Usage:
 
 from __future__ import annotations
 
-__version__ = "0.15.0"
+__version__ = "0.16.0"
 """The tool's version, and the only place it is written down.
 
 It exists so a mirror can say what produced it. Extraction behaviour has changed
@@ -668,7 +668,16 @@ def format_authors(people: list) -> str:
         elif last or first:
             parts.append(tex_escape(last or first))
         elif p.get("name"):
-            parts.append("{" + tex_escape(p["name"]) + "}")
+            name = p["name"].strip()
+            if name.lower() == "others":
+                # `and others` IS BibTeX's et-al. marker. Brace-wrapping it
+                # makes it a literal author surnamed "others", which is how
+                # Saibil1993Atp, Demeyts1973Insulin and Ullrich1985Human
+                # acquired one. The braces are right for a corporate name and
+                # wrong for this one word.
+                parts.append("others")
+            else:
+                parts.append("{" + tex_escape(name) + "}")
     return " and ".join(parts)
 
 

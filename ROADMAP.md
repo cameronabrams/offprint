@@ -734,10 +734,46 @@ The other differences, with the library session's reading of them:
   can drop every field the new type does not define, which is why
   `zotero_edit.py` refuses `itemType` and should keep refusing it.
 - **201 isbn, 25 url, 13 number, 12 volume** — unexamined.
-- **86 authors differ; 55 are the library session's own edits and 31 are
-  neither of ours**, including both year-less patents and `Alberti1998Definition`,
-  the corporate-author `WHO` record. Some of those are likely the single-token
-  author class rather than translation defects.
+- **86 authors differ; 55 are the library session's edits and 31 were neither
+  of ours. All 31 are now accounted for**, in three groups, and the biggest
+  group was noise hiding the only real loss.
+
+  **17 are Unicode normalisation and are not differences at all.** The frozen
+  bib is decomposed, Zotero is precomposed: `Mullerplathe1998Microscopic` has a
+  combining diaeresis on one side and a precomposed `ü` on the other. All 17 are
+  equal under NFC. `--compare` now normalises both sides, because **a diff that
+  reports a difference nobody can act on trains its reader to skim it** — and
+  the library session nearly skipped past the patents for exactly that reason.
+
+  **3 are real data loss: the patents.** `Abrams2016Compositions`,
+  `Antczak2003Methods` and `Brinn1969Purification` are `itemType: patent` with
+  `creatorType: inventor`, 11 inventors between them, and `zotero_source` emitted
+  **no author at all** — Cameron's own patent generating authorless under a
+  citation key that says Abrams. Not `person()`: the filter read only
+  `creatorType == "author"`. Zotero's primary creator type depends on the item
+  type, and these records are correctly typed; it is the reader that was wrong.
+  Fixed, with `inventor`, `programmer`, `presenter` and the rest as primary —
+  and **a creator type in neither set is now treated as an author and named**,
+  because an extra author is visible in the bibliography and a missing one is
+  not. This library has lost authors silently once; the fail-visible direction
+  is the one to default to.
+
+  **11 are brace-wrapped single-token creators, and mostly an improvement.**
+  `{WHO}`, `{US Environmental Protection Agency}` and `{The Mendeley Support
+  Team}` are correct BibTeX for a corporate name. Two shapes are not:
+
+  - **`{others}` is a bug and is fixed.** `and others` *is* BibTeX's et-al.
+    marker; wrapping it produces a literal author surnamed "others", in
+    `Saibil1993Atp`, `Demeyts1973Insulin` and `Ullrich1985Human`.
+  - **`{J. B. Ames}` is a data defect, not a rendering one, and is deliberately
+    not "fixed" in the renderer.** Zotero holding a name in a single field is
+    Zotero asserting that the name is unstructured, and braces are the faithful
+    rendering of that — correct for `{WHO}`, wrong here, and nothing in the
+    bytes distinguishes them. Guessing would be splitting "Research Council of
+    Norway" into an author called Norway. `looks_like_a_person()` names
+    candidates for `zotero_edit.py` and changes nothing. `Jbames1997Molecular`
+    is the record whose citation key is already wrong from this name shape, and
+    the key stays as it is.
 
 - [ ] **Run `--compare`.** That is the library session's, and it is the step
       that decides whether this translation is right. Until it has run, nothing

@@ -2529,6 +2529,47 @@ def main():
     check([a.get("last_name") or a.get("name") for a in doc["authors"]] == ["Shan", "IUPAC"],
           f"authors are authors only ({doc['authors']})")
     check(doc["editors"][0]["last_name"] == "Ed", "and the editor goes to editors")
+
+    # Zotero's PRIMARY creator type depends on the item type. Reading only
+    # "author" dropped every inventor on a patent: 11 across this library's
+    # three, including Cameron's own, which generated with NO author under a
+    # citation key that says Abrams.
+    pat2 = zs.item_to_doc({"key": "P1", "data": {
+        "itemType": "patent", "title": "Compositions",
+        "creators": [{"creatorType": "inventor", "firstName": "C.", "lastName": "Abrams"},
+                     {"creatorType": "attorneyAgent", "lastName": "Lawyer"}]}})
+    check([a["last_name"] for a in pat2["authors"]] == ["Abrams"],
+          f"an inventor is an author ({pat2.get('authors')})")
+    check("editors" not in pat2 and all(a["last_name"] != "Lawyer" for a in pat2["authors"]),
+          "and an attorney is not")
+    check(zs.creator_role({"creatorType": "translator"}) == "secondary"
+          and zs.creator_role({"creatorType": "editor"}) == "editor",
+          "editors and translators keep their own roles")
+
+    # A type in neither set must FAIL VISIBLY. An extra author shows up in the
+    # bibliography; a missing one does not, which is how the inventors vanished.
+    check(zs.creator_role({"creatorType": "sampleTaker"}) == "unknown",
+          "an unrecognised creator type is unknown, not silently secondary")
+    odd_c = zs.item_to_doc({"key": "P2", "data": {
+        "itemType": "document", "title": "T",
+        "creators": [{"creatorType": "sampleTaker", "lastName": "Someone"}]}})
+    check([a["last_name"] for a in odd_c["authors"]] == ["Someone"],
+          "and is carried as an author rather than dropped")
+
+    # `and others` IS BibTeX's et-al marker; brace-wrapping makes it a literal
+    # author surnamed "others". Saibil1993Atp, Demeyts1973Insulin and
+    # Ullrich1985Human all acquired one.
+    check(mm.format_authors([{"last_name": "Shan", "first_name": "J."},
+                             {"name": "others"}]) == "Shan, J. and others",
+          f"'others' is never braced ({mm.format_authors([{'name': 'others'}])})")
+    check(mm.format_authors([{"name": "WHO"}]) == "{WHO}",
+          "while a corporate name still is, which is what the braces are for")
+
+    check(zs.looks_like_a_person("J. B. Ames") and zs.looks_like_a_person("Jorg Limbach"),
+          "a single-field name that reads as a person is flagged")
+    check(not zs.looks_like_a_person("US Environmental Protection Agency")
+          and not zs.looks_like_a_person("WHO"),
+          "and an organisation is not -- this reports candidates, it changes nothing")
     check(doc["authors"][1] == {"name": "IUPAC"},
           "a corporate author stays one field -- splitting it is how a "
           "bibliography acquires an author called Norway")

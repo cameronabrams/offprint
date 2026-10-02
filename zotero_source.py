@@ -36,6 +36,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import unicodedata
 import sys
 from pathlib import Path
 
@@ -85,6 +86,51 @@ PMID_RE = re.compile(r"\bPMID:\s*(\d+)", re.I)
 EXTRA_VENUE_RE = re.compile(r"^[ \t]*Publication Title[ \t]*:[ \t]*(.+)$", re.M | re.I)
 
 
+# Zotero's PRIMARY creator type depends on the item type, and reading only
+# "author" dropped every inventor on a patent -- 11 of them across this
+# library's three, including Cameron's own, which generated with no author at
+# all under a citation key that says Abrams. A creator type in neither set is
+# treated as an author and NAMED: an extra author is visible in the
+# bibliography, a missing one is not, so the fail-visible direction is the one
+# to default to.
+PRIMARY_CREATORS = {"author", "inventor", "programmer", "presenter", "director",
+                    "podcaster", "interviewee", "artist", "cartographer",
+                    "performer", "sponsor"}
+SECONDARY_CREATORS = {"editor", "seriesEditor", "translator", "contributor",
+                      "bookAuthor", "reviewedAuthor", "commenter", "wordsBy",
+                      "scriptwriter", "producer", "guest", "counsel",
+                      "attorneyAgent", "recipient", "castMember"}
+
+
+def creator_role(c: dict) -> str:
+    """`primary`, `editor`, `secondary`, or `unknown` -- never silently dropped."""
+    t = c.get("creatorType") or "author"
+    if t in PRIMARY_CREATORS:
+        return "primary"
+    if t == "editor":
+        return "editor"
+    if t in SECONDARY_CREATORS:
+        return "secondary"
+    return "unknown"
+
+
+def looks_like_a_person(name: str) -> str:
+    """Why a single-field creator looks like a person rather than an organisation.
+
+    Reporting only. Zotero storing a name in one field is Zotero asserting the
+    name is unstructured, and `{Braces}` are the faithful rendering of that --
+    which is correct for `{WHO}` and wrong for `{J. B. Ames}`, where BibTeX then
+    reads the whole string as a surname. Telling the two apart is a judgement
+    about someone's library, so this names candidates and changes nothing.
+    """
+    n = (name or "").strip()
+    if re.match(r"^(?:[A-Z]\.\s*)+[A-Z][a-z]", n):
+        return "initials then a capitalised word"
+    if n.count(" ") in (1, 2) and n.replace(" ", "").isalpha() and n.istitle():
+        return "two or three capitalised words, no organisation marker"
+    return ""
+
+
 def person(c: dict) -> dict:
     """One Zotero creator as the generators expect a person.
 
@@ -127,8 +173,9 @@ def item_to_doc(item: dict) -> dict:
     """
     data = item.get("data") or item
     creators = data.get("creators") or []
-    authors = [person(c) for c in creators if (c.get("creatorType") or "author") == "author"]
-    editors = [person(c) for c in creators if c.get("creatorType") == "editor"]
+    authors = [person(c) for c in creators
+               if creator_role(c) in ("primary", "unknown")]
+    editors = [person(c) for c in creators if creator_role(c) == "editor"]
 
     venue = ""
     for field in VENUE_FIELDS:
@@ -357,10 +404,18 @@ def compare(out: Path) -> int:
         # of the accumulated list. A record is same or differs; nothing about
         # that is a search problem, and making it one is how a count starts
         # reporting something adjacent to what its label says.
+        # NFC BOTH sides first. The frozen bib is decomposed and Zotero is
+        # precomposed, so 17 of 31 author differences were one combining
+        # diaeresis against one precomposed u-umlaut -- noise that hid the
+        # three patents with no authors at all, which is the one real loss in
+        # the set. A diff that reports a difference nobody can act on trains a
+        # reader to skim it.
+        def nfc(v):
+            return unicodedata.normalize("NFC", v) if isinstance(v, str) else v
         mine = [f"{citekey}  {field}\n    frozen {old[citekey].get(field)!r}"
                 f"\n    zotero {fresh.get(field)!r}"
                 for field in sorted(set(old[citekey]) | set(fresh))
-                if old[citekey].get(field) != fresh.get(field)]
+                if nfc(old[citekey].get(field)) != nfc(fresh.get(field))]
         diffs.extend(mine)
         differs += bool(mine)
         same += not mine
