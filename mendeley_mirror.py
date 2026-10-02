@@ -37,7 +37,7 @@ Usage:
 
 from __future__ import annotations
 
-__version__ = "0.17.0"
+__version__ = "0.17.1"
 """The tool's version, and the only place it is written down.
 
 It exists so a mirror can say what produced it. Extraction behaviour has changed
@@ -1571,6 +1571,17 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                         time.sleep(0.2)
                 except Exception as exc:  # one bad file shouldn't stop the run
                     failed += 1
+                    # SAY WHY. This handler discarded `exc` until 2026-10-02,
+                    # and when a missing dependency made every extraction raise,
+                    # the run reported "2734 failed" with no reason for any of
+                    # them. A swallowed exception turns a one-line diagnosis
+                    # into an investigation, and the first few are enough to
+                    # recognise a systematic cause.
+                    if failed <= 5:
+                        note(f"  ! {stem}: {type(exc).__name__}: {exc}")
+                    elif failed == 6:
+                        note("  ! further failures not individually logged; "
+                             "the first five above are the pattern")
                     known[qual(f["id"])] = {"filehash": f.get("filehash"), "status": "failed",
                                       "detail": str(exc)[:200]}
                     report.append({"key": stem, "status": "failed",

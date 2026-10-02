@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["requests>=2.31"]
+# dependencies = ["pymupdf>=1.24", "requests>=2.31"]
 # ///
 """Read a Zotero library in the shape the mirror's generators already consume.
 
@@ -617,6 +617,18 @@ def refresh(out: Path, ocr: bool = False, dry_run: bool = False) -> int:
     marker says the mirror is frozen *as a Mendeley mirror*, and a Zotero
     refresh is precisely the thing that stops being true.
     """
+    # Checked here, once, because the alternative is what happened on
+    # 2026-10-02: extract_pdf_text imports pymupdf lazily, this script's header
+    # did not declare it, and the ModuleNotFoundError was caught by the
+    # per-attachment `except Exception` and counted as a failure. 2,734 times,
+    # with the reason discarded each time. A missing dependency is a property of
+    # the run, not of an attachment, and it should be said once and stop.
+    try:
+        import pymupdf  # noqa: F401
+    except ImportError:
+        sys.exit("This needs pymupdf and it is not installed. Run it through "
+                 "uv, which reads the header: uv run --script zotero_source.py")
+
     api_key, user_id = load_zotero_credentials()
     z = Zotero(api_key, user_id)
     src = ZoteroSource(z)
@@ -660,14 +672,30 @@ def refresh(out: Path, ocr: bool = False, dry_run: bool = False) -> int:
     write_index(docs, keymap, files, {}, out, backend=BACKEND)
     print(f"  text: {fetched} extracted, {skipped} unchanged, {failed} failed")
 
+    # `write_status(out, True, ...)` was hardcoded here until 2026-10-02, so a
+    # run in which all 2,734 extractions failed wrote **ok** and "Everything in
+    # this folder is current". That is the defect this repo has recorded four
+    # times and I built a fresh one in the newest code. The status reflects the
+    # run.
+    ok = failed == 0
     retired = mirror / "retired.json"
-    if retired.exists():
+    if ok and retired.exists():
         retired.unlink()
         print("  cleared .mirror/retired.json -- this mirror is live again, "
               "backed by Zotero")
-    write_status(out, True, started)
+    elif retired.exists():
+        print("  .mirror/retired.json LEFT IN PLACE: a run that failed does not "
+              "get to declare the mirror live again")
+    if ok:
+        write_status(out, True, started)
+    else:
+        write_status(out, False, started,
+                     f"{failed} of {fetched + failed} attachments failed to "
+                     f"extract; see extraction-report.md and the log above",
+                     "unknown")
+        print(f"\n! {failed} attachments FAILED. mirror-status.md says so.")
     print(f"\nDone. {len(docs)} references in {out / 'library.bib'}")
-    return 0
+    return 0 if ok else 1
 
 
 def compare(out: Path) -> int:

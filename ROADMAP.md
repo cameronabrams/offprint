@@ -985,6 +985,45 @@ The other differences, with the library session's reading of them:
       record removed from Zotero leaves `text/` and `pdf/` orphans that
       `get_pdf.py --attachments` finds.
 
+### The first real run failed 2,734 of 2,734 and said **ok** — `0.17.1`
+
+Three defects, and the middle one is mine in brand-new code.
+
+**The cause: a lazy import nobody declared.** `extract_pdf_text` imports
+`pymupdf` lazily, `zotero_source.py`'s PEP 723 header declared only `requests`,
+and `uv` therefore installed only `requests`. Every attachment raised
+`ModuleNotFoundError` inside the per-attachment `except Exception`, was counted
+as a failure, and the reason was thrown away. 2,734 times. The PDFs were read
+off disk perfectly — `re-used 2729 PDFs already on disk` — so the failure was
+entirely downstream of everything that had been tested.
+
+**The dependency test passed, and its rule was the problem.** It judged
+`pymupdf` by a direct `import pymupdf` alone, on the stated grounds that
+mendeley_mirror imports it lazily "so it is NOT transitive". That was true while
+only scripts importing it directly reached the PDF stack, and it became false
+the moment `zotero_source.py` called `harvest_attachments`. **A lazy import is
+still a dependency of whoever reaches it.** The rule now counts a reference to
+`harvest_attachments`, `extract_pdf_text` or `ocr_pdf_text` as requiring it.
+
+**`write_status(out, True, started)` was hardcoded**, so a run that failed
+everything wrote `**ok**` and "Everything in this folder is current as of the
+run above". That is the fifth instance of this family in this repo and **the
+first I introduced in new code, in the same session as documenting the other
+four.** Knowing a failure mode by name does not stop you writing it. The status
+reflects the run now, a failed run exits non-zero, and a failed run does **not**
+clear `retired.json` — it has not earned the right to declare the mirror live
+again.
+
+**And the handler discarded `exc`.** "2734 failed" with no reason for any of
+them turns a one-line diagnosis into an investigation. The first five failures
+are logged individually now and the sixth says that further ones are not,
+because five is enough to recognise a systematic cause and 2,734 lines is not a
+log.
+
+Nothing was destroyed: `library.bib` and `index.md` were correct throughout, the
+archive was untouched, and the 2,734 `failed` state entries mean a re-run
+retries all of them.
+
 - [ ] **Annotations and folders from Zotero**, which is what remains before
       `--refresh` is a complete replacement rather than a replacement for the
       parts that matter.

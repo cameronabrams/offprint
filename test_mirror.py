@@ -2872,6 +2872,43 @@ def main():
     check(not (rout / "annotations").exists(),
           "annotations are not sourced from Zotero yet and none is invented")
 
+    # A run in which every extraction fails must NOT report ok. write_status was
+    # called with a hardcoded True until 2026-10-02, so the first real Zotero
+    # refresh failed 2,734 of 2,734 and wrote "Everything in this folder is
+    # current as of the run above". The fifth instance of this family in this
+    # repo, and the first I introduced in brand-new code while documenting the
+    # other four.
+    fout = tmp / "zfail"
+    fstate = mm.mirror_state_dir(fout)
+    mm.save_json(fstate / "citekeys.json", {"zotero:ZK1": "Shan2001Influence"})
+    mm.save_json(fstate / "retired.json", {"retired_at": "2026-10-02T00:00:00+00:00",
+                                           "reason": "Mendeley retired"})
+    (fout / "pdf").mkdir(parents=True, exist_ok=True)
+    (fout / "pdf" / "Shan2001Influence.pdf").write_bytes(pdf_bytes)
+
+    def boom(_data):
+        raise ModuleNotFoundError("No module named 'pymupdf'")
+
+    _Z, _cred, _extract = zs.Zotero, zs.load_zotero_credentials, mm.extract_pdf_text
+    zs.Zotero = StubZ
+    zs.load_zotero_credentials = lambda: ("key", "1")
+    mm.extract_pdf_text = boom
+    try:
+        rc_fail = zs.refresh(fout)
+    finally:
+        zs.Zotero, zs.load_zotero_credentials = _Z, _cred
+        mm.extract_pdf_text = _extract
+
+    check(rc_fail == 1, f"a refresh whose extractions all fail exits non-zero ({rc_fail})")
+    fstatus = (fout / "mirror-status.md").read_text(encoding="utf-8")
+    check("FAILED" in fstatus and "**ok**" not in fstatus,
+          f"and mirror-status.md says FAILED, not ok\n{fstatus[:100]}")
+    check("current as of the run above" not in fstatus,
+          "and does not tell the reader the folder is current")
+    check((fstate / "retired.json").exists(),
+          "and a failed run does NOT get to clear the frozen marker and declare "
+          "the mirror live again")
+
     print("\ndoixref: three-way, because the citation key is frozen")
     import doixref as dx
 
@@ -2939,12 +2976,23 @@ def main():
         declared = set(re.findall(r'"([^"]+)"', dep.group(1) if dep else ""))
 
         # What it actually needs: a direct import, or mendeley_mirror's own
-        # requests (pymupdf is imported lazily there, so it is NOT transitive).
+        # requests.
+        #
+        # pymupdf used to be judged by a direct import alone, on the grounds
+        # that mendeley_mirror imports it lazily so it is not transitive. That
+        # was true while only scripts importing it directly ever reached the
+        # PDF stack, and it became FALSE the moment zotero_source.py called
+        # harvest_attachments. The header passed this check, uv installed only
+        # requests, and the lazy import raised ModuleNotFoundError inside a
+        # per-attachment `except Exception` -- 2,734 silent failures reported as
+        # a successful run. A lazy import is still a dependency of whoever
+        # reaches it.
         body = src[head.end():]
         wants = set()
         if re.search(r"^\s*import requests", body, re.M) or "from mendeley_mirror import" in body:
             wants.add(PINS["requests"])
-        if re.search(r"^\s*import pymupdf", body, re.M):
+        if re.search(r"^\s*import pymupdf", body, re.M) or re.search(
+                r"\b(harvest_attachments|extract_pdf_text|ocr_pdf_text)\b", body):
             wants.add(PINS["pymupdf"])
 
         check(declared == wants,
