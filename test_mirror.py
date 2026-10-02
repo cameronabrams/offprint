@@ -2806,6 +2806,52 @@ def main():
           "and a DIFFERENT id is not -- the old test said 'arXiv' appears, "
           "which was true and irrelevant")
 
+    print("\na failed extraction is unfinished work, not a result")
+
+    # 2026-10-02, the real one: 2,732 attachments were recorded `failed` because
+    # pymupdf was missing. text/<key>.md still existed from the Mendeley era and
+    # the filehash matched, so the next run read every one as "unchanged" and
+    # skipped it. The re-extraction silently did nothing, and it surfaced only
+    # because two OTHER attachments failed outright and tripped the status.
+    fdir = tmp / "failed-retry"
+    (fdir / "text").mkdir(parents=True)
+    (fdir / "pdf").mkdir(parents=True)
+    (fdir / "pdf" / "Muller2020Yield.pdf").write_bytes(pdf_bytes)
+    # The stale extract from a previous backend's run: present, and not evidence.
+    (fdir / "text" / "Muller2020Yield.md").write_text("old extract\n", encoding="utf-8")
+    one_file = {"d1": [{"id": "x1", "mime_type": "application/pdf", "filehash": "h1"}]}
+    fst = {"files": {mm.qualify("x1"): {"filehash": "h1", "status": "failed",
+                                        "detail": "No module named 'pymupdf'"}}}
+    got_f, got_s, _gx, _gr = mm.harvest_attachments(
+        NoNetwork(), one_file, {mm.qualify("d1"): "Muller2020Yield"},
+        {"d1": DOCS[0]}, fdir, fst, "text")
+    check(got_f == 1 and got_s == 0,
+          f"a `failed` entry is RE-EXTRACTED, not counted unchanged "
+          f"({got_f} extracted, {got_s} skipped)")
+    check("old extract" not in (fdir / "text" / "Muller2020Yield.md").read_text(encoding="utf-8"),
+          "and the stale extract is replaced rather than taken as proof of work")
+    check(fst["files"][mm.qualify("x1")]["status"] == "ok",
+          "with the state corrected, so the next run can skip it honestly")
+
+    # An unrecognised status is not a result either. A failure status added
+    # later must default to being retried, not to being skipped.
+    ust = {"files": {mm.qualify("x1"): {"filehash": "h1", "status": "quarantined"}}}
+    (fdir / "text" / "Muller2020Yield.md").write_text("old\n", encoding="utf-8")
+    got_u, got_us, _ux, _ur = mm.harvest_attachments(
+        NoNetwork(), one_file, {mm.qualify("d1"): "Muller2020Yield"},
+        {"d1": DOCS[0]}, fdir, ust, "text")
+    check(got_u == 1 and got_us == 0,
+          f"an unknown status is re-examined, because DONE_STATUSES lists what "
+          f"IS done rather than what is not ({got_u}, {got_us})")
+
+    # And the ordinary case still skips, or every refresh would re-extract 2,700
+    # papers for nothing.
+    okst = {"files": {mm.qualify("x1"): {"filehash": "h1", "status": "ok"}}}
+    _ok_f, ok_s, _ox, _or_ = mm.harvest_attachments(
+        NoNetwork(), one_file, {mm.qualify("d1"): "Muller2020Yield"},
+        {"d1": DOCS[0]}, fdir, okst, "text")
+    check(ok_s == 1, f"an `ok` entry with its extract present still skips ({ok_s})")
+
     print("\nZotero annotations hang off the attachment, not the record")
 
     a_hl = zs.annotation_to_mendeley({"data": {

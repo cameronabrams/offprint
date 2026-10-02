@@ -985,6 +985,35 @@ The other differences, with the library session's reading of them:
       record removed from Zotero leaves `text/` and `pdf/` orphans that
       `get_pdf.py --attachments` finds.
 
+### And the fix for that one was masked by the skip — `0.18.1`
+
+The re-run on `0.17.1` extracted nothing. The 2,732 `failed` entries the broken
+run had written carried the right filehash, and `text/<key>.md` still existed
+from the Mendeley era — so the skip condition matched on both and counted every
+one as *unchanged*. **A failed extraction had become indistinguishable from a
+finished one**, and the re-extraction silently did nothing.
+
+It surfaced only because two other attachments failed outright and tripped the
+status that `0.17.1` had just made honest. Had those two succeeded, the run
+would have reported **ok**, `2732 unchanged`, with 2,732 papers never extracted
+and a mirror that looked complete.
+
+**The cause is what the skip treated as evidence.** It asked "is there a text
+file?" — and a text file written by an earlier run, under a different backend,
+is not evidence that *this* attachment was extracted. The stored status is the
+authoritative record and the file is only a guard against a status claiming `ok`
+with nothing on disk.
+
+`DONE_STATUSES` is now an explicit list of what counts as examined — `ok`,
+`ocr`, `garbled`, `no-text`, `not-pdf` — and anything else, including `failed`,
+an unrecognised value, or nothing at all, is unfinished work and gets
+re-examined. **Deliberately a list of what IS done rather than of what is not:**
+a failure status added later should default to being retried, not to being
+skipped, and that default is the whole difference between this bug and no bug.
+
+No state editing is needed to recover: the 2,732 `failed` entries now fall
+through on their own.
+
 ### The first real run failed 2,734 of 2,734 and said **ok** — `0.17.1`
 
 Three defects, and the middle one is mine in brand-new code.

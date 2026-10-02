@@ -37,7 +37,7 @@ Usage:
 
 from __future__ import annotations
 
-__version__ = "0.18.0"
+__version__ = "0.18.1"
 """The tool's version, and the only place it is written down.
 
 It exists so a mirror can say what produced it. Extraction behaviour has changed
@@ -950,6 +950,13 @@ def load_removed(out: Path) -> dict:
     return out_map
 
 
+# The statuses that mean an attachment was examined and a verdict reached.
+# Anything else -- `failed`, an unrecognised value, or nothing at all -- is
+# unfinished work and gets re-examined. Deliberately a list of what IS done
+# rather than of what is not: a new failure status added later should default to
+# being retried, not to being skipped.
+DONE_STATUSES = ("ok", "ocr", "garbled", "no-text", "not-pdf")
+
 PDF_MAGIC = b"%PDF-"
 
 
@@ -1419,8 +1426,26 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                 is_pdf = "pdf" in (f.get("mime_type") or "").lower()
                 text_target = text_dir / f"{stem}.md"
                 prior = known.get(qual(f["id"]), {})
-                if prior.get("filehash") == f.get("filehash") and (
-                        text_target.exists() or prior.get("status") in ("no-text", "not-pdf")):
+                # What counts as DONE is the stored status, not the presence of
+                # a text file. Those came apart on 2026-10-02: 2,732 attachments
+                # were recorded `failed` (pymupdf missing), and because
+                # `text/<key>.md` still existed from the Mendeley era and the
+                # filehash matched, the next run read every one as "unchanged"
+                # and skipped it. A failed extraction became indistinguishable
+                # from a finished one, and the re-extraction silently did
+                # nothing -- reported, by luck, only because two other
+                # attachments failed outright and tripped the status.
+                #
+                # A `failed` entry is unfinished work, not a result. An unknown
+                # or missing status is not a result either, so both fall through
+                # and are re-examined; the cost of re-extracting is one local
+                # file read, and the cost of skipping wrongly is a paper with no
+                # extract that nothing will ever look at again.
+                prior_status = prior.get("status")
+                done_before = prior_status in DONE_STATUSES
+                has_artifact = text_target.exists() or prior_status in ("no-text", "not-pdf")
+                if (done_before and has_artifact
+                        and prior.get("filehash") == f.get("filehash")):
                     skipped += 1
                     if prior.get("status") in ("no-text", "failed", "garbled",
                                                 "not-pdf"):
