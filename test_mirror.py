@@ -1277,19 +1277,20 @@ def main():
           != getpdf.extract_body(inv / "text" / "Real2020Paper.md"),
           "while a genuine second document differs")
 
-    class FilesStub:
-        """Mendeley reports two attachments for d1 and only one for d2."""
-        def paged(self, path, kind, **kw):
-            return [{"document_id": "d1", "mime_type": "application/pdf"},
-                    {"document_id": "d1", "mime_type": "application/pdf"},
-                    {"document_id": "d2", "mime_type": "application/pdf"},
-                    {"document_id": "d2", "mime_type": "text/plain"},
-                    {"document_id": "d3", "mime_type": "application/pdf"}]
+    # The library reports two attachments for d1 and only one for d2. Rows now,
+    # not a client: the inventory was built around ONE bulk call, and what it
+    # actually needs is the rows that call returns -- which both backends can
+    # produce. Decoupling it from the client is what let the Mendeley code go.
+    FILE_ROWS = [{"document_id": "d1", "mime_type": "application/pdf"},
+                 {"document_id": "d1", "mime_type": "application/pdf"},
+                 {"document_id": "d2", "mime_type": "application/pdf"},
+                 {"document_id": "d2", "mime_type": "text/plain"},
+                 {"document_id": "d3", "mime_type": "application/pdf"}]
 
     import io, contextlib
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
-        rc = getpdf.attachment_inventory(FilesStub(), inv, bk, [])
+        rc = getpdf.attachment_inventory(FILE_ROWS, inv, bk, [])
     report = buf.getvalue()
     check(rc == 1, "an orphan makes the sweep exit non-zero")
     check("Orphan2009Methods" in report and "ORPHAN" in report,
@@ -1315,13 +1316,11 @@ def main():
     check(getpdf.local_extracts(nb, bk2)["NoBase2011How"] == [2, 3],
           "a record with no base extract is still seen, as -2 and -3")
 
-    class OneEach:
-        def paged(self, path, kind, **kw):
-            return [{"document_id": "d9", "mime_type": "application/pdf"}] * 3
+    ONE_EACH = [{"document_id": "d9", "mime_type": "application/pdf"}] * 3
 
     buf2 = io.StringIO()
     with contextlib.redirect_stdout(buf2):
-        getpdf.attachment_inventory(OneEach(), nb, bk2, [])
+        getpdf.attachment_inventory(ONE_EACH, nb, bk2, [])
     r2 = buf2.getvalue()
     check("NO BASE" in r2, "and is reported as having produced no first extract")
     check("NEAR-DUPLICATE" in r2 and "-3 is" in r2,
@@ -1348,13 +1347,11 @@ def main():
         common + "Chem. Phys. Lett. 547, 114\u2013119\n", encoding="utf-8")
     bk3 = {"Prf2012Paper": "d7"}
 
-    class TwoEach:
-        def paged(self, path, kind, **kw):
-            return [{"document_id": "d7", "mime_type": "application/pdf"}] * 2
+    TWO_EACH = [{"document_id": "d7", "mime_type": "application/pdf"}] * 2
 
     buf3 = io.StringIO()
     with contextlib.redirect_stdout(buf3):
-        getpdf.attachment_inventory(TwoEach(), pf, bk3, [])
+        getpdf.attachment_inventory(TWO_EACH, pf, bk3, [])
     r3 = buf3.getvalue()
     check("PAGINATION" in r3, "a proof/published pair is called out as such")
     check("cite -2" in r3, "and the reader is told WHICH one to cite")
@@ -1381,9 +1378,8 @@ def main():
           f"the pair is nowhere near duplicate ({ratio:.2f}), as the real one is not")
     buf4 = io.StringIO()
     with contextlib.redirect_stdout(buf4):
-        getpdf.attachment_inventory(TwoEach.__class__("S", (), {
-            "paged": lambda self, path, kind, **kw:
-                [{"document_id": "d8", "mime_type": "application/pdf"}] * 2})(),
+        getpdf.attachment_inventory(
+            [{"document_id": "d8", "mime_type": "application/pdf"}] * 2,
             far, {"Far2018Effect": "d8"}, [])
     r4 = buf4.getvalue()
     check("PAGINATION" in r4 and "cite -2" in r4,
@@ -1403,15 +1399,11 @@ def main():
     (irr / "text" / "Irr2011How-3.md").write_text(
         shared + "J. Am. Chem. Soc. 2011, 133, 9181\u20139183\n", encoding="utf-8")
 
-    class OnlyTwo:
-        """Mendeley holds two attachments; the mirror has extracts -2 and -3, so
-        -3 is the orphan -- and -3 is the one with real pages."""
-        def paged(self, path, kind, **kw):
-            return [{"document_id": "dz", "mime_type": "application/pdf"}] * 2
+    ONLY_TWO = [{"document_id": "dz", "mime_type": "application/pdf"}] * 2
 
     buf5 = io.StringIO()
     with contextlib.redirect_stdout(buf5):
-        rc5 = getpdf.attachment_inventory(OnlyTwo(), irr, {"Irr2011How": "dz"}, [])
+        rc5 = getpdf.attachment_inventory(ONLY_TWO, irr, {"Irr2011How": "dz"}, [])
     r5 = buf5.getvalue()
     check("ORPHAN" in r5, "the orphan is still reported")
     check("IRREPLACEABLE" in r5, "and the worse case is called out separately")
@@ -1426,13 +1418,11 @@ def main():
     (ord_ / "text" / "Ord2009Methods.md").write_text(shared, encoding="utf-8")
     (ord_ / "text" / "Ord2009Methods-2.md").write_text(shared, encoding="utf-8")
 
-    class JustOne:
-        def paged(self, path, kind, **kw):
-            return [{"document_id": "dy", "mime_type": "application/pdf"}]
+    JUST_ONE = [{"document_id": "dy", "mime_type": "application/pdf"}]
 
     buf6 = io.StringIO()
     with contextlib.redirect_stdout(buf6):
-        getpdf.attachment_inventory(JustOne(), ord_, {"Ord2009Methods": "dy"}, [])
+        getpdf.attachment_inventory(JUST_ONE, ord_, {"Ord2009Methods": "dy"}, [])
     r6 = buf6.getvalue()
     check("ORPHAN" in r6 and "IRREPLACEABLE" not in r6,
           "an orphan whose loss is only a duplicate is not escalated")
@@ -1444,7 +1434,14 @@ def main():
 
     print("\non-demand PDF fetch (get_pdf.py)")
     (out / ".mirror").mkdir(exist_ok=True)
-    (out / ".mirror" / "citekeys.json").write_text(json.dumps(keymap), encoding="utf-8")
+    # Both halves, which is the real shape of the file: 2,739 mendeley: and
+    # 2,739 zotero: entries pointing at the same keys. get_pdf resolves through
+    # the zotero: half now, because that is the live backend.
+    both_halves = dict(keymap)
+    for ident, ckey in list(keymap.items()):
+        both_halves[f"zotero:Z{ident.split(':')[-1]}"] = ckey
+    (out / ".mirror" / "citekeys.json").write_text(json.dumps(both_halves),
+                                                   encoding="utf-8")
     gp = str(Path(__file__).parent / "get_pdf.py")
 
     def run_gp(*a):
@@ -1464,6 +1461,34 @@ def main():
     r = run_gp("--dest", str(dest), "Nguyen2019Study")
     check(r.stdout.strip().endswith("Nguyen2019Study.pdf") and r.returncode == 0,
           "a cached PDF is returned without authenticating")
+
+    # The archive, which since the evacuation holds every attachment. It is
+    # tried BEFORE the network and needs no account at all -- which is the whole
+    # point, because the Mendeley path that used to answer here is gone.
+    (out / "pdf").mkdir(exist_ok=True)
+    (out / "pdf" / "Nguyen2019Study.pdf").write_bytes(b"%PDF-1.4 archived")
+    empty_dest = tmp / "dest-empty"
+    empty_dest.mkdir()
+    r = run_gp("--dest", str(empty_dest), "Nguyen2019Study")
+    served = r.stdout.strip()
+    check(r.returncode == 0 and served.endswith("pdf/Nguyen2019Study.pdf"),
+          f"an archived PDF is served from <out>/pdf/ ({served[-40:]})")
+    check(not (empty_dest / "Nguyen2019Study.pdf").exists(),
+          "IN PLACE: it belongs to the mirror, so it is not copied into the cache")
+    check("credential" not in r.stderr.lower() and "zotero" not in r.stderr.lower(),
+          f"and no account is needed to reach it ({r.stderr.strip()[:60]})")
+
+    # A key that is in neither cache nor archive must say so without a traceback
+    # when there are no credentials at all -- the common case for a typo.
+    import re as _re
+    idx = getpdf.archive_index(out / "pdf")
+    check(idx.get("Nguyen2019Study") == out / "pdf" / "Nguyen2019Study.pdf",
+          "the archive index maps a stem to its file")
+    (out / "pdf" / "Weird2001Key.-_charmm_g").write_bytes(b"%PDF-1.4 odd")
+    idx2 = getpdf.archive_index(out / "pdf")
+    check(idx2.get("Weird2001Key") is not None,
+          "whatever suffix it was archived under, which is why this lists "
+          "rather than probing candidate names")
 
     print("\ninbox closing report")
     import inbox

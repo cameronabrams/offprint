@@ -1230,6 +1230,45 @@ reason it exists.
       copy — which would also close the lag above. It is a behaviour change to
       what a refresh writes, so it is a decision rather than a tidy-up.
 
+## 18. `get_pdf.py` on Zotero — and the archive answers almost every call
+
+Asked for by Cameron 2026-10-02. The script fetched from Mendeley, which is
+retired, so the only thing still working was a cache hit.
+
+**Three sources now, and the first needs nothing.** The cache; then
+`<out>/pdf/`, which since the evacuation holds every attachment in the library;
+then Zotero. The archive is the interesting one: 2,740 files, no network, no
+credentials, no account — so almost every call is now answered without leaving
+the machine, which is a better outcome than porting the Mendeley path would have
+been.
+
+**The archived file is served in place.** It belongs to the mirror, so this
+never copies, renames or quarantines it — the cache-hygiene branch that moves a
+wrong-page-count file aside is about files this script put there, and applying
+it to the archive would have made a reader's tool a writer of someone else's
+directory.
+
+The archive index is built by **listing** `pdf/` once rather than probing
+candidate names, because here the question is "what is there" and one pass
+answers it for every key — including whatever suffix each was archived under,
+`.cif`, `.pdb` and one mangled `.-_charmm_g` among the `.pdf`.
+
+**The Mendeley path is deleted rather than kept as a fallback.** A fallback that
+always fails is worse than none: it turns "this paper is not in the archive"
+into an authentication error, which is a different problem with a different
+remedy.
+
+`--attachments` took a client and now takes **rows**. It was always built around
+one bulk `/files` call — asking per document is the difference between a sweep
+somebody repeats and a sweep nobody runs twice — and what it actually needs is
+the rows that call returns. Zotero's `itemType=attachment` is the direct
+analogue, with `parentItem` for `document_id`. Decoupling it is what let the
+Mendeley code go, and it simplified four test stubs into four lists.
+
+Verified against the live library rather than the suite alone: a cached paper,
+an archived one served from `pdf/`, and an unknown key reported without a
+credential prompt.
+
 ## 15. `zotero_push.py` — adding a reference by DOI or arXiv id, built 2026-10-02
 
 The last of the four gaps. `from_doi` and `from_arxiv` are reused from

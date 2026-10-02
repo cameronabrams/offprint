@@ -4,13 +4,28 @@
 # dependencies = ["requests>=2.31", "pymupdf>=1.24"]   # pymupdf only to page-count a cached PDF
 # ///
 """
-get_pdf.py -- pull one paper's actual PDF out of Mendeley, on demand.
+get_pdf.py -- get one paper's actual PDF, on demand.
 
 The mirror keeps extracted text, not PDFs. That is the right default: text is
-searchable and quotable, and the PDFs are two clicks away in Mendeley. But text
-extraction drops figures, structures, and table layout, so sometimes the real
-document is the thing you need -- to look at a deposited structure, read a
-figure, or check a table.
+searchable and quotable. But extraction drops figures, structures and table
+layout, so sometimes the real document is the thing you need -- to look at a
+deposited structure, read a figure, or check a table.
+
+**Three sources, in this order, and the first needs nothing.**
+
+1. The local cache, from an earlier fetch.
+2. **`<out>/pdf/`, the archive**, which since the evacuation holds every
+   attachment in the library. No network, no credentials, no account. This is
+   where almost every answer now comes from, and the file is served **in place**
+   -- it belongs to the mirror and this script does not copy, move or quarantine
+   it.
+3. Zotero, for anything the archive does not have yet. A paper filed today is
+   the case: `zotero_inbox.py` uploads to Zotero and the archive catches up on
+   the next refresh, so between the two it exists only in Zotero.
+
+The Mendeley path is gone. It was retired with the account on 2026-10-02, and a
+fallback that always fails is worse than none -- it turns "this paper is not in
+the archive" into an authentication error.
 
     uv run --script get_pdf.py Muller2020Yield
     uv run --script get_pdf.py --search "packed bed"      # find the key first
@@ -34,9 +49,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
-    from mendeley_mirror import (API, DEFAULT_OUT, Mendeley, config_dir,
-                                 get_app_config, interactive_authorize, load_json,
-                                 local_id, mirror_state_dir)
+    from mendeley_mirror import DEFAULT_OUT, load_json, mirror_state_dir
+    from zotero_migrate import Zotero, load_zotero_credentials
 except ImportError:
     sys.exit("get_pdf.py must sit in the same folder as mendeley_mirror.py")
 
@@ -51,6 +65,56 @@ def cache_dir() -> Path:
     d = base / "mendeley-mirror" / "pdf"
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def archive_index(pdf_dir: Path) -> dict:
+    """`stem -> path` from ONE listing of `<out>/pdf/`.
+
+    A stem is `<citekey>` or `<citekey>-N`, and whatever suffix the attachment
+    was archived under -- `.pdf` for 2,739 of them and `.cif`, `.pdb`, `.avi`
+    or one mangled `.-_charmm_g` for the rest. Built by listing rather than by
+    probing candidate names, because here the question is "what is there", and a
+    single pass answers it for every key at once.
+    """
+    idx: dict = {}
+    if not pdf_dir.is_dir():
+        return idx
+    for path in pdf_dir.iterdir():
+        if not path.is_file() or not path.stat().st_size:
+            continue
+        stem = path.name[:len(path.name) - len(path.suffix)] if path.suffix else path.name
+        idx.setdefault(stem, path)
+    return idx
+
+
+def zotero_files(z: Zotero) -> list:
+    """Every attachment in the library, shaped like Mendeley's `/files` rows.
+
+    One bulk call, which is what `attachment_inventory` was built around: asking
+    per document is the difference between a sweep somebody repeats and a sweep
+    nobody runs twice. `itemType=attachment` is the direct analogue of `/files`,
+    and `parentItem` of `document_id`.
+    """
+    rows = []
+    for a in z.paged("items", quiet=True, itemType="attachment"):
+        d = a.get("data") or {}
+        if d.get("linkMode") not in ("imported_file", "imported_url"):
+            continue
+        rows.append({"id": a.get("key"), "document_id": d.get("parentItem"),
+                     "mime_type": d.get("contentType") or "",
+                     "file_name": d.get("filename") or ""})
+    return rows
+
+
+def zotero_pdfs_for(z: Zotero, item_key: str) -> list:
+    """The storage attachments on one record, as `/files`-shaped rows."""
+    rows = []
+    for c in z.paged(f"items/{item_key}/children", quiet=True):
+        d = c.get("data") or {}
+        if d.get("linkMode") in ("imported_file", "imported_url"):
+            rows.append({"id": c.get("key"), "mime_type": d.get("contentType") or "",
+                         "file_name": d.get("filename") or ""})
+    return rows
 
 
 def search_index(out: Path, needle: str) -> list[tuple[str, str]]:
@@ -154,7 +218,7 @@ def local_extracts(out: Path, by_key: dict) -> dict:
     return {k: sorted(set(v)) for k, v in found.items()}
 
 
-def attachment_inventory(client, out: Path, by_key: dict, keys: list) -> int:
+def attachment_inventory(files: list, out: Path, by_key: dict, keys: list) -> int:
     """Report attachments held per key against extracts written, downloading none.
 
     One bulk /files call answers this for the whole library. The alternative --
@@ -164,7 +228,7 @@ def attachment_inventory(client, out: Path, by_key: dict, keys: list) -> int:
 
     Two things it finds, and they are different problems:
 
-    * ORPHAN: the mirror wrote text/<key>-N.md but Mendeley no longer reports
+    * ORPHAN: the mirror wrote text/<key>-N.md but the library no longer reports
       that many attachments. The extract may be the ONLY remaining copy of that
       document, so it must not be treated as regenerable.
     * DUPLICATE: two extracts of one record with the same body. The same file
@@ -181,7 +245,7 @@ def attachment_inventory(client, out: Path, by_key: dict, keys: list) -> int:
     doc_to_key = {v: k for k, v in by_key.items()}
 
     counts: dict[str, int] = {}
-    for f in client.paged("/files", "files"):
+    for f in files:
         key = doc_to_key.get(f.get("document_id"))
         if key and "pdf" in (f.get("mime_type") or "").lower():
             counts[key] = counts.get(key, 0) + 1
@@ -194,7 +258,7 @@ def attachment_inventory(client, out: Path, by_key: dict, keys: list) -> int:
         notes = []
         orphaned = [n for n in extracts[key] if n > have]
         if orphaned:
-            notes.append(f"ORPHAN: -{want} has no attachment in Mendeley")
+            notes.append(f"ORPHAN: -{want} has no attachment in the library")
             orphans += 1
         # Compare every PAIR of extracts this record actually has, not each one
         # against the base. Shan2011How has no base -- its first attachment was
@@ -248,7 +312,7 @@ def attachment_inventory(client, out: Path, by_key: dict, keys: list) -> int:
         # The worst combination, and the reason it gets its own line. Shan2011How's
         # -3 is BOTH the orphan and the only copy with real page numbers: the
         # extract that cannot be re-fetched is the published version, and the one
-        # Mendeley still holds is the proof. Deleting the orphan would lose no
+        # the library still holds is the proof. Deleting the orphan would lose no
         # CONTENT -- the pair is 99.3% alike -- only the pagination, which is the
         # single thing that differs and the only reason anyone wants it.
         #
@@ -262,7 +326,7 @@ def attachment_inventory(client, out: Path, by_key: dict, keys: list) -> int:
                 notes.append(
                     f"IRREPLACEABLE: -{gone_citable[0]} appears to be both the "
                     f"orphan and the only copy with real page numbers; what "
-                    f"Mendeley still holds is the proof. Do not delete it")
+                    f"the library still holds is the proof. Do not delete it")
                 irreplaceable += 1
         print(f"{key:<34}{len(extracts[key]):>9}{have:>13}  {'; '.join(notes)}")
     print(f"\n{len(interesting)} keys examined, {orphans} orphaned, {dupes} duplicated, "
@@ -369,7 +433,7 @@ def open_locally(path: Path) -> None:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Fetch specific PDFs from Mendeley on demand.")
+    ap = argparse.ArgumentParser(description="Fetch one paper's PDF: archive first, then Zotero.")
     ap.add_argument("keys", nargs="*",
                     help="citation keys, e.g. Muller2020Yield. A record with more "
                          "than one attachment: Muller2020Yield-2 is the second, "
@@ -404,23 +468,24 @@ def main() -> int:
     keymap = load_json(mirror_state_dir(out) / "citekeys.json", {})
     if not keymap:
         sys.exit("No citation-key map found -- run mendeley_mirror.py first.")
-    # Stored ids are namespaced. Only this backend's may reach the Mendeley API:
-    # another service's id would 404 at best, and at worst match a different paper.
-    by_key = {key: raw for ident, key in keymap.items()
-              if (raw := local_id(ident)) is not None}
+    # Stored ids are namespaced, and only the live backend's may be sent to the
+    # live backend: another service's id would 404 at best, and at worst match a
+    # different paper.
+    by_key = {key: ident.split(":", 1)[1] for ident, key in keymap.items()
+              if ident.startswith("zotero:")}
+    if not by_key:
+        sys.exit("citekeys.json holds no zotero: entries -- run zotero_migrate.py.")
 
     if args.attachments:
-        cfg = get_app_config()
-        tokens = load_json(config_dir() / "tokens.json", {})
-        if not tokens.get("access_token"):
-            tokens = interactive_authorize(cfg)
-        return attachment_inventory(Mendeley(cfg, tokens), out, by_key, args.keys)
+        z = Zotero(*load_zotero_credentials())
+        return attachment_inventory(zotero_files(z), out, by_key, args.keys)
 
     dest = (args.dest or cache_dir()).expanduser()
     dest.mkdir(parents=True, exist_ok=True)
+    archived = archive_index(out / "pdf")
 
-    # Resolve keys and serve anything already cached BEFORE authenticating, so a
-    # typo or a cache hit never triggers a browser login.
+    # Resolve keys and serve anything already local BEFORE touching the network,
+    # so a typo, a cache hit or an archived paper never needs an account at all.
     status, wanted = 0, []
     for key in args.keys:
         base, nth = split_attachment(key)
@@ -446,23 +511,30 @@ def main() -> int:
             target.rename(quarantine)
             print(f"! {key}: the cached PDF has the wrong number of pages for this "
                   f"paper -- moved to {quarantine.name} and re-fetching", file=sys.stderr)
+
+        # The archive, before the network. It holds every attachment in the
+        # library and needs no account. Served IN PLACE: it belongs to the
+        # mirror, so this never copies, renames or quarantines it -- the
+        # cache-hygiene branch above is about files this script put there.
+        in_archive = archived.get(key)
+        if in_archive:
+            print(in_archive)
+            if args.open_after:
+                open_locally(in_archive)
+            continue
         wanted.append((key, doc_id, target, nth))
 
     if not wanted:
         return status
 
-    cfg = get_app_config()
-    tokens = load_json(config_dir() / "tokens.json", {})
-    if not tokens.get("access_token"):
-        tokens = interactive_authorize(cfg)
-    client = Mendeley(cfg, tokens)
+    z = Zotero(*load_zotero_credentials())
 
     for key, doc_id, target, nth in wanted:
-        resp = client.get(f"{API}/files", accept=None, params={"document_id": doc_id})
-        files = resp.json() if resp.ok else []
-        pdfs = [f for f in files if "pdf" in (f.get("mime_type") or "").lower()]
+        pdfs = [f for f in zotero_pdfs_for(z, doc_id)
+                if "pdf" in (f.get("mime_type") or "").lower()]
         if not pdfs:
-            print(f"! {key}: Mendeley has no PDF attached to this reference")
+            print(f"! {key}: not in <out>/pdf/ and Zotero has no PDF attachment "
+                  "on this record")
             status = 1
             continue
         chosen, why = choose_attachment(pdfs, out, key, nth)
@@ -478,9 +550,12 @@ def main() -> int:
             print(f"({key}: {len(pdfs)} PDF attachments; serving the first. "
                   f"The others are {others})", file=sys.stderr)
 
-        resp = client.get(f"{API}/files/{chosen['id']}", accept="*/*", allow_redirects=False)
-        if resp.status_code in (301, 302, 303, 307):
-            resp = requests.get(resp.headers["Location"], timeout=180)
+        resp = z.session.get(f"{z.base}/items/{chosen['id']}/file", timeout=180)
+        if resp.status_code == 404:
+            print(f"! {key}: Zotero has the attachment record but no file behind "
+                  "it -- a byte-less stub. zotero_delete.py --stubs lists these.")
+            status = 1
+            continue
         if not resp.ok:
             print(f"! {key}: download failed ({resp.status_code})")
             status = 1
