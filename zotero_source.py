@@ -46,6 +46,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from mendeley_mirror import (DEFAULT_OUT, __version__, assign_citekeys,  # noqa: E402
                              bib_entry, harvest_attachments, load_json,
                              annotation_markdown, mirror_state_dir, qualify,
+                             require_ocr_stack,
                              save_json, write_bibtex, write_extraction_report,
                              write_folders, write_index, write_status)
 from zotero_attach import load_pairings  # noqa: E402
@@ -752,7 +753,8 @@ def zotero_fetch(z: Zotero):
     return fetch
 
 
-def refresh(out: Path, ocr: bool = False, dry_run: bool = False) -> int:
+def refresh(out: Path, ocr: bool = False, dry_run: bool = False,
+            reassess: bool = False) -> int:
     """Rebuild the mirror from Zotero.
 
     The generators are `mendeley_mirror`'s and are untouched; what changed is
@@ -781,6 +783,8 @@ def refresh(out: Path, ocr: bool = False, dry_run: bool = False) -> int:
     except ImportError:
         sys.exit("This needs pymupdf and it is not installed. Run it through "
                  "uv, which reads the header: uv run --script zotero_source.py")
+    if ocr:
+        require_ocr_stack()
 
     api_key, user_id = load_zotero_credentials()
     z = Zotero(api_key, user_id)
@@ -842,7 +846,7 @@ def refresh(out: Path, ocr: bool = False, dry_run: bool = False) -> int:
         state = load_json(mirror / "state.json", {})
         fetched, skipped, failed, report = harvest_attachments(
             None, files, keymap, docs_by_id, out, state, "text",
-            state_path=mirror / "state.json", ocr=ocr,
+            state_path=mirror / "state.json", ocr=ocr, reassess=reassess,
             fetch=zotero_fetch(z), backend=BACKEND)
         save_json(mirror / "state.json", state)
         write_extraction_report(report, out, fetched)
@@ -977,6 +981,9 @@ def main() -> int:
                     help="with --refresh: OCR attachments with no text layer")
     ap.add_argument("--dry-run", action="store_true",
                     help="with --refresh: read and report, write nothing")
+    ap.add_argument("--reassess", action="store_true",
+                    help="with --refresh: re-read attachments whose extract was "
+                         "produced under older extraction rules")
     ap.add_argument("--rescue-identifiers", action="store_true",
                     help="write a zotero_edit.py edits file restoring identifiers "
                          "the frozen library.bib has and Zotero does not")
@@ -986,7 +993,8 @@ def main() -> int:
     ap.add_argument("--version", action="version", version=f"offprint {__version__}")
     args = ap.parse_args()
     if args.refresh:
-        return refresh(args.out, ocr=args.ocr, dry_run=args.dry_run)
+        return refresh(args.out, ocr=args.ocr, dry_run=args.dry_run,
+                       reassess=args.reassess)
     if args.rescue_identifiers:
         return rescue_identifiers(args.out)
     if args.compare:

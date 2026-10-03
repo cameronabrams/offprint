@@ -37,7 +37,7 @@ Usage:
 
 from __future__ import annotations
 
-__version__ = "0.26.0"
+__version__ = "0.27.0"
 """The tool's version, and the only place it is written down.
 
 It exists so a mirror can say what produced it. Extraction behaviour has changed
@@ -981,6 +981,22 @@ def load_removed(out: Path) -> dict:
 # being retried, not to being skipped.
 DONE_STATUSES = ("ok", "ocr", "garbled", "no-text", "not-pdf")
 
+# Bumped when the DECISION extraction makes changes -- not when the code moves,
+# and not with `__version__`. A stored verdict was reached under one set of
+# rules, and a later run with different rules is asking a different question of
+# the same bytes.
+#
+#   1  the original volume test
+#   2  2026-10-03: a page-fraction test as well, so a scan whose cover page
+#      carries a text layer reaches OCR
+#
+# `Kirkpatrick1983Optimization` is why this exists. It was extracted under
+# rules 1, stored `ok`, and the run that shipped rules 2 skipped it as already
+# done -- so the fix never reached the one paper it was written for. Every
+# improvement to extraction has this shape: the papers that would benefit are
+# exactly the ones already marked finished.
+EXTRACT_RULES = 2
+
 
 def content_of_extract(text: str) -> int:
     """How much actual body an existing `text/<key>.md` carries.
@@ -1222,6 +1238,29 @@ def extract_pdf_text(data: bytes, fallback=pdftotext_pages
             "; ".join(notes))
 
 
+def require_ocr_stack() -> None:
+    """Fail once, at the start, if `--ocr` cannot possibly work.
+
+    rapidocr is deliberately NOT in any script's PEP 723 header: it is a large
+    optional stack and `--ocr` is an occasional pass, so it is passed in with
+    `uv run --with rapidocr-onnxruntime`. The cost of that choice is that
+    forgetting it is easy, and on 2026-10-03 the result was **116 separate
+    per-attachment failures** inside the handler.
+
+    A missing dependency is a property of the RUN and not of an attachment,
+    which is the lesson already written beside the pymupdf check in
+    `zotero_source.refresh` -- and not applied here, in the same file, two days
+    later.
+    """
+    try:
+        import rapidocr_onnxruntime  # noqa: F401
+    except ImportError:
+        sys.exit("--ocr needs rapidocr, which is not installed. It is kept out "
+                 "of the dependency header on purpose, so pass it in:\n"
+                 "  uv run --with rapidocr-onnxruntime --script "
+                 "zotero_source.py --refresh --ocr")
+
+
 def ocr_pdf_text(data: bytes, dpi: int = 300) -> tuple[str, int]:
     """Read a scanned PDF by rasterising each page and running OCR on it.
 
@@ -1436,7 +1475,7 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                         docs_by_id: dict, out: Path, state: dict, mode: str,
                         state_path: Path | None = None, ocr: bool = False,
                         backfill: bool = False, fetch=None,
-                        backend: str = BACKEND) -> tuple:
+                        backend: str = BACKEND, reassess: bool = False) -> tuple:
     """Download each attachment, extract its text, and (by default) discard it.
 
     `backfill` is for getting the PDFs themselves onto disk, which a plain
@@ -1464,7 +1503,7 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
         # here and skip an extraction as "already done".
         note(f"  namespaced {migrated} attachment ids as {BACKEND}:<id>")
     fetch = fetch or mendeley_fetch(client)
-    kept = 0
+    kept = stale_rules = 0
     qual = lambda raw: qualify(raw, backend)
     fetched = skipped = failed = reused = unresolved = archived = 0
     withheld = 0
@@ -1551,6 +1590,10 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                 # written afterwards carries its stem.
                 if prior.get("stem", "") != stem:
                     done_before = False
+                if reassess and prior.get("rules", 1) < EXTRACT_RULES:
+                    done_before = False
+                elif prior.get("rules", 1) < EXTRACT_RULES:
+                    stale_rules += 1
                 if (done_before and has_artifact
                         and prior.get("filehash") == f.get("filehash")):
                     skipped += 1
@@ -1630,7 +1673,8 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                                        "detail": detail})
                         known[qual(f["id"])] = {"filehash": f.get("filehash"),
                                                    "status": "not-pdf",
-                                                   "stem": stem, "detail": detail}
+                                                   "stem": stem, "rules": EXTRACT_RULES,
+                                                   "detail": detail}
                         continue
 
                     body, pages, chars, content, garble = extract_pdf_text(data)
@@ -1720,7 +1764,8 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                         text_target.write_text(safe, encoding="utf-8")
                         fetched += 1
                     known[qual(f["id"])] = {"filehash": f.get("filehash"), "status": status,
-                                      "stem": stem, "detail": detail,
+                                      "stem": stem, "rules": EXTRACT_RULES,
+                                      "detail": detail,
                                       "pages": pages, "chars": chars}
                     stub = pdf_dir / f"{stem}.pdf"
                     if mode == "text" and not from_disk and stub.exists():
@@ -1766,12 +1811,21 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
         pdf_dir.rmdir()
     if reused:
         note(f"  re-used {reused} PDFs already on disk (no re-download)")
+    # These two are about EXTRACTION and belong to every run. They were nested
+    # under the archive branch below, so `kept` -- the notice added in 0.19.0 to
+    # say that an OCR'd extract had been preserved -- could only ever print
+    # during a `--backfill`. It has never appeared on an ordinary refresh, which
+    # is the same silence it was written to end.
+    if stale_rules:
+        note(f"  {stale_rules} extracts were produced under older extraction "
+             f"rules (now {EXTRACT_RULES}). They are NOT re-examined by "
+             "default; pass --reassess to re-read them under the current rules.")
+    if kept:
+        note(f"  {kept} existing extracts were KEPT: this run read nothing "
+             "from those attachments and an earlier pass had read something. "
+             "Re-run with --ocr to refresh them.")
     if archived or unarchived:
         note(f"  archived {archived} attachment files that were already extracted")
-        if kept:
-            note(f"  {kept} existing extracts were KEPT: this run read nothing "
-                 "from those attachments and an earlier pass had read something. "
-                 "Re-run with --ocr to refresh them.")
         if withheld:
             word = "attachment" if withheld == 1 else "attachments"
             note(f"  {withheld} {word} not archived: .mirror/removed.tsv lists "

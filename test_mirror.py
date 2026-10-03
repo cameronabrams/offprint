@@ -3040,9 +3040,11 @@ def main():
     (sdir / "text" / "Weeks1971Role.md").write_text(ocr_extract, encoding="utf-8")
     sfiles = {"d1": [{"id": "s1", "mime_type": "application/pdf", "filehash": "hs"}]}
     sst = {}
-    _sf, _ss, _sx, srep = mm.harvest_attachments(
-        NoNetwork(), sfiles, {mm.qualify("d1"): "Weeks1971Role"},
-        {"d1": DOCS[0]}, sdir, sst, "text")
+    skept = io.StringIO()
+    with contextlib.redirect_stdout(skept):
+        _sf, _ss, _sx, srep = mm.harvest_attachments(
+            NoNetwork(), sfiles, {mm.qualify("d1"): "Weeks1971Role"},
+            {"d1": DOCS[0]}, sdir, sst, "text")
     check((sdir / "text" / "Weeks1971Role.md").exists(),
           "an OCR'd extract SURVIVES a plain re-extract that reads nothing")
     check("repulsive forces" in (sdir / "text" / "Weeks1971Role.md").read_text(encoding="utf-8"),
@@ -3050,6 +3052,10 @@ def main():
     check(sst["files"][mm.qualify("s1")]["status"] == "ocr",
           f"and the state records it as ocr, so index.md does not say the paper "
           f"has no extract ({sst['files'][mm.qualify('s1')]['status']})")
+    check("extracts were KEPT" in skept.getvalue(),
+          f"and the RUN says so on an ordinary refresh -- that notice was nested "
+          f"under the backfill branch and had never printed outside one "
+          f"({skept.getvalue().strip()[-70:]})")
     kept_rows = [r for r in srep if r["status"] == "ocr"]
     check(kept_rows and "not given --ocr" in kept_rows[0]["detail"],
           f"the report SAYS it was kept and why, since nothing else could "
@@ -3203,6 +3209,58 @@ def main():
                                                   "annotationType": "image"}})
     check(a_empty["type"] == "note" and a_empty["positions"][0]["page"] == 0,
           "and an image annotation with nothing in it degrades rather than raising")
+
+    print("\nan ok reached under older extraction rules is not authoritative")
+
+    # Kirkpatrick1983Optimization is why this exists. It was extracted under
+    # rules 1, stored `ok`, and the run that SHIPPED rules 2 skipped it as
+    # already done -- so the JSTOR fix never reached the one paper it was
+    # written for. Every improvement to extraction has this shape: the papers
+    # that would benefit are exactly the ones already marked finished.
+    rdir = tmp / "rules"
+    (rdir / "text").mkdir(parents=True)
+    (rdir / "pdf").mkdir(parents=True)
+    (rdir / "pdf" / "Muller2020Yield.pdf").write_bytes(pdf_bytes)
+    (rdir / "text" / "Muller2020Yield.md").write_text("old rules\n", encoding="utf-8")
+    rfiles = {"d1": [{"id": "r1", "mime_type": "application/pdf", "filehash": "hr"}]}
+
+    def old_entry():
+        return {"files": {mm.qualify("r1"): {"filehash": "hr", "status": "ok",
+                                             "stem": "Muller2020Yield",
+                                             "rules": 1}}}
+
+    # By default it is NOT re-read -- the cost of re-extracting a library on
+    # every rules change is real -- but it is COUNTED and said out loud.
+    buf = io.StringIO()
+    st_default = old_entry()
+    with contextlib.redirect_stdout(buf):
+        _df, ds, _dx, _dr = mm.harvest_attachments(
+            NoNetwork(), rfiles, {mm.qualify("d1"): "Muller2020Yield"},
+            {"d1": DOCS[0]}, rdir, st_default, "text")
+    check(ds == 1, f"an older-rules entry still skips by default ({ds})")
+    check("older extraction rules" in buf.getvalue() and "--reassess" in buf.getvalue(),
+          "but the run SAYS how many and what to pass -- the staleness is "
+          "impossible not to know about, which is the whole fix")
+
+    # --reassess is what acts on it.
+    st_re = old_entry()
+    rf, rs, _rx, _rr = mm.harvest_attachments(
+        NoNetwork(), rfiles, {mm.qualify("d1"): "Muller2020Yield"},
+        {"d1": DOCS[0]}, rdir, st_re, "text", reassess=True)
+    check(rf == 1 and rs == 0,
+          f"--reassess re-reads an entry produced under older rules ({rf}, {rs})")
+    check(st_re["files"][mm.qualify("r1")]["rules"] == mm.EXTRACT_RULES,
+          "and the entry records the rules it was reached under, so the next "
+          "bump can tell it apart again")
+
+    # A current-rules entry is not disturbed even by --reassess.
+    st_cur = {"files": {mm.qualify("r1"): {"filehash": "hr", "status": "ok",
+                                           "stem": "Muller2020Yield",
+                                           "rules": mm.EXTRACT_RULES}}}
+    _cf, cs, _cx, _cr = mm.harvest_attachments(
+        NoNetwork(), rfiles, {mm.qualify("d1"): "Muller2020Yield"},
+        {"d1": DOCS[0]}, rdir, st_cur, "text", reassess=True)
+    check(cs == 1, f"a current-rules entry is left alone even by --reassess ({cs})")
 
     print("\na scan whose cover page carries all the text")
 

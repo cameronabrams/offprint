@@ -1464,6 +1464,51 @@ nothing re-extracts for want of a field that did not exist.
 
 `state.json` gains a key, so `__version__` moves — `0.25.0`.
 
+## 23. The 0.26.0 run worked, and found two more — `0.27.0`
+
+`library`'s diff: **Hirota and Daoulas repaired, none of the 59 had stale text,
+all 110 OCR extracts survived.** The snapshot-then-diff is what made those three
+statements possible, and the middle one is the answer to question B that I could
+not give from here.
+
+**`--ocr` failed 116 times instead of once.** rapidocr is deliberately not in
+any header — it is a large optional stack for an occasional pass, passed in with
+`uv run --with rapidocr-onnxruntime` — and the cost of that choice is that
+forgetting it is easy. The failures landed inside the per-attachment handler.
+**A missing dependency is a property of the run, not of an attachment**, which
+is written in a comment beside the pymupdf check in `zotero_source.refresh` and
+was not applied in the same file two days later. `require_ocr_stack()` now fails
+once, at the start, and prints the exact command.
+
+**And `Kirkpatrick1983Optimization` was skipped as already done**, so the JSTOR
+fix never reached the one paper it was written for. It had been extracted under
+the old rules, stored `ok`, and the run that *shipped* the new rules treated
+that verdict as final.
+
+This is the fourth time in the same place — `failed` is not a result, `no-text`
+is the plain reader's verdict, a verdict belongs to its stem — and the
+generalization it was missing: **an `ok` is a verdict reached under a particular
+set of extraction rules.** `EXTRACT_RULES` is stored per entry and moves when the
+extraction *decision* changes, not when the code does and not with
+`__version__`.
+
+A run **reports** how many extracts predate the current rules and does not
+re-read them by default; `--reassess` acts on it. Automatic re-extraction on
+every rules bump is a real cost and the wrong default, but silence was what let
+this happen, so the count is printed either way.
+
+### A notice that had never printed
+
+Fixing that surfaced an older one. `kept` — the 0.19.0 notice saying an OCR'd
+extract had been **preserved** from a run that read nothing — was nested inside
+`if archived or unarchived:`, the backfill branch. **It could only ever print
+during a `--backfill`, and has never appeared on an ordinary refresh.** I added
+it there by matching the indentation of the line above it.
+
+So the message written to end a silence was itself silent, for four days, in the
+one case it was for. Both it and the new rules notice are now at run level where
+they belong.
+
 ## 22. 0.25.0's repair was blocked by a branch 0.25.0 added — `0.26.0`
 
 The repair refresh reported the two extracts **unchanged** and they still served

@@ -11,7 +11,11 @@ Command-line options, the tests, and the accumulated small print.
                        and folders.json from Zotero
 --dry-run              with --refresh: read and report, write nothing
 --ocr                  with --refresh: read scanned attachments that have no
-                       text layer (needs --with rapidocr-onnxruntime)
+                       text layer (needs --with rapidocr-onnxruntime; the run
+                       checks for it once at the start and exits, rather than
+                       failing per attachment)
+--reassess             with --refresh: re-read attachments whose extract was
+                       produced under older extraction rules
 --compare              regenerate every BibTeX entry from Zotero and diff it
                        against the existing library.bib, writing nothing
 --rescue-identifiers   emit a zotero_edit.py edits file restoring identifiers
@@ -145,6 +149,19 @@ is unchanged *and* whose stored status says it was examined. Improving
 extraction does not by itself revisit papers already mirrored; re-reading one
 means removing its entry from `.mirror/state.json` and refreshing — back that
 file up first.
+
+**An `ok` is a verdict reached under a particular set of extraction rules.**
+`state.json` records which (`rules`), and a run reports how many extracts
+predate the current ones. It does **not** re-read them by default, because
+re-extracting a library on every change to extraction is a real cost — but it
+says how many and what to pass, so the staleness cannot go unnoticed.
+`--reassess` is what acts on it.
+
+`Kirkpatrick1983Optimization` is why this exists: it was extracted under rules
+1, stored `ok`, and the run that *shipped* rules 2 skipped it as already done —
+so the fix never reached the one paper it was written for. Every improvement to
+extraction has that shape, because the papers that would benefit are exactly the
+ones already marked finished.
 
 What counts as "examined" is an explicit list — `ok`, `ocr`, `garbled`,
 `no-text`, `not-pdf` — and **anything else, including `failed` and an
