@@ -57,7 +57,10 @@ text, in four classes:
 ### Deleting an attachment from the archive, and making it stay deleted
 
 `<out>/pdf/` is an archive a person built, and a person may want something out
-of it again — a video, a structure file, a scan that was never a paper. Deleting
+of it again. (On Cameron's library it is currently **empty** — the archive was
+deleted on 2026-10-02 once every attachment was verified present in Zotero. The
+mechanism below applies to any machine that holds one, and to this one if
+`--backfill` is ever run again.) — a video, a structure file, a scan that was never a paper. Deleting
 the file is not enough on its own: `--backfill` tests only whether a file is on
 disk, so it reads the gap as evacuation it has not finished yet and fetches the
 file back. That command is *documented as safe to repeat*, which is what made it

@@ -11,10 +11,22 @@ uv run --script get_pdf.py Muller2020Yield --open # and open it
 uv run --script get_pdf.py Muller2020Yield-2     # the SECOND attachment
 ```
 
+**Three sources, in order, and the first two need no account.** The local
+cache; then `<out>/pdf/`, if this machine holds an archive — served *in place*,
+since that directory belongs to the mirror; then Zotero.
+
+On Cameron's library the middle one is empty: the archive was a transit buffer
+for the Mendeley → Zotero migration and was deleted on 2026-10-02 once every
+attachment had been verified present in Zotero. So in practice a miss goes to
+Zotero. `mendeley_mirror.py --attachments keep --backfill` rebuilds an archive
+if one is ever wanted again.
+
 Fetched PDFs are cached *outside* the mirror (`~/.cache/mendeley-mirror/pdf`, or
-`%LOCALAPPDATA%\mendeley-mirror\pdf`), so grabbing one to look at a figure does
-not push it to every synced machine. Unknown keys and cache hits are handled
-before any login, so a typo never opens a browser.
+`%LOCALAPPDATA%\mendeley-mirror\pdf` — that directory kept its old name
+deliberately, since moving a cache costs something and buys nothing), so
+grabbing one to look at a figure does not push it to every synced machine.
+Unknown keys, cache hits and archived papers are all handled before any network
+call, so a typo never reaches an account.
 
 
 ## What a paper cites
@@ -69,13 +81,14 @@ order the refresh numbered them in.
 uv run --script get_pdf.py --attachments
 ```
 
-One bulk listing, no downloads. It reports, for every record with more than one
-extract, how many PDF attachments Mendeley currently holds — and names two
-different problems:
+One bulk listing, no downloads — `itemType=attachment` against Zotero, which is
+the direct analogue of the `/files` call this was built around. It reports, for
+every record with more than one extract, how many PDF attachments the library
+currently holds, and names two different problems:
 
 - **ORPHAN** — the mirror wrote `text/<key>-N.md` but the account no longer
-  reports that many attachments. The file was deleted from Mendeley after it was
-  extracted, so **the extract may be the only remaining copy of that document.**
+  reports that many attachments. The file was deleted after it was extracted,
+  so **the extract may be the only remaining copy of that document.**
   It cannot be regenerated, and it must not be deleted to force a re-extraction.
 - **DUPLICATE** — two extracts of one record with the same body: the same file
   attached twice. Nothing is lost by ignoring it, though a search will hit the

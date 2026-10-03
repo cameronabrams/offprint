@@ -33,6 +33,75 @@ also why an OCR recovery run must be given the flag or it does nothing at all.
 --yes                  do not ask before sending
 ```
 
+### `zotero_inbox.py` — file a downloaded PDF onto a record
+
+```
+[FILE ...]             PDFs to file; default is everything in <out>/inbox/
+--key CITEKEY          file ONE named PDF under this key, skipping identification
+--yes                  create and upload; without it this is a dry run
+```
+
+Creates a child **attachment** on a record that already exists. It will not
+create a record, will not attach bytes the record already holds (checked by md5
+before anything is created), will not file a PDF with no readable text, and will
+not guess which record.
+
+### `zotero_push.py` — add one reference
+
+```
+--doi DOI              e.g. 10.1088/2632-2153/ae4b07
+--arxiv ID             e.g. 2507.07887
+--yes                  create it; without this it is a dry run
+```
+
+Refuses a record the library already has, by DOI and then by normalized title.
+Does **not** assign a citation key — the next refresh does that, once, and keeps
+it. A dry run needs no Zotero key, though it does need the mirror readable.
+
+### `zotero_attach.py` — upload the mirrored PDFs into Zotero
+
+```
+--yes                  upload; without it this is a dry run that writes nothing
+--key CITEKEY          limit to one citation key (repeatable)
+--limit N              stop after this many uploads
+--pair-by-order        for records that cannot be paired by extension, pair by
+                       archive order -- a GUESS, off by default
+--no-metadata          upload bytes only; leave filename and content type alone
+```
+
+Fills attachment slots that already exist; it cannot create one. Where a record's
+attachments cannot be paired unambiguously it uploads nothing for that record and
+prints the candidates.
+
+### `zotero_delete.py` — remove a record or a byte-less attachment
+
+```
+--key CITEKEY          citation key of a record to delete (repeatable)
+--stubs                find attachments whose file endpoint 404s and remove them
+--yes                  actually delete; without it this is a dry run
+--allow-last-copy      permit deleting a record with no surviving sibling
+```
+
+**The one operation here with no undo.** A dry run names what *survives* as well
+as what goes, because the dangerous deletion is the sibling you did not list. It
+backs up every item and its children to `.mirror/deleted-<timestamp>.json` before
+sending anything, and it touches neither `citekeys.json` nor `pdf/` nor `text/`.
+
+A byte-less attachment is found by asking the **file endpoint**, never by
+`md5: None` — that field says the item records no file, which is a different
+claim, and 1,060 attachments reported it while Zotero held bytes for all of them.
+
+### `zotero_migrate.py` — pair Mendeley records with Zotero items
+
+```
+--write                write the zotero: half into citekeys.json
+--selftest             run the matcher's fixtures
+```
+
+A one-off, run on 2026-09-29. Read-only without `--write`. It is what made the
+migration keep every citation key: 2,739 of 2,739 paired, by DOI, then title and
+year, then by hand.
+
 ### `doixref.py` — each record's DOI against Crossref
 
 ```

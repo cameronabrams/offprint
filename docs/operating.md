@@ -69,43 +69,48 @@ Since version `9246b05` the tool no longer *tells* you to do the unsafe thing:
 `inbox.py` works out whether the systemd unit exists and prints the command that
 is safe on the machine you are actually on.
 
-## One direction, and five deliberate exceptions
+## One direction, and eight deliberate exceptions
 
 A refresh is strictly one-way, the service to disk. A bad run can lose mirrored
 files but cannot touch the library, which is what makes it safe to run
 unattended.
 
-Five scripts break that on purpose:
+Eight scripts break that on purpose, five of them live:
 
 | script | account | what it does |
 |---|---|---|
-| `inbox.py` | Mendeley | attaches a PDF to a reference, creating the reference from its DOI if it is new |
-| `mendeley_push.py` | Mendeley | adds one reference, from an arXiv ID or a DOI |
-| `mendeley_edit.py` | Mendeley | corrects fields on a reference that already exists |
-| `zotero_attach.py` | Zotero | uploads the mirrored PDFs into attachments that already exist, and corrects each one's filename and content type to match |
+| `zotero_source.py --refresh` | Zotero | reads only; listed because it is the one that rewrites the mirror |
 | `zotero_edit.py` | Zotero | corrects fields on a record that already exists |
+| `zotero_attach.py` | Zotero | uploads PDFs into attachment slots that already exist |
+| `zotero_inbox.py` | Zotero | **creates an attachment** on an existing record, from a PDF you downloaded |
+| `zotero_push.py` | Zotero | **creates a record**, from a DOI or an arXiv id |
+| `zotero_delete.py` | Zotero | **removes** a record or a byte-less attachment |
+| `inbox.py`, `mendeley_push.py`, `mendeley_edit.py` | Mendeley | the same three jobs, retired with the account on 2026-10-02 |
 
-The three Mendeley ones are retired along with the account. `zotero_edit.py` is
-the one to be most careful with, for the same reason `mendeley_edit.py` was: it
-is the only script that can *destroy* correct metadata rather than merely add
-wrong metadata. See [Correcting a reference](corrections.md).
+**Two deserve the most care, for opposite reasons.** `zotero_edit.py` is the
+only one that can *destroy correct metadata* rather than merely add wrong
+metadata — see [Correcting a reference](corrections.md). `zotero_delete.py` is
+the only one with **no undo at all**: it names what *survives* as well as what
+goes, refuses to delete a record with no surviving sibling unless told to, and
+backs up every item and its children before sending anything.
 
-The three Mendeley scripts are interactive by default. `--dry-run` is the safe
-thing to run and the right thing to show someone before a batch. `--yes` is for a
-run that has already been approved — not a way past a prompt in a
-non-interactive shell.
+`zotero_inbox.py` and `zotero_push.py` are the only scripts that **create**
+anything, and each creates exactly one kind of thing. The inbox will not create
+a record; the push will not create an attachment. That line is deliberate —
+"how does a paper get into the library" is two different operations with
+different risks, and running them together is how a library acquires a second
+record for a paper it already had.
 
-`zotero_attach.py` inverts that, because asking per file across 2,740 of them is
-not a safeguard, it is a way of training someone to hold down a key: **a dry run
-is the default and performs no write of any kind**, stopping before the upload
-authorization, which is itself a POST. `--yes` is the whole approval, so it is
+The three Mendeley scripts were interactive by default. `--dry-run` was the safe
+thing to run and the right thing to show someone before a batch; `--yes` was for
+a run already approved, not a way past a prompt in a non-interactive shell.
+
+**Every `zotero_*` writer inverts that: a dry run is the default and performs no
+write of any kind.** Asking per file across 2,740 of them is not a safeguard, it
+is a way of training someone to hold down a key. `--yes` is the whole approval,
+so it is
 given once, deliberately, to a run whose dry run has been read. `--limit` and
 `--key` exist to make a first live run small.
-
-`mendeley_edit.py` deserves the most care, because it is the only one that can
-*destroy* correct metadata rather than merely add wrong metadata. See
-[Correcting a reference](corrections.md) for the three properties that keep that
-from happening by accident.
 
 ## When a Claude session operates it
 
