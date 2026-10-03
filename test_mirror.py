@@ -3081,7 +3081,8 @@ def main():
     ofiles = {"d1": [{"id": "o1", "mime_type": "application/pdf", "filehash": "ho"}]}
 
     # Without --ocr the verdict stands: nothing to gain from re-reading.
-    plain_state = {"files": {mm.qualify("o1"): {"filehash": "ho", "status": "no-text"}}}
+    plain_state = {"files": {mm.qualify("o1"): {"filehash": "ho", "status": "no-text",
+                                                "stem": "Weeks1971Role"}}}
     _pf, ps, _px, _pr = mm.harvest_attachments(
         NoNetwork(), ofiles, {mm.qualify("d1"): "Weeks1971Role"},
         {"d1": DOCS[0]}, odir, plain_state, "text")
@@ -3090,7 +3091,8 @@ def main():
     # With --ocr it does not: this run carries a reader the last one lacked.
     _ocr_orig = mm.ocr_pdf_text
     mm.ocr_pdf_text = lambda data: ("the structure of simple liquids " * 20, 640)
-    ocr_state = {"files": {mm.qualify("o1"): {"filehash": "ho", "status": "no-text"}}}
+    ocr_state = {"files": {mm.qualify("o1"): {"filehash": "ho", "status": "no-text",
+                                              "stem": "Weeks1971Role"}}}
     try:
         of, os_, _ox, orep = mm.harvest_attachments(
             NoNetwork(), ofiles, {mm.qualify("d1"): "Weeks1971Role"},
@@ -3108,7 +3110,8 @@ def main():
 
     # not-pdf is deliberately NOT retried: OCR does not help a video file, and
     # re-reading those every run would be motion.
-    np_state = {"files": {mm.qualify("o1"): {"filehash": "ho", "status": "not-pdf"}}}
+    np_state = {"files": {mm.qualify("o1"): {"filehash": "ho", "status": "not-pdf",
+                                             "stem": "Weeks1971Role"}}}
     _nf, ns, _nx, _nr = mm.harvest_attachments(
         NoNetwork(), ofiles, {mm.qualify("d1"): "Weeks1971Role"},
         {"d1": DOCS[0]}, odir, np_state, "text", ocr=True)
@@ -3154,7 +3157,8 @@ def main():
 
     # And the ordinary case still skips, or every refresh would re-extract 2,700
     # papers for nothing.
-    okst = {"files": {mm.qualify("x1"): {"filehash": "h1", "status": "ok"}}}
+    okst = {"files": {mm.qualify("x1"): {"filehash": "h1", "status": "ok",
+                                         "stem": "Muller2020Yield"}}}
     _ok_f, ok_s, _ox, _or_ = mm.harvest_attachments(
         NoNetwork(), one_file, {mm.qualify("d1"): "Muller2020Yield"},
         {"d1": DOCS[0]}, fdir, okst, "text")
@@ -3199,6 +3203,52 @@ def main():
                                                   "annotationType": "image"}})
     check(a_empty["type"] == "note" and a_empty["positions"][0]["page"] == 0,
           "and an image annotation with nothing in it degrades rather than raising")
+
+    print("\na scan whose cover page carries all the text")
+
+    # Kirkpatrick1983's JSTOR PDF: 11 pages, page 1 is JSTOR's cover with a text
+    # layer, pages 2-11 are images. 2,986 characters over 11 pages clears
+    # 80 * 11 = 880 comfortably, so OCR never ran and the article body was
+    # invisible to search. The test is how many PAGES carry text.
+    cover_only = "<!-- p. 1 -->\n\n" + ("JSTOR terms and conditions " * 120)
+    check(mm.page_text_fraction(cover_only, 11) < mm.MIN_PAGE_TEXT_FRACTION,
+          f"a cover page plus ten images is thin by page "
+          f"({mm.page_text_fraction(cover_only, 11):.2f})")
+
+    # The negative case, which sets the threshold: a born-digital paper with a
+    # figure-only page or two must NOT be OCR'd wholesale.
+    born = "".join(f"<!-- p. {n} -->\n\nreal text here\n\n" for n in range(1, 10))
+    check(mm.page_text_fraction(born, 11) > mm.MIN_PAGE_TEXT_FRACTION,
+          f"nine text pages in eleven is not a scan "
+          f"({mm.page_text_fraction(born, 11):.2f})")
+    check(mm.page_text_fraction("", 0) == 1.0,
+          "and a zero-page document is not divided by zero")
+
+    # It must change WHEN OCR RUNS and not what counts as no-text: a document
+    # whose few pages of text are real text is not a scan, and calling it one
+    # would delete a usable extract.
+    jst = tmp / "jstor"
+    (jst / "pdf").mkdir(parents=True)
+    cover = _fitz.open()
+    pg = cover.new_page()
+    pg.insert_text((72, 72), "JSTOR cover page " * 30)
+    for _ in range(10):
+        cover.new_page()
+    (jst / "pdf" / "Kirkpatrick1983Optimization.pdf").write_bytes(cover.tobytes())
+    jfiles = {"d1": [{"id": "j1", "mime_type": "application/pdf", "filehash": "hj"}]}
+    _ocr_was = mm.ocr_pdf_text
+    mm.ocr_pdf_text = lambda data: ("the article body recovered " * 100, 2700)
+    try:
+        jf, _js, _jx, _jr = mm.harvest_attachments(
+            NoNetwork(), jfiles, {mm.qualify("d1"): "Kirkpatrick1983Optimization"},
+            {"d1": DOCS[0]}, jst, {}, "text", ocr=True)
+    finally:
+        mm.ocr_pdf_text = _ocr_was
+    got = (jst / "text" / "Kirkpatrick1983Optimization.md").read_text(encoding="utf-8")
+    check(jf == 1 and "ocr: true" in got,
+          "a cover-page scan now REACHES OCR, where the volume test passed it by")
+    check("article body recovered" in got,
+          "and the recovered body is what the extract holds")
 
     print("\nthe refresh honours pairings.tsv, which it used to ignore")
 
@@ -3275,13 +3325,24 @@ def main():
         {"d1": DOCS[0]}, sdir, sst2, "text")
     check(s2 == 1, f"an unchanged stem still skips ({s2})")
 
-    # And an entry written before stems were recorded has no `stem` key at all;
-    # it must not be re-extracted for want of one.
+    # An entry with NO recorded stem must be re-examined, not skipped. 0.25.0
+    # asserted the opposite -- "nothing should re-extract for want of a field
+    # that did not exist" -- and that branch is precisely what stopped the
+    # repair 0.25.0 shipped for: the Hirota entries were written by 0.24.0,
+    # which recorded no stem, so the fix could not see that the wrong
+    # attachment had written the file. Fourth test in this suite found
+    # asserting its own defect.
+    (sdir / "text" / "Hirota2000Effect.md").write_text("the OTHER paper\n",
+                                                        encoding="utf-8")
     sst3 = {"files": {mm.qualify("s1"): {"filehash": "hh", "status": "ok"}}}
-    _f3, s3, _x3, _r3 = mm.harvest_attachments(
+    f3, s3, _x3, _r3 = mm.harvest_attachments(
         NoNetwork(), sfiles, {mm.qualify("d1"): "Hirota2000Effect"},
         {"d1": DOCS[0]}, sdir, sst3, "text")
-    check(s3 == 1, f"a pre-0.25 entry with no stem recorded still skips ({s3})")
+    check(f3 == 1 and s3 == 0,
+          f"an entry with no recorded stem cannot be vouched for, so it is "
+          f"re-extracted ({f3} extracted, {s3} skipped)")
+    check(sst3["files"][mm.qualify("s1")]["stem"] == "Hirota2000Effect",
+          "and it gains a stem, so it is vouched for from then on")
 
     print("\na Zotero refresh, end to end, offline")
 

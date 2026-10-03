@@ -1464,6 +1464,75 @@ nothing re-extracts for want of a field that did not exist.
 
 `state.json` gains a key, so `__version__` moves — `0.25.0`.
 
+## 22. 0.25.0's repair was blocked by a branch 0.25.0 added — `0.26.0`
+
+The repair refresh reported the two extracts **unchanged** and they still served
+the wrong papers. The cause is a compatibility branch I wrote in the same commit
+as the fix, and asserted in a test: *"an entry predating this carries no `stem`
+and still skips, so nothing re-extracts for want of a field that did not
+exist."*
+
+The `Hirota2000Effect` entries were written by **0.24.0**, which recorded no
+stem. So the fix could not see that the wrong attachment had written the file,
+and skipped it as unchanged — on exactly the records it shipped to repair.
+**The fourth test in this suite found asserting its own defect**, and the first
+where I wrote the test and the defect in one sitting.
+
+**No recorded stem means the stem cannot be vouched for**, and that is
+unfinished work. The cheap alternatives do not survive contact: a record's
+*current* attachment count says nothing about which attachment wrote an existing
+file — after the parked duplicate was deleted, `Hirota2000Effect` had exactly
+one attachment and the extract on disk was still the other one's.
+
+**The cost is one full re-extraction**, 2,740 fetches from Zotero, once. That is
+the price of having shipped `state.json` without the stem, and every entry
+written afterwards carries it.
+
+**And the extract now names the attachment that produced it.** `attachment:` in
+the front matter, beside `record_id:` (renamed from `mendeley_id:`, which named
+the wrong service and the wrong thing). An extract could not previously say
+whether it belonged under the stem it sat at; two of them sat under the wrong
+one with nothing in the file to show it. This makes the question answerable from
+the library alone, forever after, without the state.
+
+`text/<key>.md` gains a front-matter field and `state.json` a key, so both
+contracts moved — announced to `library` before the working tree carried it.
+
+### B, answered the way it was asked
+
+`library` asked whether "59 reordered, 0 re-extracted" meant those 59 already
+matched, or 59 more records silently wrong — **with a check that could come out
+either way**. It is the same defect as above at scale, and there is no way to
+tell from the outside: the extract did not record which attachment wrote it.
+Under `0.26.0` the next refresh re-extracts every entry with no stem, which both
+answers the question and repairs whichever answer it is. The new `attachment:`
+field is what makes it checkable cheaply next time.
+
+### C: a scan whose cover page carries all the text
+
+`Kirkpatrick1983Optimization` is a JSTOR PDF: 11 pages, page 1 is JSTOR's cover
+*with a text layer*, pages 2–11 are images. 2,986 characters over 11 pages clears
+`80 × 11 = 880` comfortably, so OCR never ran and the article body was invisible
+to search.
+
+The volume test cannot see this, so the new test is **how many pages carry
+text** — counted from the `<!-- p. N -->` markers, which already are the answer
+since a page with nothing on it produces no chunk. Half is the line, and the
+negative case sets it: a born-digital paper with a figure-only page or two must
+not be OCR'd wholesale, and that is nine pages in eleven against this scan's
+one.
+
+It changes **when OCR runs** and not what counts as `no-text`. A document whose
+few pages of text are real text is not a scan, and calling it one would delete a
+usable extract.
+
+### D: `pairings.tsv` belongs to the library session
+
+Asked and answered: **the tool reads it and never writes it**, so it is
+`library`'s to edit. The three stale entries should go. The refresh reporting
+them is the file doing its job — it is meant to be the authority, so it naming
+an attachment that no longer exists is worth a line rather than a silent skip.
+
 ## 21. `zotero_delete.py --attachment` — one attachment, bytes and all
 
 Asked for by `library` the same day, and blocking: `--key` deletes records and

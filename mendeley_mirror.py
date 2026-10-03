@@ -37,7 +37,7 @@ Usage:
 
 from __future__ import annotations
 
-__version__ = "0.25.0"
+__version__ = "0.26.0"
 """The tool's version, and the only place it is written down.
 
 It exists so a mirror can say what produced it. Extraction behaviour has changed
@@ -1046,6 +1046,29 @@ def find_archived(pdf_dir: Path, stem: str, f: dict | None = None) -> Path | Non
 
 MIN_CHARS_PER_PAGE = 80
 
+# A scan can clear the whole-document threshold on one page. Kirkpatrick1983's
+# JSTOR PDF is 11 pages: page 1 is JSTOR's cover, with a text layer, and pages
+# 2-11 are images. 2,986 characters over 11 pages passes `80 * 11 = 880`
+# comfortably, so OCR never ran and the article body is invisible to search.
+#
+# The test is therefore how many PAGES carry text, not how many characters the
+# document has. Half is the line, and the negative case sets it: a born-digital
+# paper with one or two figure-only pages must NOT be OCR'd wholesale, and that
+# is 9 pages in 11 with text. A cover-plus-images scan is 1 in 11.
+MIN_PAGE_TEXT_FRACTION = 0.5
+
+
+def page_text_fraction(body: str, pages: int) -> float:
+    """What share of the document's pages produced any text at all.
+
+    Counted from the `<!-- p. N -->` markers, because `extract_pdf_text` emits a
+    chunk only for a page with something on it -- so the markers already are the
+    answer and nothing new has to be threaded out of the extractor.
+    """
+    if pages <= 0:
+        return 1.0
+    return len(re.findall(r"<!-- p\. \d+ -->", body or "")) / pages
+
 # How much of a document's pages a line must appear on to be boilerplate rather
 # than content. A running head or a library stamp is on all of them; a sentence
 # is on one.
@@ -1275,7 +1298,7 @@ def clean_page_text(text: str) -> str:
 
 
 def text_document(doc: dict, key: str, body: str, pages: int, chars: int,
-                  ocr: bool = False) -> str:
+                  ocr: bool = False, attachment: str = "") -> str:
     ids = doc.get("identifiers") or {}
     authors = "; ".join(
         f"{(p.get('last_name') or '').strip()}, {(p.get('first_name') or '').strip()}".strip(", ")
@@ -1296,7 +1319,12 @@ def text_document(doc: dict, key: str, body: str, pages: int, chars: int,
         f"pages: {pages}",
         f"characters: {chars}",
         f"ocr: {'true' if ocr else 'false'}",
-        f"mendeley_id: {doc.get('id', '')}",
+        # Which ATTACHMENT produced this, not just which record. Without it an
+        # extract cannot say whether it belongs under the stem it sits at, and
+        # on 2026-10-03 two of them sat under the wrong one with nothing in the
+        # file to show it.
+        f"attachment: {attachment or ''}",
+        f"record_id: {doc.get('id', '')}",
         "---",
         "",
         f"# {doc.get('title') or key}",
@@ -1504,7 +1532,24 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                 # filehash still matched and a file still existed at the new
                 # target -- holding the other paper's text. Recording the stem
                 # is what lets a rename read as unfinished work.
-                if prior.get("stem") and prior["stem"] != stem:
+                # **No recorded stem means the stem cannot be vouched for**, and
+                # that is unfinished work, not a pass. 0.25.0 let a missing
+                # `stem` skip, on the reasoning that nothing should re-extract
+                # for want of a field that did not exist -- and that branch is
+                # exactly what stopped the repair it shipped for. The entries
+                # for `Hirota2000Effect` were written by 0.24.0, which recorded
+                # no stem, so the fix could not see that the wrong attachment
+                # had written the file.
+                #
+                # The cheap alternatives do not work. A record's *current*
+                # attachment count says nothing about which attachment wrote an
+                # existing file: after the parked duplicate was deleted,
+                # `Hirota2000Effect` had exactly one attachment and the extract
+                # on disk was still the other one's.
+                #
+                # So this costs one full re-extraction, once, and every entry
+                # written afterwards carries its stem.
+                if prior.get("stem", "") != stem:
                     done_before = False
                 if (done_before and has_artifact
                         and prior.get("filehash") == f.get("filehash")):
@@ -1590,12 +1635,20 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
 
                     body, pages, chars, content, garble = extract_pdf_text(data)
                     from_ocr = False
-                    if content < MIN_CHARS_PER_PAGE * max(pages, 1) and ocr:
+                    # Thin by volume, OR text on too few of its pages. The
+                    # second catches a scan whose cover page carries the whole
+                    # document's text.
+                    thin = (content < MIN_CHARS_PER_PAGE * max(pages, 1)
+                            or page_text_fraction(body, pages) <= MIN_PAGE_TEXT_FRACTION)
+                    if thin and ocr:
                         progress(f"  {seen}/{total}  {stem[:36]} (ocr)")
                         ocr_body, ocr_chars = ocr_pdf_text(data)
                         if ocr_chars >= MIN_CHARS_PER_PAGE * max(pages, 1):
                             body, chars, content, from_ocr = (
                                 ocr_body, ocr_chars, ocr_chars, True)
+                    # Only VOLUME decides no-text. A document whose few pages of
+                    # text are real text is not a scan, and calling it one would
+                    # delete a usable extract.
                     if content < MIN_CHARS_PER_PAGE * max(pages, 1):
                         status = "no-text"
                         detail = f"{chars} characters across {pages} pages"
@@ -1647,7 +1700,9 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                                            "title": doc.get("title", ""),
                                            "detail": f"{chars} characters across {pages} pages"})
                         document = text_document(doc, stem, body, pages, chars,
-                                                 ocr=from_ocr)
+                                                 ocr=from_ocr,
+                                                 attachment=local_id(qual(f["id"]))
+                                                 or f.get("id", ""))
                         # Belt and braces. clean_page_text has already stripped
                         # these per page; if any reach here, something built text
                         # by another route and the extract would be invisible to
