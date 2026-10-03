@@ -13,6 +13,7 @@ account of what it had to remember rather than be given.
 
     uv run --script zotero_delete.py --key Frankel1998Hiva --key Frankel1998Hivb
     uv run --script zotero_delete.py --key Frankel1998Hiva --yes
+    uv run --script zotero_delete.py --attachment R83UG3SX     # one attachment
     uv run --script zotero_delete.py --stubs            # byte-less attachments
 
 **A dry run names what SURVIVES as well as what goes**, which is the library
@@ -26,6 +27,13 @@ their attachment counts, and **a deletion that would leave no survivor is
 refused** unless `--allow-last-copy` says otherwise. That case is not a
 duplicate being tidied; it is a paper leaving the library, which is a different
 decision and should have to be spelled.
+
+`--attachment` removes a single attachment **and its bytes**, which `--stubs`
+deliberately cannot: a stub is a record of a file that no longer exists, and
+this is a file that does. The same guards apply, plus one that only matters
+here — **annotations hang off the attachment, not the record**, so they go with
+it, and they are the one part that re-uploading the file cannot bring back. The
+dry run counts them.
 
 **Every item and its children are backed up before anything is sent**, to
 `.mirror/deleted-<timestamp>.json`, whose path is printed. The library session
@@ -126,6 +134,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Delete a Zotero record or attachment stub.")
     ap.add_argument("--key", action="append", default=[],
                     help="citation key of a record to delete (repeatable)")
+    ap.add_argument("--attachment", action="append", default=[], metavar="KEY",
+                    help="Zotero key of ONE attachment to delete, bytes and all "
+                         "(repeatable)")
     ap.add_argument("--stubs", action="store_true",
                     help="find attachments whose file endpoint 404s and remove them")
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT, help="mirror directory")
@@ -137,8 +148,8 @@ def main() -> int:
                          "being tidied")
     ap.add_argument("--version", action="version", version=f"offprint {__version__}")
     args = ap.parse_args()
-    if not args.key and not args.stubs:
-        ap.error("nothing to do: give --key, or --stubs")
+    if not args.key and not args.stubs and not args.attachment:
+        ap.error("nothing to do: give --key, --attachment, or --stubs")
 
     bib_path = args.out / "library.bib"
     if not bib_path.is_file():
@@ -194,6 +205,53 @@ def main() -> int:
                 continue
         doomed.append((citekey, item_key, item.get("version"),
                        {"item": item, "children": children}))
+
+    for att_key in args.attachment:
+        resp = z.session.get(f"{z.base}/items/{att_key}", timeout=60)
+        if resp.status_code == 404:
+            refused.append(f"attachment {att_key}: Zotero has no such item")
+            continue
+        resp.raise_for_status()
+        att = resp.json()
+        data = att.get("data") or {}
+        if data.get("itemType") != "attachment":
+            refused.append(f"{att_key}: that is a {data.get('itemType')}, not an "
+                           "attachment. Use --key for a record.")
+            continue
+        parent = data.get("parentItem")
+        siblings_here = []
+        if parent:
+            kids = z.paged(f"items/{parent}/children", quiet=True)
+            siblings_here = [c for c in storage_attachments(kids)
+                             if c.get("key") != att_key]
+
+        # Annotations hang off the ATTACHMENT, not the record, so they go with
+        # it. Said before the deletion rather than discovered after: they are a
+        # reader's own highlights and comments, and the one part of an
+        # attachment that cannot be recovered by re-uploading the file.
+        notes = [c for c in z.paged(f"items/{att_key}/children", quiet=True)
+                 if (c.get("data") or {}).get("itemType") in ("annotation", "note")]
+
+        print(f"  DELETE  attachment {att_key}  {data.get('filename')!r}"
+              + (f"  on {parent}" if parent else "  (no parent)"))
+        if notes:
+            print(f"     and {len(notes)} annotation(s)/note(s) on it, which go "
+                  "with it and cannot be recovered by re-uploading the file")
+        if siblings_here:
+            for c in siblings_here:
+                d = c.get("data") or {}
+                print(f"     survives: {c.get('key')}  {d.get('filename')!r}")
+        else:
+            print("     survives: NOTHING -- this is the record's only attachment")
+            if not args.allow_last_copy:
+                refused.append(
+                    f"attachment {att_key}: it is the only one on {parent}, so "
+                    "deleting it leaves that record with no file at all. Pass "
+                    "--allow-last-copy if you mean it.")
+                print("     ! refused")
+                continue
+        doomed.append((f"attachment {att_key}", att_key, att.get("version"),
+                       {"item": att, "children": notes}))
 
     if args.stubs:
         print("  scanning for attachments with no bytes "

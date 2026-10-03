@@ -3200,6 +3200,89 @@ def main():
     check(a_empty["type"] == "note" and a_empty["positions"][0]["page"] == 0,
           "and an image annotation with nothing in it degrades rather than raising")
 
+    print("\nthe refresh honours pairings.tsv, which it used to ignore")
+
+    # Two things assign a stem and only one was reading the decision.
+    # zotero_attach consulted pairings.tsv; the refresh numbered attachments by
+    # the order Zotero returned them and never looked at the file. On
+    # 2026-10-03 they disagreed on two records and the refresh won, so
+    # text/Hirota2000Effect.md came to hold the SIBLING paper under the key
+    # anyone cites.
+    hir = [{"id": "R83UG3SX"}, {"id": "F8LVG59K"}]      # as Zotero returned them
+    pairs = {"Hirota2000Effect": "F8LVG59K", "Hirota2000Effect-2": "R83UG3SX"}
+    ordered, probs = zs.order_by_pairings("Hirota2000Effect", hir, pairs)
+    check([f["id"] for f in ordered] == ["F8LVG59K", "R83UG3SX"],
+          f"the named attachment takes the plain key, whatever order Zotero gave "
+          f"({[f['id'] for f in ordered]})")
+    check(probs == [], f"and that is not a problem, it is the point ({probs})")
+
+    # The negative case a fix must not break: an ordinary article + SI pair that
+    # pairings.tsv says nothing about.
+    kh = [{"id": "A1"}, {"id": "A2"}]
+    same, probs2 = zs.order_by_pairings("Khare2018Quantitative", kh, pairs)
+    check([f["id"] for f in same] == ["A1", "A2"] and probs2 == [],
+          "a record the file does not mention is untouched")
+    check(zs.order_by_pairings("K", [{"id": "x"}], {})[0] == [{"id": "x"}],
+          "and no pairings at all changes nothing")
+
+    # Partial coverage: name one, let the rest fall into the gaps in order.
+    three = [{"id": "P1"}, {"id": "P2"}, {"id": "P3"}]
+    part, _pp = zs.order_by_pairings("K5", three, {"K5-3": "P1"})
+    check([f["id"] for f in part] == ["P2", "P3", "P1"],
+          f"a single pairing places that one and the others keep their order "
+          f"({[f['id'] for f in part]})")
+
+    # A stale pairing is a PROBLEM, not a silent skip. The file is meant to be
+    # the authority, so it naming something the record does not have means the
+    # file and the library have diverged and somebody should know.
+    _o, stale = zs.order_by_pairings("K6", [{"id": "Q1"}], {"K6": "GONE"})
+    check(stale and "not an attachment on this record" in stale[0],
+          f"a pairing naming a missing attachment is reported ({stale})")
+    _o, far = zs.order_by_pairings("K7", [{"id": "Q1"}], {"K7-4": "Q1"})
+    check(far and "the record has 1 attachment" in far[0],
+          f"and so is a position the record cannot hold ({far})")
+
+    print("\na stem change is unfinished work, like a failed status")
+
+    # Reordering alone would have repaired nothing: the filehash still matches
+    # and a file still exists at the new target -- holding the other paper.
+    sdir = tmp / "stem-change"
+    (sdir / "text").mkdir(parents=True)
+    (sdir / "pdf").mkdir(parents=True)
+    (sdir / "pdf" / "Hirota2000Effect.pdf").write_bytes(pdf_bytes)
+    (sdir / "text" / "Hirota2000Effect.md").write_text(
+        "the OTHER paper's text\n", encoding="utf-8")
+    sfiles = {"d1": [{"id": "s1", "mime_type": "application/pdf", "filehash": "hh"}]}
+    # The state says this attachment was last written under a DIFFERENT stem.
+    sst = {"files": {mm.qualify("s1"): {"filehash": "hh", "status": "ok",
+                                        "stem": "Hirota2000Effect-2"}}}
+    gf, gs, _gx, _gr = mm.harvest_attachments(
+        NoNetwork(), sfiles, {mm.qualify("d1"): "Hirota2000Effect"},
+        {"d1": DOCS[0]}, sdir, sst, "text")
+    check(gf == 1 and gs == 0,
+          f"an attachment whose STEM moved is re-extracted, not skipped "
+          f"({gf} extracted, {gs} skipped)")
+    check("OTHER paper" not in (sdir / "text" / "Hirota2000Effect.md").read_text(encoding="utf-8"),
+          "so the wrong extract is replaced rather than left under the right name")
+    check(sst["files"][mm.qualify("s1")]["stem"] == "Hirota2000Effect",
+          "and the state records the stem it actually wrote")
+
+    # Unchanged stem still skips, or every refresh re-extracts the library.
+    sst2 = {"files": {mm.qualify("s1"): {"filehash": "hh", "status": "ok",
+                                         "stem": "Hirota2000Effect"}}}
+    _f2, s2, _x2, _r2 = mm.harvest_attachments(
+        NoNetwork(), sfiles, {mm.qualify("d1"): "Hirota2000Effect"},
+        {"d1": DOCS[0]}, sdir, sst2, "text")
+    check(s2 == 1, f"an unchanged stem still skips ({s2})")
+
+    # And an entry written before stems were recorded has no `stem` key at all;
+    # it must not be re-extracted for want of one.
+    sst3 = {"files": {mm.qualify("s1"): {"filehash": "hh", "status": "ok"}}}
+    _f3, s3, _x3, _r3 = mm.harvest_attachments(
+        NoNetwork(), sfiles, {mm.qualify("d1"): "Hirota2000Effect"},
+        {"d1": DOCS[0]}, sdir, sst3, "text")
+    check(s3 == 1, f"a pre-0.25 entry with no stem recorded still skips ({s3})")
+
     print("\na Zotero refresh, end to end, offline")
 
     ZITEM = {"key": "ZK1", "data": {

@@ -1421,6 +1421,64 @@ What follows, and it is stated rather than argued:
 - `--backfill` still works and is still the way to rebuild one. Nothing about it
   changed; what changed is that nobody currently wants what it produces.
 
+## 20. The refresh ignored `pairings.tsv`, and two keys served the wrong paper
+
+Found by `library`, 2026-10-03. After the 15:47 UTC refresh,
+`text/Hirota2000Effect.md` held *"Effect of Charge"* — the sibling's paper —
+and `text/Daoulas2005Molecular.md` held *"Detailed Atomistic"*. **The unsuffixed
+key, the one anyone cites, resolved to a different paper.** Silently, and
+visible only by reading page 1.
+
+**Two things assign a stem and only one of them was reading the decision.**
+`zotero_attach.py` consulted `.mirror/pairings.tsv` when choosing which
+attachment to fill — that file exists precisely because 62 records could not be
+paired by any rule and a person decided them by hand. The refresh numbered
+attachments by the order Zotero's children endpoint happened to return, and
+never opened the file. When they disagreed, the refresh won, because the refresh
+is what writes the extracts.
+
+That is my gap, and it is the shape worth remembering: **a decision file is only
+authoritative over the paths that read it**, and I built one for the writer
+without asking which other code decides the same thing.
+
+`order_by_pairings` puts a named stem at its own index and leaves everything
+else in its existing relative order, so a record the file does not mention is
+untouched — the negative case that must not break is every ordinary
+article-plus-supplement pair. A pairing naming an attachment the record does not
+have is **reported**, because a stale authority is worse than none.
+
+### Reordering alone would have repaired nothing
+
+This is the half that would have made the fix look like it worked. The skip
+tests the filehash and whether a file exists at the target — and after
+reordering, the bytes are unchanged and `text/Hirota2000Effect.md` still exists,
+*holding the other paper*. Every one of those records would have been skipped as
+unchanged.
+
+So `state.json` records the **stem** each attachment was written under, and a
+stem that has moved reads as unfinished work. Third member of that family now:
+`failed` is not a result, `no-text` is only the plain reader's verdict, and a
+verdict belongs to the **name it was written under** as well as to the reader
+that produced it. An entry predating this carries no `stem` and still skips, so
+nothing re-extracts for want of a field that did not exist.
+
+`state.json` gains a key, so `__version__` moves — `0.25.0`.
+
+## 21. `zotero_delete.py --attachment` — one attachment, bytes and all
+
+Asked for by `library` the same day, and blocking: `--key` deletes records and
+`--stubs` deletes 404s, and neither can remove a single attachment that holds a
+file. The two parked duplicates from the pairing work are exactly that.
+
+Same guards as the record path — a dry run naming survivors, an automatic
+backup, a version precondition, a refusal to leave a record with no attachment
+at all unless `--allow-last-copy` says so.
+
+**One guard belongs only here: annotations hang off the attachment, not the
+record.** They go with it, and they are the one part that re-uploading the file
+cannot bring back — a reader's own highlights and comments. The dry run counts
+them and the backup carries them.
+
 ## 2. Make a failing refresh loud
 
 **Why.** The failure this tool is least equipped to notice is silent

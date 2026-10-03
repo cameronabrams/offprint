@@ -48,6 +48,7 @@ from mendeley_mirror import (DEFAULT_OUT, __version__, assign_citekeys,  # noqa:
                              annotation_markdown, mirror_state_dir, qualify,
                              save_json, write_bibtex, write_extraction_report,
                              write_folders, write_index, write_status)
+from zotero_attach import load_pairings  # noqa: E402
 from zotero_migrate import Zotero, load_zotero_credentials, parse_bib, year_of  # noqa: E402
 
 BACKEND = "zotero"
@@ -681,6 +682,59 @@ def rescue_identifiers(out: Path) -> int:
     return 0
 
 
+def order_by_pairings(citekey: str, files: list, pairings: dict) -> tuple:
+    """Order one record's attachments to match a hand-decided `pairings.tsv`.
+
+    Returns `(ordered, problems)`.
+
+    **Two things assign a stem and only one of them was reading the decision.**
+    `zotero_attach.py` consulted `.mirror/pairings.tsv` when it chose which
+    attachment to fill; the refresh numbered attachments by the order Zotero's
+    children endpoint happened to return, and never looked at the file at all.
+    On 2026-10-03 they disagreed on two records, and because the refresh writes
+    the extracts, it won: `text/Hirota2000Effect.md` came to hold the sibling
+    paper under the key anyone cites. Silently, and only visible by reading
+    page 1.
+
+    A stem the file names is placed at its own index — `<key>` at 0, `<key>-N`
+    at N-1 — and everything else keeps its existing relative order in the gaps.
+    So a record the file does not mention is untouched, which is the case that
+    must not break: every ordinary article-plus-supplement pair.
+
+    A pairing naming an attachment this record does not have is a **problem**,
+    not a silent skip. It means the file is stale against the library, and the
+    whole point of it is to be the authority.
+    """
+    relevant = {stem: att for stem, att in pairings.items()
+                if stem == citekey or (stem.startswith(citekey + "-")
+                                       and stem[len(citekey) + 1:].isdigit())}
+    if not relevant:
+        return files, []
+
+    by_id = {f.get("id"): f for f in files}
+    slots, problems, claimed = {}, [], set()
+    for stem, att in sorted(relevant.items()):
+        idx = 0 if stem == citekey else int(stem[len(citekey) + 1:]) - 1
+        if att not in by_id:
+            problems.append(f"{stem} -> {att}: not an attachment on this record")
+            continue
+        if idx in slots:
+            problems.append(f"{stem}: two pairings claim position {idx + 1}")
+            continue
+        if idx >= len(files):
+            problems.append(f"{stem}: position {idx + 1} but the record has "
+                            f"{len(files)} attachment(s)")
+            continue
+        slots[idx] = by_id[att]
+        claimed.add(att)
+
+    rest = [f for f in files if f.get("id") not in claimed]
+    ordered, it = [], iter(rest)
+    for i in range(len(files)):
+        ordered.append(slots[i] if i in slots else next(it))
+    return ordered, problems
+
+
 def zotero_fetch(z: Zotero):
     """Bytes for one attachment, from Zotero, as a fallback.
 
@@ -754,6 +808,23 @@ def refresh(out: Path, ocr: bool = False, dry_run: bool = False) -> int:
 
     files = src.files_by_doc([d["id"] for d in docs])
     print(f"  attachments: {sum(len(v) for v in files.values())}")
+
+    # The hand-decided order wins over whatever Zotero returned.
+    pairings = load_pairings(out)
+    reordered, pair_problems = 0, []
+    if pairings:
+        for doc_id, flist in files.items():
+            ck = keymap.get(qualify(doc_id, BACKEND))
+            if not ck:
+                continue
+            new_order, probs = order_by_pairings(ck, flist, pairings)
+            pair_problems += [f"{ck}: {p}" for p in probs]
+            if [f.get("id") for f in new_order] != [f.get("id") for f in flist]:
+                files[doc_id] = new_order
+                reordered += 1
+        print(f"  pairings.tsv: {len(pairings)} entries, {reordered} record(s) reordered")
+        for line in pair_problems:
+            print(f"  ! {line}")
     if dry_run:
         print("\nDry run. Nothing written: no keys saved, no bib, no extracts.")
         return 0

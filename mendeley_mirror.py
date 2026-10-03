@@ -37,7 +37,7 @@ Usage:
 
 from __future__ import annotations
 
-__version__ = "0.24.0"
+__version__ = "0.25.0"
 """The tool's version, and the only place it is written down.
 
 It exists so a mirror can say what produced it. Extraction behaviour has changed
@@ -1495,6 +1495,17 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                     # video file, and retrying those every run would be motion.
                     done_before = False
                 has_artifact = text_target.exists() or prior_status in ("no-text", "not-pdf")
+                # **The verdict also belongs to the STEM it was written under.**
+                # An attachment can keep its bytes and change its name: on
+                # 2026-10-03 the refresh ordered two records' attachments
+                # opposite to `.mirror/pairings.tsv`, so `Hirota2000Effect` and
+                # `Hirota2000Effect-2` swapped papers. Re-running with the
+                # ordering fixed would have repaired nothing, because the
+                # filehash still matched and a file still existed at the new
+                # target -- holding the other paper's text. Recording the stem
+                # is what lets a rename read as unfinished work.
+                if prior.get("stem") and prior["stem"] != stem:
+                    done_before = False
                 if (done_before and has_artifact
                         and prior.get("filehash") == f.get("filehash")):
                     skipped += 1
@@ -1574,7 +1585,7 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                                        "detail": detail})
                         known[qual(f["id"])] = {"filehash": f.get("filehash"),
                                                    "status": "not-pdf",
-                                                   "detail": detail}
+                                                   "stem": stem, "detail": detail}
                         continue
 
                     body, pages, chars, content, garble = extract_pdf_text(data)
@@ -1654,7 +1665,8 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                         text_target.write_text(safe, encoding="utf-8")
                         fetched += 1
                     known[qual(f["id"])] = {"filehash": f.get("filehash"), "status": status,
-                                      "detail": detail, "pages": pages, "chars": chars}
+                                      "stem": stem, "detail": detail,
+                                      "pages": pages, "chars": chars}
                     stub = pdf_dir / f"{stem}.pdf"
                     if mode == "text" and not from_disk and stub.exists():
                         # `not from_disk` is the whole fix. `text` mode writes
@@ -1689,6 +1701,7 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                         note("  ! further failures not individually logged; "
                              "the first five above are the pattern")
                     known[qual(f["id"])] = {"filehash": f.get("filehash"), "status": "failed",
+                                            "stem": stem,
                                       "detail": str(exc)[:200]}
                     report.append({"key": stem, "status": "failed",
                                    "title": doc.get("title", ""), "detail": str(exc)[:120]})
