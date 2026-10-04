@@ -1503,6 +1503,34 @@ entries written before 0.27.0 carry no `rules` key at all, so every one read as
 older. This one is the same, and after it every entry carries `rules: 3`, so the
 *next* bump can be measured rather than assumed.
 
+### Verified, and the arc is closed
+
+`library`, against a pre-run snapshot: status ok, **exactly four extracts
+changed, all four newly OCR'd** — `Kirkpatrick1983Optimization` (2,712 → 60,215
+characters), `Barresinoussi1983Isolation`, `Popovic1984Detection`,
+`Hartmann2014American`. Nothing else moved and no OCR extract was lost; the
+count is 120.
+
+It also checked `Kirkpatrick`'s **page offset** against the rendered page at
+both ends — +669 — which tests the `<!-- p. N -->` contract rather than merely
+that text appeared. An OCR pass that produced text under the wrong page numbers
+would have passed every other check in this report.
+
+**A consequence worth drawing: `stamp-only-extracts.tsv` should now be empty.**
+That file lists the papers found to carry a repeated stamp and nothing else —
+exactly the class this fix reaches — and the run that verified it re-read all
+2,741 attachments, so any still-attached member of that list has now been
+re-examined under rules 3. If the file still names papers, those are either no
+longer attachments or a case the content test does not catch, and either is
+worth knowing.
+
+**What the five rounds have in common**, since the arc is worth one sentence:
+each fix was correct and each was defeated by something it could not see — a
+verdict's stem, a verdict's rules, a stamp counted as text. The pattern is
+adding a new judgement without asking which existing judgement already answers
+the same question. `content_chars()` had the answer to the last one before any
+of it started.
+
 ## 23. The 0.26.0 run worked, and found two more — `0.27.0`
 
 `library`'s diff: **Hirota and Daoulas repaired, none of the 59 had stale text,
