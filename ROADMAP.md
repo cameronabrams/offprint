@@ -1516,13 +1516,18 @@ both ends — +669 — which tests the `<!-- p. N -->` contract rather than mere
 that text appeared. An OCR pass that produced text under the wrong page numbers
 would have passed every other check in this report.
 
-**A consequence worth drawing: `stamp-only-extracts.tsv` should now be empty.**
-That file lists the papers found to carry a repeated stamp and nothing else —
-exactly the class this fix reaches — and the run that verified it re-read all
-2,741 attachments, so any still-attached member of that list has now been
-re-examined under rules 3. If the file still names papers, those are either no
-longer attachments or a case the content test does not catch, and either is
-worth knowing.
+**A consequence worth drawing, and resolved the same day.**
+`stamp-only-extracts.tsv` lists the papers found to carry a repeated stamp and
+nothing else — exactly the class this fix reaches. `library` checked all 22
+entries: **every one is still attached and now `ocr: true`, at 11k to 147k
+characters.** So the content test missed nothing on the list, and the class is
+clear across its whole known membership rather than only the four that moved in
+the last run.
+
+It kept the file and added a `resolved` column rather than emptying it, which is
+the better call and not the one I suggested: **no tool reads that file, so it is
+a historical record, and emptying it would destroy the evidence that the problem
+existed and was fixed.** The same reason this roadmap keeps its wrong turns.
 
 **What the five rounds have in common**, since the arc is worth one sentence:
 each fix was correct and each was defeated by something it could not see — a
