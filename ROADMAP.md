@@ -1464,6 +1464,45 @@ nothing re-extracts for want of a field that did not exist.
 
 `state.json` gains a key, so `__version__` moves — `0.25.0`.
 
+## 24. A stamp on every page is not a text layer — `0.28.0`
+
+`library`'s 0.27.0 run: **status ok, exactly six extracts changed, all six the
+new OCR set, no OCR extract lost.** The six are the JSTOR-class fix working. And
+`Kirkpatrick1983Optimization` still was not reached.
+
+Its per-page text lengths are `[1067, 152, 152, 152, 152, 152, 152, 152, 152,
+152, 152]` — page 1 is JSTOR's cover, pages 2–11 are image scans each carrying
+**only** the identical 152-character JSTOR footer. So every page "has text", the
+page-fraction test saw 11 of 11, and OCR never ran.
+
+**This is the ProQuest stamp again, and `content_chars()` was written for it in
+September.** That function already drops lines repeated across most pages, and
+the whole-document test beside it was already built on its result. The
+page-fraction test I added in 0.26.0 was built on *raw* text — in the same
+function, two lines apart from the one that knew better.
+
+`content_per_page()` is that logic factored out per page, and the fraction is
+measured on it. Kirkpatrick is then 1 page in 11.
+
+`library` asked for the negative case to be kept and it is: a born-digital
+paper whose running header repeats but whose pages carry body text must not be
+OCR'd, and that scores 1.00. An earlier version of that fixture repeated one
+paragraph on every page and scored 0.00 — correctly, since a document whose
+every page is identical *is* boilerplate all the way down. **The test was wrong
+and the detector was right**, which is worth recording because the reflex is the
+other way.
+
+### The cost of a rules bump, stated
+
+`EXTRACT_RULES` moves to 3, so `--reassess` is again the whole library: 2,741
+attachments, about 93 minutes on the last run. That is the second full pass in
+two days and it is the honest price of changing what extraction decides.
+
+`library` asked whether the last one re-reading all 2,741 was expected. It was:
+entries written before 0.27.0 carry no `rules` key at all, so every one read as
+older. This one is the same, and after it every entry carries `rules: 3`, so the
+*next* bump can be measured rather than assumed.
+
 ## 23. The 0.26.0 run worked, and found two more — `0.27.0`
 
 `library`'s diff: **Hirota and Daoulas repaired, none of the 59 had stale text,

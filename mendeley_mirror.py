@@ -37,7 +37,7 @@ Usage:
 
 from __future__ import annotations
 
-__version__ = "0.27.0"
+__version__ = "0.28.0"
 """The tool's version, and the only place it is written down.
 
 It exists so a mirror can say what produced it. Extraction behaviour has changed
@@ -989,13 +989,15 @@ DONE_STATUSES = ("ok", "ocr", "garbled", "no-text", "not-pdf")
 #   1  the original volume test
 #   2  2026-10-03: a page-fraction test as well, so a scan whose cover page
 #      carries a text layer reaches OCR
+#   3  2026-10-04: that fraction measured on CONTENT rather than raw text, so a
+#      stamp repeated on every image page stops counting as text
 #
 # `Kirkpatrick1983Optimization` is why this exists. It was extracted under
 # rules 1, stored `ok`, and the run that shipped rules 2 skipped it as already
 # done -- so the fix never reached the one paper it was written for. Every
 # improvement to extraction has this shape: the papers that would benefit are
 # exactly the ones already marked finished.
-EXTRACT_RULES = 2
+EXTRACT_RULES = 3
 
 
 def content_of_extract(text: str) -> int:
@@ -1074,16 +1076,22 @@ MIN_CHARS_PER_PAGE = 80
 MIN_PAGE_TEXT_FRACTION = 0.5
 
 
-def page_text_fraction(body: str, pages: int) -> float:
-    """What share of the document's pages produced any text at all.
+def page_text_fraction(page_texts: list[str]) -> float:
+    """What share of the pages carry text of their own.
 
-    Counted from the `<!-- p. N -->` markers, because `extract_pdf_text` emits a
-    chunk only for a page with something on it -- so the markers already are the
-    answer and nothing new has to be threaded out of the extractor.
+    **Of their own** is the whole of it. The first version of this counted
+    `<!-- p. N -->` markers, which is a count of pages that produced *any*
+    output — and a JSTOR scan stamps its 152-character footer onto every image
+    page, so all eleven produced output and none was OCR'd. Measured on content,
+    after page-repeated lines are dropped, the same document is 1 page in 11.
+
+    A page below `MIN_CHARS_PER_PAGE` of its own text is not carrying any, which
+    is the same floor the whole-document test uses.
     """
-    if pages <= 0:
+    if not page_texts:
         return 1.0
-    return len(re.findall(r"<!-- p\. \d+ -->", body or "")) / pages
+    per = content_per_page(page_texts)
+    return sum(1 for n in per if n >= MIN_CHARS_PER_PAGE) / len(per)
 
 # How much of a document's pages a line must appear on to be boilerplate rather
 # than content. A running head or a library stamp is on all of them; a sentence
@@ -1115,9 +1123,26 @@ def content_chars(page_texts: list[str]) -> int:
     pages" means nothing, and a two-page paper whose header matches its footer
     should not be judged on it.
     """
+    return sum(content_per_page(page_texts))
+
+
+def content_per_page(page_texts: list[str]) -> list[int]:
+    """Characters left on EACH page once page-repeated lines are discarded.
+
+    The per-page form of the same judgement, factored out because the share of
+    pages carrying real text answers a question the total cannot:
+    `Kirkpatrick1983Optimization` is a JSTOR scan whose every image page carries
+    the identical 152-character footer, so every page "has text", the
+    page-fraction test introduced in 0.26.0 saw 11 of 11, and OCR never ran.
+    Judged on content instead, it is 1 of 11.
+
+    Exactly the ProQuest stamp again, which this function was written for — and
+    the per-page test was built on raw text while the total beside it was
+    already built on content.
+    """
     pages = [t.strip() for t in page_texts]
     if len(pages) < 3:
-        return sum(len(t) for t in pages)
+        return [len(t) for t in pages]
 
     seen: dict[str, int] = {}
     for text in pages:
@@ -1128,14 +1153,14 @@ def content_chars(page_texts: list[str]) -> int:
     threshold = max(3, int(len(pages) * BOILERPLATE_SHARE))
     boilerplate = {line for line, n in seen.items() if n >= threshold}
     if not boilerplate:
-        return sum(len(t) for t in pages)
+        return [len(t) for t in pages]
 
-    total = 0
+    out = []
     for text in pages:
         kept = [x for x in text.splitlines()
                 if " ".join(x.split()).casefold() not in boilerplate]
-        total += len("\n".join(kept).strip())
-    return total
+        out.append(len("\n".join(kept).strip()))
+    return out
 
 
 # A page is judged garbled when too little of it is letters or digits. PyMuPDF
@@ -1234,8 +1259,11 @@ def extract_pdf_text(data: bytes, fallback=pdftotext_pages
         notes.append(f"{repaired} garbled page(s) re-read with pdftotext")
     if dropped:
         notes.append(f"{dropped} garbled page(s) dropped")
+    # The page fraction travels with the rest because it needs the RAW pages,
+    # which only exist in here: boilerplate has to be found while the lines are
+    # still lines, and the caller only ever sees the joined body.
     return ("\n\n".join(chunks), pages, chars, content_chars(raw_pages),
-            "; ".join(notes))
+            page_text_fraction(raw_pages), "; ".join(notes))
 
 
 def require_ocr_stack() -> None:
@@ -1677,13 +1705,15 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                                                    "detail": detail}
                         continue
 
-                    body, pages, chars, content, garble = extract_pdf_text(data)
+                    body, pages, chars, content, page_frac, garble = extract_pdf_text(data)
                     from_ocr = False
-                    # Thin by volume, OR text on too few of its pages. The
+                    # Thin by volume, OR text on too few of its own pages. The
                     # second catches a scan whose cover page carries the whole
-                    # document's text.
+                    # document's text, and -- since the fraction is measured on
+                    # content -- one whose every image page carries the same
+                    # stamp.
                     thin = (content < MIN_CHARS_PER_PAGE * max(pages, 1)
-                            or page_text_fraction(body, pages) <= MIN_PAGE_TEXT_FRACTION)
+                            or page_frac <= MIN_PAGE_TEXT_FRACTION)
                     if thin and ocr:
                         progress(f"  {seen}/{total}  {stem[:36]} (ocr)")
                         ocr_body, ocr_chars = ocr_pdf_text(data)

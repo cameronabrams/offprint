@@ -466,7 +466,7 @@ def main():
     pdf_bytes = doc.tobytes()
     doc.close()
 
-    body, pages, chars, content, note = mm.extract_pdf_text(pdf_bytes)
+    body, pages, chars, content, _pf, note = mm.extract_pdf_text(pdf_bytes)
     check(pages == 2, f"page count read ({pages})")
     check("<!-- p. 1 -->" in body and "<!-- p. 2 -->" in body, "page markers emitted")
     check("catalysis efficiency" in body, "hyphenation across a line break repaired")
@@ -474,7 +474,7 @@ def main():
 
     scan = pymupdf.open()
     scan.new_page()  # a page with no text layer, as a scan would be
-    empty_body, empty_pages, empty_chars, empty_content, _ = mm.extract_pdf_text(scan.tobytes())
+    empty_body, empty_pages, empty_chars, empty_content, _pf2, _ = mm.extract_pdf_text(scan.tobytes())
     scan.close()
     check(empty_chars < mm.MIN_CHARS_PER_PAGE * max(empty_pages, 1),
           f"textless page falls under the scan threshold ({empty_chars} chars)")
@@ -488,7 +488,7 @@ def main():
     for _ in range(29):
         page = stamped.new_page()
         page.insert_text((72, 72), stamp, fontsize=9)
-    st_body, st_pages, st_chars, st_content, _ = mm.extract_pdf_text(stamped.tobytes())
+    st_body, st_pages, st_chars, st_content, st_frac, _ = mm.extract_pdf_text(stamped.tobytes())
     stamped.close()
     check(st_chars >= mm.MIN_CHARS_PER_PAGE * st_pages,
           f"stamped scan clears the raw threshold, as the real one did ({st_chars})")
@@ -503,7 +503,7 @@ def main():
         page.insert_textbox(pymupdf.Rect(72, 90, 420, 700),
                             (f"Section {n} discusses the integrator in detail. " * 12),
                             fontsize=9)
-    r_body, r_pages, r_chars, r_content, _ = mm.extract_pdf_text(real.tobytes())
+    r_body, r_pages, r_chars, r_content, r_frac, _ = mm.extract_pdf_text(real.tobytes())
     real.close()
     check(r_content > mm.MIN_CHARS_PER_PAGE * r_pages,
           f"paper with a running head stays readable ({r_content} content chars)")
@@ -533,11 +533,11 @@ def main():
     pymupdf.Page.get_text = soup_page_two
     try:
         good = "The fallback read this page properly and at length. " * 10
-        b1, p1, c1, k1, n1 = mm.extract_pdf_text(pdf_bytes, fallback=lambda d: ["", good])
+        b1, p1, c1, k1, _f1, n1 = mm.extract_pdf_text(pdf_bytes, fallback=lambda d: ["", good])
         check("fallback read this page" in b1 and ",   , ," not in b1,
               "a garbled page is replaced by the fallback's reading")
         check("re-read with pdftotext" in n1, f"repair is noted ({n1!r})")
-        b2, p2, c2, k2, n2 = mm.extract_pdf_text(pdf_bytes, fallback=lambda d: None)
+        b2, p2, c2, k2, _f2, n2 = mm.extract_pdf_text(pdf_bytes, fallback=lambda d: None)
         check("<!-- p. 2 -->" not in b2 and "<!-- p. 1 -->" in b2,
               "an unrepairable garbled page is dropped, marker and all")
         check("dropped" in n2, f"drop is noted ({n2!r})")
@@ -3268,19 +3268,41 @@ def main():
     # layer, pages 2-11 are images. 2,986 characters over 11 pages clears
     # 80 * 11 = 880 comfortably, so OCR never ran and the article body was
     # invisible to search. The test is how many PAGES carry text.
-    cover_only = "<!-- p. 1 -->\n\n" + ("JSTOR terms and conditions " * 120)
-    check(mm.page_text_fraction(cover_only, 11) < mm.MIN_PAGE_TEXT_FRACTION,
-          f"a cover page plus ten images is thin by page "
-          f"({mm.page_text_fraction(cover_only, 11):.2f})")
+    cover_pages = ["JSTOR cover matter " * 60] + [""] * 10
+    check(mm.page_text_fraction(cover_pages) < mm.MIN_PAGE_TEXT_FRACTION,
+          f"a cover page plus ten blank images is thin by page "
+          f"({mm.page_text_fraction(cover_pages):.2f})")
 
-    # The negative case, which sets the threshold: a born-digital paper with a
-    # figure-only page or two must NOT be OCR'd wholesale.
-    born = "".join(f"<!-- p. {n} -->\n\nreal text here\n\n" for n in range(1, 10))
-    check(mm.page_text_fraction(born, 11) > mm.MIN_PAGE_TEXT_FRACTION,
-          f"nine text pages in eleven is not a scan "
-          f"({mm.page_text_fraction(born, 11):.2f})")
-    check(mm.page_text_fraction("", 0) == 1.0,
+    # Kirkpatrick1983Optimization, the one the first version missed: every image
+    # page carries the SAME 152-character JSTOR footer, so every page "has
+    # text". Measured on content, after page-repeated lines are dropped, it is
+    # one page in eleven. Exactly the ProQuest stamp, which content_chars was
+    # written for -- and the per-page test was built on raw text while the
+    # total beside it was already built on content.
+    stamp = ("This content downloaded from 10.0.0.1 on Fri, 03 Oct 2026\n"
+             "All use subject to https://about.jstor.org/terms")
+    jstor = ["JSTOR cover matter " * 60 + "\n" + stamp] + [stamp] * 10
+    check(mm.page_text_fraction(jstor) < mm.MIN_PAGE_TEXT_FRACTION,
+          f"a stamp on every page does not make every page a text page "
+          f"({mm.page_text_fraction(jstor):.2f})")
+
+    # The negative case library asked to keep: a born-digital paper whose
+    # running header repeats but whose pages carry body text must NOT be OCR'd.
+    # The body must DIFFER per page, as a real paper's does. An earlier version
+    # of this fixture repeated one paragraph on every page and scored 0.00 --
+    # correctly, since a document whose every page is identical is boilerplate
+    # all the way down. The test was wrong and the detector was right.
+    head = "J. Am. Chem. Soc. 2018, 140, 1234-1245"
+    born = [f"{head}\nparagraph {n} of the discussion, " + f"sentence {n} " * 20
+            for n in range(11)]
+    check(mm.page_text_fraction(born) > mm.MIN_PAGE_TEXT_FRACTION,
+          f"a repeating running head does not make a paper a scan "
+          f"({mm.page_text_fraction(born):.2f})")
+    check(mm.page_text_fraction([]) == 1.0,
           "and a zero-page document is not divided by zero")
+    check(mm.content_per_page(jstor)[1:] == [0] * 10,
+          f"the stamped pages have no content of their own "
+          f"({mm.content_per_page(jstor)[:3]})")
 
     # It must change WHEN OCR RUNS and not what counts as no-text: a document
     # whose few pages of text are real text is not a scan, and calling it one
@@ -3291,7 +3313,10 @@ def main():
     pg = cover.new_page()
     pg.insert_text((72, 72), "JSTOR cover page " * 30)
     for _ in range(10):
-        cover.new_page()
+        # Each image page carries the identical footer, as the real one does.
+        ip = cover.new_page()
+        ip.insert_text((72, 760), "This content downloaded from 10.0.0.1 "
+                                   "All use subject to about.jstor.org/terms")
     (jst / "pdf" / "Kirkpatrick1983Optimization.pdf").write_bytes(cover.tobytes())
     jfiles = {"d1": [{"id": "j1", "mime_type": "application/pdf", "filehash": "hj"}]}
     _ocr_was = mm.ocr_pdf_text
