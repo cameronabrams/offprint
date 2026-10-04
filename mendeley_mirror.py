@@ -37,7 +37,7 @@ Usage:
 
 from __future__ import annotations
 
-__version__ = "0.28.0"
+__version__ = "0.28.1"
 """The tool's version, and the only place it is written down.
 
 It exists so a mirror can say what produced it. Extraction behaviour has changed
@@ -1618,13 +1618,27 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                 # written afterwards carries its stem.
                 if prior.get("stem", "") != stem:
                     done_before = False
-                if reassess and prior.get("rules", 1) < EXTRACT_RULES:
+                if reassess and prior and prior.get("rules", 1) < EXTRACT_RULES:
                     done_before = False
-                elif prior.get("rules", 1) < EXTRACT_RULES:
-                    stale_rules += 1
                 if (done_before and has_artifact
                         and prior.get("filehash") == f.get("filehash")):
                     skipped += 1
+                    # Counted HERE, where the attachment is actually left alone,
+                    # and not at the decision above. There it counted two things
+                    # it did not mean: an attachment with no prior entry at all,
+                    # because `prior.get("rules", 1)` returns the default for a
+                    # record that was never produced under any rules; and one
+                    # about to be re-extracted for some other reason. On
+                    # 2026-10-04 that printed "22 extracts were produced under
+                    # older extraction rules" the morning after a full
+                    # `--reassess`, and the 22 were exactly the 22 attachments
+                    # filed that day -- extracted fresh, under current rules, in
+                    # the same run that called them old.
+                    #
+                    # The number now means what its sentence says: extracts left
+                    # on disk from older rules that this run did not re-read.
+                    if prior.get("rules", 1) < EXTRACT_RULES:
+                        stale_rules += 1
                     if prior.get("status") in ("no-text", "failed", "garbled",
                                                 "not-pdf"):
                         # `not-pdf` joined this list on 2026-10-01. Without it a

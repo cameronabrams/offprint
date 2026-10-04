@@ -3242,6 +3242,35 @@ def main():
           "but the run SAYS how many and what to pass -- the staleness is "
           "impossible not to know about, which is the whole fix")
 
+    # A BRAND NEW attachment has no prior entry at all, so prior.get("rules", 1)
+    # returns the default for something that was never produced under any
+    # rules. Counted at the decision point, that made 22 freshly filed papers
+    # read as "produced under older extraction rules" in the very run that
+    # extracted them under the current ones.
+    fresh = io.StringIO()
+    with contextlib.redirect_stdout(fresh):
+        nf, ns, _nx, _nr = mm.harvest_attachments(
+            NoNetwork(), rfiles, {mm.qualify("d1"): "Muller2020Yield"},
+            {"d1": DOCS[0]}, rdir, {}, "text")
+    check(nf == 1 and ns == 0, f"a new attachment is extracted ({nf}, {ns})")
+    check("older extraction rules" not in fresh.getvalue(),
+          f"and is NOT reported as produced under older rules -- it was not "
+          f"produced at all ({fresh.getvalue().strip()[-60:]})")
+
+    # Nor is one that IS stale but gets re-read for another reason: the number
+    # means extracts left on disk, not entries that happened to be old when the
+    # question was asked.
+    moved = io.StringIO()
+    st_moved = {"files": {mm.qualify("r1"): {"filehash": "hr", "status": "ok",
+                                             "stem": "SomeOther2020Key",
+                                             "rules": 1}}}
+    with contextlib.redirect_stdout(moved):
+        mm.harvest_attachments(
+            NoNetwork(), rfiles, {mm.qualify("d1"): "Muller2020Yield"},
+            {"d1": DOCS[0]}, rdir, st_moved, "text")
+    check("older extraction rules" not in moved.getvalue(),
+          "nor one re-extracted because its stem moved -- it is not left on disk")
+
     # --reassess is what acts on it.
     st_re = old_entry()
     rf, rs, _rx, _rr = mm.harvest_attachments(

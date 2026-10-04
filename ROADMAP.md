@@ -1464,6 +1464,30 @@ nothing re-extracts for want of a field that did not exist.
 
 `state.json` gains a key, so `__version__` moves — `0.25.0`.
 
+## 25. The stale-rules counter counted things it did not mean — `0.28.1`
+
+`library`, the morning after a full `--reassess` put every entry on rules 3:
+the refresh printed **"22 extracts were produced under older extraction rules
+(now 3)"**, and it had just filed exactly 22 new attachments, which extracted
+fine. It asked whether the number was right. It was not.
+
+A brand-new attachment has **no prior entry at all**, so `prior.get("rules", 1)`
+returns the default — for a record that was never produced under any rules. The
+count sat at the decision point, before the skip, so it counted two things its
+sentence did not say: attachments being extracted fresh in that very run under
+the current rules, and attachments about to be re-read for some other reason,
+such as a moved stem.
+
+Counted now where the attachment is actually **left alone**, so the number means
+what the sentence claims: *extracts on disk, produced under older rules, that
+this run did not re-read.* That is also the only version of it anyone can act
+on, since `--reassess` is the action and it applies to exactly those.
+
+**Caught by arithmetic, again** — "I had just filed exactly 22" — which is how
+every counting defect in this tool has been found. Not one was found by reading
+the code, including by me, including in the sessions where I was looking for
+precisely this.
+
 ## 24. A stamp on every page is not a text layer — `0.28.0`
 
 `library`'s 0.27.0 run: **status ok, exactly six extracts changed, all six the
