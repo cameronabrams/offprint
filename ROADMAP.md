@@ -1689,6 +1689,54 @@ record.** They go with it, and they are the one part that re-uploading the file
 cannot bring back — a reader's own highlights and comments. The dry run counts
 them and the backup carries them.
 
+## 26. What has actually been run, and what has not
+
+Written 2026-10-04 before this session's context was compacted, because it is
+the one class of thing held nowhere else: a summary keeps conclusions and drops
+the question *has anyone ever done this against the real library?* Eight tools
+were built in three days and they have not been exercised equally.
+
+**Exercised against the live library, with a result reported back:**
+`zotero_source.py --refresh` (many times, five rounds of defects),
+`zotero_attach.py` (2,608 uploads, 30-record md5 sample),
+`zotero_edit.py` (55 author edits, then 1,174 PMID restores),
+`zotero_delete.py` (`--key` on 11 records; `--attachment` on 2),
+`zotero_inbox.py` (22 attachments filed 10-04), `zotero_migrate.py` (the
+migration itself), `get_pdf.py` (cache and archive paths).
+
+**Built and never run against the live library** — each is a claim this repo
+makes and has not tested:
+
+- **`doixref.py`.** Built 10-02, validated on four records I chose, handed over,
+  and **no full run has been reported.** The ~2,270-record audit it was built
+  for has not happened, so the author-mismatch class is measured at three
+  records and inferred beyond that.
+- **`zotero_push.py`.** One dry run, by me, on ff14SB. **It has never created a
+  record.** The `/items/new` template check, the duplicate refusal and the
+  "no citation key is assigned" property are all untested outside fixtures.
+- **`--pair-by-order`.** The 62 ambiguous records were done by hand instead,
+  which was the right call — so this code path has never run at all.
+- **`zotero_delete.py --stubs`.** The five byte-less stubs were deleted by hand
+  before the tool existed. The file-endpoint test that distinguishes a stub from
+  an attachment with `md5: None` has never met a real one.
+- **`get_pdf.py`'s Zotero fallback.** Every call so far was answered by the
+  cache or the archive. Now that `<out>/pdf/` is empty it is the only path left,
+  so the first real use will exercise it.
+- **An `imported_url` upload.** ROADMAP item 1 records this as UNVERIFIED and
+  asks for one to be done alone with `--key` first. The bulk upload ran and a
+  30-record sample verified, but **nobody confirmed an `imported_url` item was
+  in that sample**, so whether Zotero accepts an upload against one is still
+  not known from evidence. 24 records depend on the answer.
+
+**A path deliberately not taken**, and the reasoning rather than the verdict:
+`--reassess` re-reads the whole library on every rules bump, ~93 minutes. A
+bounded version is available — read `text/*.md` locally, find the extracts whose
+own page pattern suggests the new rules would change them, re-read only those.
+It was not built, because four of the five extraction defects in this file came
+from a clever filter that looked right and could not fire, and building a fifth
+under time pressure to save 90 minutes is the wrong trade. **If someone builds
+it later, that is the argument it has to beat, not the cost.**
+
 ## 2. Make a failing refresh loud
 
 **Why.** The failure this tool is least equipped to notice is silent
