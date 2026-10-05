@@ -2704,6 +2704,38 @@ def main():
     check(any("/file" in u for u in zf.session.asked),
           f"the FILE endpoint is what gets asked ({zf.session.asked[:1]})")
 
+    print("\nstem_conflict: the file name against the DOI the text gives")
+    import inbox as _ib
+
+    # A browser names a downloaded file after the WHOLE DOI, prefix included.
+    # The guard compared such a stem against only the DOI's suffix -- the part
+    # after the slash -- so "10.1002sici..." could never be found in it and
+    # every browser-named file read as its own name disagreeing with its own
+    # text. Reported 2026-10-05 by library as a title-matching failure; the
+    # title matched at 1.00 overlap with the phrase found, and this refused it.
+    long_doi = "10.1002/(sici)1097-4628(19970404)64:1<167::aid-app15>3.0.co;2-1"
+    check(not _ib.stem_conflict("10.1002_(SICI)1097-4628(19970404)64", long_doi),
+          "a file named for the whole DOI does not conflict with it")
+    check(not _ib.stem_conflict("10.1038_387527a0", "10.1038/387527a0"),
+          "nor does the simple case of the same thing")
+    # Cameron's browser truncated that name at the ':'. A stem that is a PREFIX
+    # of the real DOI is a shortened name, not a different paper -- and the
+    # page-1 title check is what actually vouches for it.
+    check(not _ib.stem_conflict("10.1002_(SICI)1097-4628(19970404)", long_doi),
+          "a truncated name is a prefix, not a disagreement")
+
+    # The guard still has to fire, or it is not a guard. A downloaded issue scan
+    # beginning on the previous article's last page is why it exists.
+    check(_ib.stem_conflict("science.1116480", "10.1038/387527a0"),
+          "a stem naming a genuinely different DOI still conflicts")
+    check(_ib.stem_conflict("10.1126_science.1116480", "10.1038/387527a0"),
+          "and so does a full DOI naming a different paper")
+    check(not _ib.stem_conflict("doyle1996", "10.1038/387527a0"),
+          "an ordinary human file name has no opinion at all (four digits is a "
+          "YEAR, and requiring four refused most of a forty-four file batch)")
+    check(not _ib.stem_conflict("casino", "10.1038/387527a0"),
+          "and neither does a name with no digit run")
+
     print("\nzotero_inbox: the only thing here that creates a Zotero item")
     import zotero_inbox as zi
 

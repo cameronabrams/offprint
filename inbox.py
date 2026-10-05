@@ -275,9 +275,23 @@ def stem_conflict(stem: str, doi: str) -> bool:
     st = re.sub(r"[^a-z0-9.]", "", stem.lower())
     if len(st) < 6:
         return False
-    tail = doi.lower().split("/", 1)[-1]
-    tail = re.sub(r"[^a-z0-9.]", "", tail)
-    return st not in tail and tail not in st
+    # Compared against the WHOLE DOI as well as its suffix. The docstring above
+    # assumed a stem is suffix-shaped -- "387527a0", "science.1116480" -- which
+    # is how a person names a file. A browser names it after the entire DOI,
+    # prefix included, and then "10.1002sici..." could never be found inside a
+    # tail that starts after the slash. Every such file read as a conflict
+    # between its own name and its own text.
+    #
+    # Found 2026-10-05: library reported `10.1002_(SICI)1097-4628(19970404)64.pdf`
+    # refused with "none matched the text on page 1", and diagnosed it as the
+    # title matcher losing a hyphen at a line break. The title matched perfectly
+    # (overlap 1.00, phrase found); this is what refused it. The browser had also
+    # truncated the name at the ':', so the stem is a PREFIX of the real DOI --
+    # which containment already handles once both sides are the same shape.
+    norm = lambda v: re.sub(r"[^a-z0-9.]", "", v.lower())
+    full = norm(doi)
+    tail = norm(doi.lower().split("/", 1)[-1])
+    return not any(st in hay or hay in st for hay in (full, tail))
 
 
 def looks_right(msg: dict, page_text: str) -> bool:
