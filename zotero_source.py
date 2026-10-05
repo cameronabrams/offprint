@@ -1124,13 +1124,47 @@ def refresh(out: Path, ocr: bool = False, dry_run: bool = False,
                        if (state["files"][k] or {}).get("status") == "failed"]
         print(f"  state.json: {len(stale)} entr(ies) for attachments Zotero no "
               f"longer lists")
+        # EVERY one of them, with what is known about it. Named in full because
+        # --prune-state deletes exactly this set, and an operator cannot check
+        # a set they cannot see. 0.29.7 printed only the `failed` ones -- the
+        # subset I happened to be investigating -- so three of seven would have
+        # been removed unexamined. Same fault as the create dry run printing
+        # only the DOI, reported by `library` the same day.
+        rows = sorted(
+            (local_id(k, BACKEND) or k,
+             (state["files"][k] or {}).get("status", "(none)"),
+             (state["files"][k] or {}).get("stem", ""))
+            for k in stale)
+        if len(rows) <= 40:
+            for key_, status_, stem_ in rows:
+                print(f"    {key_:12s} {status_:9s} {stem_ or '(no recorded stem)'}")
+        else:
+            path = mirror / "stale-state.tsv"
+            path.write_text("".join(f"{k}\t{st}\t{sm}\n" for k, st, sm in rows),
+                            encoding="utf-8")
+            print(f"    too many to list; all {len(rows)} written to {path}")
         if dead_failed:
             print(f"    {len(dead_failed)} of them recorded FAILED and will "
                   "never be retried, because a key absent from the listing is "
-                  "never visited: " + ", ".join(local_id(k, BACKEND) or k
-                                                for k in dead_failed[:6]))
-            print("    These are residue, not a live failure. That is why the "
-                  "run above says 0 failed.")
+                  "never visited. These are residue, not a live failure -- "
+                  "that is why the run above says 0 failed.")
+        extracted = [k for k in stale
+                     if (state["files"][k] or {}).get("status") in
+                     ("ok", "ocr", "garbled")]
+        if extracted:
+            # These are the ones to think about before pruning. A FAILED stale
+            # entry records a non-event. An `ok` one records that text WAS
+            # extracted from an attachment that no longer exists -- and a
+            # refresh deletes nothing, so `text/<stem>.md` is still sitting in
+            # the mirror as an orphan. The state entry is the only thing that
+            # knows the orphan's provenance, and for an entry written before
+            # 0.26.0 there is no stem, so pruning it severs the extract from
+            # any record of where it came from.
+            print(f"    {len(extracted)} recorded a SUCCESSFUL extraction. "
+                  "Their text/*.md was not deleted -- a refresh deletes "
+                  "nothing -- so pruning these discards the only record of "
+                  "where those extracts came from. Check them before "
+                  "--prune-state; get_pdf.py --attachments finds orphans.")
         if prune_state and not only_ids:
             # Guarded, because the coupling is dangerous: this prunes against
             # THIS RUN's attachment listing, and a listing that came back empty

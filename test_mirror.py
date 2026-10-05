@@ -3877,6 +3877,18 @@ def main():
           f"an empty listing marks EVERY zotero entry stale ({len(everything)}) "
           "-- which is why --prune-state refuses to act on one")
 
+    # A stale entry recording a SUCCESSFUL extraction is not the same thing as
+    # a stale FAILED one, and the difference decides whether pruning loses
+    # anything. On the live library 4 of 7 were failed and 3 were `ok` with
+    # page and character counts and no stem -- extracted before 0.26.0, from
+    # attachments now gone, with their text/*.md still in the mirror because a
+    # refresh deletes nothing. Pruning those severs the extract from any record
+    # of its provenance.
+    kinds = {(st_stale["files"][k] or {}).get("status") for k in st_list}
+    check(kinds == {"failed", "ok"},
+          f"the stale set mixes failures and successful extractions ({kinds}) "
+          "-- reporting only the failures hides the ones with something to lose")
+
     # ---- a targeted refresh touches only what it names --------------------
     # library's fixture, 2026-10-05: "--only on one key -> body-hash snapshot
     # of every OTHER text/*.md unchanged". The hazard is not the extraction, it
