@@ -141,8 +141,8 @@ def zotero_doi_index(z: Zotero) -> dict:
     return index
 
 
-def create_record(z: Zotero, doi: str) -> tuple[str, list]:
-    """Create the top-level record for `doi`. Returns `(item key, dropped)`.
+def record_for(doi: str) -> tuple[dict, list]:
+    """The Zotero item that would be created for `doi`, and what has nowhere to go.
 
     **The metadata comes back through `from_doi`, not off the Crossref message
     this script already holds.** That is deliberate and not a wasted request:
@@ -151,11 +151,42 @@ def create_record(z: Zotero, doi: str) -> tuple[str, list]:
     went into the library as 2016 and was cited that way in a manuscript
     because one path read a date-part itself. A second creator of records that
     did its own conversion would be a second chance at the same bug.
+
+    Split out from the create so **a dry run builds the identical item and
+    prints it**. `library` asked for this after the first dry run of the create
+    branch, 2026-10-05: it said only "NEW record for 10.1023/a:1013735103120",
+    which is the one thing they could already check for themselves. What they
+    could not see was the title, authors, venue and year about to be written --
+    the part a person actually reviews before approving a create, and the part
+    `csl_year` exists to get right. A dry run whose output cannot be checked is
+    not a safeguard; it is a delay.
     """
     doc = from_doi(doi)
     item_type = TO_ZOTERO_TYPE.get(doc.get("type", "generic"), "document")
-    item, dropped = doc_to_zotero(doc, item_template(item_type))
-    return create_item(z, item), dropped
+    return doc_to_zotero(doc, item_template(item_type))
+
+
+def describe_item(item: dict, dropped: list, indent: str = "      ") -> None:
+    """Print the record that would be created, the way zotero_push.py does."""
+    creators = ", ".join(
+        f"{c.get('lastName', '')}, {c.get('firstName', '')}".strip(", ")
+        for c in item.get("creators") or [])
+    print(f"{indent}itemType : {item.get('itemType', '')}")
+    print(f"{indent}title    : {item.get('title', '')[:76]}")
+    print(f"{indent}creators : {creators[:76] or '(none)'}")
+    venue = next((item[f] for f in ("publicationTitle", "bookTitle",
+                                    "proceedingsTitle", "repository")
+                  if item.get(f)), "")
+    print(f"{indent}venue    : {venue[:76] or '(none)'}")
+    print(f"{indent}date     : {item.get('date', '(none)')}   "
+          f"volume {item.get('volume') or '-'}  "
+          f"issue {item.get('issue') or '-'}  "
+          f"pages {item.get('pages') or '-'}")
+    print(f"{indent}DOI      : {item.get('DOI', '(none)')}")
+    if item.get("extra"):
+        print(f"{indent}extra    : {item['extra'][:76]}")
+    for line in dropped:
+        print(f"{indent}! nowhere to put {line}")
 
 
 def create_attachment(z: Zotero, parent_key: str, filename: str,
@@ -276,7 +307,6 @@ def main() -> int:
         doi_index = zotero_doi_index(z)
 
     filed = skipped = created = 0
-    targets: list = []
     for path in files:
         plan, why = plan_one(args.out, path, args.key or "", args.item or "",
                              doi_index, not args.no_create)
@@ -299,18 +329,19 @@ def main() -> int:
             # Nothing exists to check the bytes against, so the duplicate test
             # below is skipped for this branch alone -- a record created in this
             # same loop iteration cannot already hold the file.
-            print(f"  {'+' if args.yes else 'would add'} {path.name} -> NEW record "
-                  f"for {plan['create']}  [{why}]")
+            print(f"  {'+' if args.yes else 'would create'} a record for "
+                  f"{path.name}  [{why}]")
+            # Built in both modes, from the same function, so what a dry run
+            # shows is what a live run sends -- not a description of it.
+            item, dropped = record_for(plan["create"])
+            describe_item(item, dropped)
             if not args.yes:
                 filed += 1
                 created += 1
-                targets.append("<the new item key>")
                 continue
-            item_key, dropped = create_record(z, plan["create"])
+            item_key = create_item(z, item)
             created += 1
-            print(f"    created record {item_key}")
-            for line in dropped:
-                print(f"    ! nowhere to put {line}")
+            print(f"      created record {item_key}")
         else:
             data = path.read_bytes()
             children = z.paged(f"items/{item_key}/children", quiet=True)
@@ -326,7 +357,6 @@ def main() -> int:
                   f"{n_existing + 1}  [{why}]")
             if not args.yes:
                 filed += 1
-                targets.append(citekey or item_key)
                 continue
 
         data = path.read_bytes()
@@ -342,25 +372,29 @@ def main() -> int:
             writer.put_bytes(auth, data)
             writer.register(att, auth["uploadKey"])
         filed += 1
-        targets.append(citekey or item_key)
-        print(f"    uploaded {len(data):,} bytes as {att}")
+        print(f"      uploaded {len(data):,} bytes as {att}")
 
     print(f"\n{'filed' if args.yes else 'would file'}: {filed}, "
-          f"records created: {created}, skipped: {skipped}")
+          f"records {'created' if args.yes else 'to create'}: {created}, "
+          f"skipped: {skipped}")
     if not args.yes:
         print("\nDry run. Nothing was created and nothing was uploaded.")
-        if targets:
-            print("Then: uv run --script zotero_source.py --refresh --only "
-                  + " ".join(sorted(set(targets))))
+        if created:
+            print("Check the records above before re-running with --yes: once "
+                  "created, removing one is zotero_delete.py and it has no undo.")
     elif filed:
         print("\n<out>/pdf/ does not have these yet: the archive catches up on "
               "the next refresh, which fetches them back from Zotero.")
         if created:
             print("A record created here has NO citation key until a refresh "
                   "assigns one.")
-        print("\nTargeted refresh for just these records:\n"
-              "  uv run --script zotero_source.py --refresh --only "
-              + " ".join(sorted(set(targets))))
+        # NOT --only. Measured 2026-10-05: --only one record 199.4s against a
+        # full refresh 203.1s, because skipping an unchanged attachment costs
+        # nothing. Suggesting it here would be advice that buys 2% and reads
+        # like it buys an hour -- and for a record just created it cannot even
+        # be written, since the citation key does not exist yet.
+        print("\nNow refresh, which assigns the citation key and extracts the "
+              "text:\n  uv run --script zotero_source.py --refresh")
     return 0
 
 

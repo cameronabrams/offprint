@@ -2815,6 +2815,46 @@ def main():
     check(key_i == {"item": "FABXX33S"} and "--item" in why_i,
           f"--item names a record with no citation key yet ({key_i}, {why_i})")
 
+    # A dry run of the create branch has to show what it would create. Its
+    # first live dry run said only "NEW record for 10.1023/a:1013735103120" --
+    # the one fact the operator could already check. What they could not see
+    # was the title, authors, venue and year about to be written, which is what
+    # a person actually reviews before approving a create.
+    _fd, _it = zi.from_doi, zi.item_template
+    try:
+        zi.from_doi = lambda d: {
+            "type": "journal", "title": "The toughening of cyanate-ester polymers",
+            "authors": [{"first_name": "A. J.", "last_name": "Kinloch"},
+                        {"first_name": "A. C.", "last_name": "Taylor"}],
+            "year": 2002, "source": "Journal of Materials Science",
+            "volume": "37", "issue": "3", "pages": "433-460",
+            "identifiers": {"doi": d, "issn": "0022-2461"}}
+        zi.item_template = lambda t: {"itemType": t, "title": "", "creators": [],
+                                      "date": "", "publicationTitle": "",
+                                      "volume": "", "issue": "", "pages": "",
+                                      "DOI": "", "extra": "", "abstractNote": ""}
+        item_p, dropped_p = zi.record_for("10.1023/a:1013735103120")
+        check(item_p.get("title") == "The toughening of cyanate-ester polymers"
+              and item_p.get("date") == "2002"
+              and item_p.get("publicationTitle") == "Journal of Materials Science",
+              f"record_for builds the item a create would send ({item_p})")
+        check(len(item_p.get("creators") or []) == 2
+              and item_p["creators"][0]["lastName"] == "Kinloch",
+              "with the creators a reviewer needs to see")
+        check(any("issn" in d.lower() for d in dropped_p),
+              f"and names what the item type has nowhere to put ({dropped_p})")
+
+        import io, contextlib
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            zi.describe_item(item_p, dropped_p)
+        shown = buf.getvalue()
+        for want in ("journalArticle", "Kinloch", "Journal of Materials Science",
+                     "2002", "10.1023/a:1013735103120"):
+            check(want in shown, f"the dry run prints {want!r}")
+    finally:
+        zi.from_doi, zi.item_template = _fd, _it
+
     # ---- filing a paper the library does not have, in one pass ----------
     # Requested by library on 2026-10-05 (Cameron): a new paper took two full
     # refreshes, one to mint the citation key and one to extract the text.
