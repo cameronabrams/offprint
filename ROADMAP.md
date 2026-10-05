@@ -357,6 +357,22 @@ apart.
       not an empty library. `--only` cannot prune, because pruning is a
       whole-library claim and `--only` does not speak for the mirror.
 
+      **The three `ok` stale entries lose no text if pruned**, checked by
+      `library` 2026-10-05: R83UG3SX and 6DB5XCSI were parked copies of
+      sibling records' PDFs (Hirota2000Effecta, Daoulas2005Detailed) whose
+      text lives on under the siblings, and HNH4IS55 equals `Shan2011How.md`.
+      Caveat kept in their words: for the first two the match is pages+chars,
+      not a body hash, because those bodies are no longer on disk — strong,
+      not proof.
+
+      **Three orphan extracts remain in the mirror** —
+      `Shan2011How-3.md`, `Hirota2000Effect-2.md`, `Daoulas2005Molecular-2.md`
+      — all byte-identical in body to live extracts. Sweeping them is OPEN and
+      is deliberately **not** attached to `--prune-state`: that flag's claim is
+      "Zotero no longer lists this attachment", and a file being safe to delete
+      is a different claim on different evidence. It took a body-hash
+      comparison to establish, and it did not follow from the first at all.
+
       The method is worth copying: `library` ran a **positive control** through
       the same two endpoints in the same session. Without it, four 404s are
       equally consistent with "these are gone" and "my credentials or base URL
@@ -1112,10 +1128,30 @@ Recovery is an `--ocr` pass, which regenerates them.
 ### One attachment the API would not describe stopped the whole run — `0.18.2`
 
 `annotations_by_doc` made **one request per attachment**, 2,745 of them, and
-`items/HNH4IS55/children` — the `.avi` on `Shan2011How` — answers **400**. The
-exception left the refresh with 0 of 2,732 extracted and **no status written at
-all**, so `mirror-status.md` still carried the word of a run that never
-finished.
+`items/HNH4IS55/children` answers **400**. The exception left the refresh with
+0 of 2,732 extracted and **no status written at all**, so `mirror-status.md`
+still carried the word of a run that never finished.
+
+**CORRECTED 2026-10-05.** This said "the `.avi` on `Shan2011How`" for three
+days. `library` checked: an attachment cannot have children, so **every**
+attachment key answers 400 — the status code carries no information about what
+HNH4IS55 held, and the `.avi` was an inference of mine written down as an
+observation. Shan2011How's live children are two PDFs; HNH4IS55's own state
+entry records `ok`, 3 pages, 11,861 chars, which only a PDF read produces, and
+it equals `Shan2011How.md` exactly.
+
+The correction strengthens the fix rather than weakening it. The per-attachment
+walk was not unlucky enough to meet one bad file among 2,745 — it was asking an
+endpoint that cannot answer for *any* of them. And one thing stays unexplained
+on purpose: if every key 400s, the walk should have died on the first, and this
+one reached HNH4IS55. Probably it was simply first. Nobody has shown that, the
+item is deleted, and **a plausible story is exactly what put the `.avi` here**,
+so it is recorded as unknown.
+
+Third misattribution of mine in two days, all the same shape: a fact adjacent
+to an observation, written down as the observation. The others were
+`fleetrestore` and the `.git/info/exclude` line, and "the title matcher" for
+what was really `stem_conflict`.
 
 Three defects in one, all mine and all in code written an hour earlier:
 

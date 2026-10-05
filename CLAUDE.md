@@ -407,6 +407,15 @@ pruning is a whole-library claim.
 Report by default, destroy only when asked, and refuse when the input that
 justifies the destruction looks wrong.
 
+**`--prune-state` touches `state.json` and nothing else.** An attachment that
+disappears leaves its extract behind in `text/`, because a refresh deletes
+nothing — so it is tempting to have the prune sweep the orphan too. Don't.
+They are different claims resting on different evidence: that Zotero no longer
+lists an attachment, and that a file in the mirror is safe to delete. On
+2026-10-05 the second needed `library` to body-hash three orphans against live
+extracts before anything could be said about them, and the answer did not
+follow from the first at all. One flag, one claim.
+
 ## Tests
 
 ```

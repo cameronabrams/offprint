@@ -371,11 +371,25 @@ class ZoteroSource:
 
         **It asks for every annotation at once rather than walking each
         attachment's children.** The first version made one request per
-        attachment -- 2,745 of them -- and `items/HNH4IS55/children`, the `.avi`
-        on `Shan2011How`, answers **400**. One attachment the API would not
-        describe took down a run that had 2,732 extractions still to do. Asking
+        attachment -- 2,745 of them -- and `items/HNH4IS55/children` answered
+        **400**, taking down a run with 2,732 extractions still to do. Asking
         `itemType=annotation` once is faster by three orders of magnitude and
         has no per-attachment failure to be killed by.
+
+        This used to say HNH4IS55 was "the `.avi` on `Shan2011How`". **That was
+        an inference from the 400, and `library` showed on 2026-10-05 that the
+        400 carries no such information: an attachment cannot have children, so
+        every attachment key answers 400.** The repair is not a detail -- it
+        makes the fix stronger. A per-attachment walk was not unlucky in
+        meeting one bad file; it was asking an endpoint that cannot answer for
+        anything it was given.
+
+        One thing is then unexplained and is left that way rather than
+        smoothed over: if every attachment key 400s, the walk should have died
+        on the first, and the run reached HNH4IS55. Most likely HNH4IS55 simply
+        was first and got recorded as the cause -- but nobody has shown that,
+        HNH4IS55 is deleted, and a plausible story is what put the `.avi` in
+        here in the first place.
 
         A failure here degrades to "no annotations" and says so. Annotations are
         the smallest thing this refresh produces -- this library has roughly two
@@ -1181,7 +1195,11 @@ def refresh(out: Path, ocr: bool = False, dry_run: bool = False,
                 for k in stale:
                     del state["files"][k]
                 save_json(mirror / "state.json", state)
-                print(f"    pruned {len(stale)} stale entr(ies) from state.json")
+                print(f"    pruned {len(stale)} stale entr(ies) from "
+                      "state.json. No file in text/ or pdf/ was touched: "
+                      "sweeping an orphaned extract is a different decision "
+                      "about different evidence, and this refresh deletes "
+                      "nothing.")
         elif prune_state and only_ids:
             print("    ! NOT pruning: --only does not speak for the mirror, "
                   "and pruning is a whole-library claim.")
@@ -1338,7 +1356,8 @@ def main() -> int:
     ap.add_argument("--prune-state", action="store_true",
                     help="with --refresh: drop state.json entries for "
                          "attachments Zotero no longer lists. Without it they "
-                         "are only reported")
+                         "are only reported. It touches state.json ONLY -- "
+                         "never text/, never pdf/")
     ap.add_argument("--reassess", action="store_true",
                     help="with --refresh: re-read attachments whose extract was "
                          "produced under older extraction rules")
