@@ -349,6 +349,19 @@ apart.
       So they are **not** `--stubs` candidates after all: there is nothing left
       in Zotero to delete. That item stays open.
 
+      **DONE and independently verified, 2026-10-05.** `library` pruned on
+      0.29.9 and diffed `state.json` against a pre-prune backup
+      (`~/.local/state/library/state.json.pre-prune-20261005`): exactly the 7
+      named keys removed, **0 added, 0 changed**, and the extract body-hash
+      diff unchanged.
+
+      That check verifies the property the design rests on and that no test
+      here asserts: **the set destroyed is the set that was named.** A prune
+      that silently took an eighth entry would have looked identical in the
+      run output, because the run output is what named the seven. Only a diff
+      against a copy taken beforehand can tell those apart — which is why the
+      backup, not the report, is what made this safe.
+
       0.29.7 reports stale entries on every refresh and names any recorded
       `failed`, which closes the ambiguity. `--prune-state` removes them and is
       guarded against its own coupling: the stale set comes from *this run's*
