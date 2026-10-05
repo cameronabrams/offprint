@@ -2776,6 +2776,56 @@ intermediate, not from reading the code. Consistent with item 26: this repo's
 defects are found by execution, and its tests encode what their author already
 believed.
 
+## 28. HTML entities stored literally — FIXED 0.30.0, and what the decode exposed
+
+`library` found `Inamdar2018Thermoplastic` in Zotero with `publicationTitle`
+set to `Industrial &amp; Engineering Chemistry Research`, created the same day
+by 0.29.x's new create branch. Crossref serves it that way; `doc_to_zotero`
+passed it through. Fixed at intake, where `html_decode` should always have
+been — it has run in the BibTeX writer since that writer existed, and
+**decoding on the way out is what hid the defect**: a grep of `library.bib`
+for `&amp;` returns zero however many records hold the entity.
+
+`--entities` reads the records instead, and found **15 fields in 15 records
+against the 8 visible in front matter** — the extra 7 in fields front matter
+does not print: 2 abstracts, 3 titles, 2 URLs. All 15 patched with
+`zotero_edit`, 0 conflicts, rescan clean.
+
+### What the decode produced, checked rather than assumed
+
+Three of the entities decode to characters this repo has handled badly before,
+so the output was put through `bib_entry` rather than trusted:
+
+| entity | decodes to | in `library.bib` |
+|---|---|---|
+| `&#8208;` | U+2010 HYPHEN | `-`, via `TEX_MAP` |
+| `&angst;` | U+00C5 (composed, not U+212B) | `Å` |
+| `&ring;` | U+02DA RING ABOVE | `\textdegree{}`, already mapped |
+| `&gt;` | `>` | `>`, unescaped |
+
+No regression: every one was already handled. The hyphen case had a test
+already, for the author field, from the Pascault entry.
+
+### The obvious follow-up is a trap, which is why it is not being done
+
+`<` and `>` render as inverted punctuation under LaTeX's OT1 font encoding, so
+escaping them to `\textless{}`/`\textgreater{}` looks like the natural next
+fix. **138 entries in `library.bib` contain a raw `<` or `>`, and some of them
+are DOIs** — Wiley's SICI scheme puts angle brackets in the identifier itself:
+
+```
+doi = {10.1002/(sici)1096-9136(199807)15:7<539::aid-dia668>3.0.co;2-s}
+```
+
+Escaping that corrupts the DOI for anyone copying it out of the bib. A correct
+version would have to escape text fields and never identifier fields, which is
+a per-field rule where today there is one escaper — a real change, touching
+138 entries, for a typesetting nicety under a font encoding almost nobody
+still uses. T1 and fontspec render both characters correctly.
+
+*What would change it:* someone reporting a `.bib` that typesets wrong, with
+the field named. Not before.
+
 ## Deliberately not doing
 
 **Packaging (PyPI, conda-forge, console entry points).** The PEP 723 headers
