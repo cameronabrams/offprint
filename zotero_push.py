@@ -46,6 +46,7 @@ a `report` has no `volume` rather than wondering where the volume went.
 from __future__ import annotations
 
 import argparse
+import html
 import secrets
 import sys
 from pathlib import Path
@@ -132,6 +133,18 @@ def doc_to_zotero(doc: dict, template: dict) -> tuple[dict, list]:
     def put(field: str, value, label: str = ""):
         if value in ("", None, []):
             return
+        # **Decoded here, at the only door into Zotero.** Crossref serves
+        # `Industrial &amp; Engineering Chemistry Research` and passing it
+        # through stores the entity literally in someone's library, where it
+        # shows up in every citation of that journal forever. `library` caught
+        # it on Inamdar2018Thermoplastic the day the create branch shipped.
+        #
+        # One pass, not a loop: `html_decode`'s docstring already settles that
+        # `&amp;amp;` should come back as the literal `&amp;` it encodes.
+        # mendeley_mirror has done this on the way OUT since the BibTeX writer
+        # was written; what was missing is the way in.
+        if isinstance(value, str):
+            value = html.unescape(value)
         if field in template:
             item[field] = value
         else:
@@ -140,8 +153,8 @@ def doc_to_zotero(doc: dict, template: dict) -> tuple[dict, list]:
 
     put("title", (doc.get("title") or "").strip())
     creators = [{"creatorType": "author",
-                 "firstName": (p.get("first_name") or "").strip(),
-                 "lastName": (p.get("last_name") or "").strip()}
+                 "firstName": html.unescape((p.get("first_name") or "").strip()),
+                 "lastName": html.unescape((p.get("last_name") or "").strip())}
                 for p in doc.get("authors") or []
                 if (p.get("last_name") or p.get("first_name"))]
     if creators:

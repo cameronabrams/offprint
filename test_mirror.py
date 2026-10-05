@@ -3849,6 +3849,56 @@ def main():
           f"and falls back to the per-collection walk when it has no records "
           f"({fsrc.z.asked})")
 
+    # ---- HTML entities stored literally in the records --------------------
+    # library, 2026-10-05: Inamdar2018Thermoplastic went into Zotero with
+    # publicationTitle "Industrial &amp; Engineering Chemistry Research",
+    # because Crossref serves it that way and 0.29.x's create branch passed it
+    # through. The decode has existed in this repo since the BibTeX writer --
+    # on the way OUT. What was missing is the way in.
+    ent_items = [
+        {"key": "ENT1", "data": {
+            "itemType": "journalArticle",
+            "title": "Thermoplastic toughening",
+            "publicationTitle": "Industrial &amp; Engineering Chemistry Research",
+            "DOI": "10.1021/acs.iecr.7b05202",
+            "creators": [{"creatorType": "author", "firstName": "S.",
+                          "lastName": "O&#39;Brien"}],
+            # bookkeeping that must never be rewritten even if it looked odd
+            "dateModified": "2026-10-05T00:00:00Z", "version": "12"}},
+        {"key": "ENT2", "data": {"itemType": "journalArticle",
+                                 "title": "A perfectly ordinary paper",
+                                 "publicationTitle": "Journal of Things"}},
+    ]
+    found = zs.entity_findings(ent_items)
+    fields = {(k, f) for k, f, _, _ in found}
+    check(("ENT1", "publicationTitle") in fields,
+          f"an entity in a record field is found ({sorted(fields)})")
+    check(("ENT1", "creators[0].lastName") in fields,
+          "including one in an author's name, which the repair file must not "
+          "touch but a human needs to know about")
+    check(not any(k == "ENT2" for k, _, _, _ in found),
+          "and a clean record yields nothing")
+    dec = {f: d for k, f, _, d in found if k == "ENT1"}
+    check(dec["publicationTitle"] == "Industrial & Engineering Chemistry Research",
+          f"the decoded value is what the repair would send ({dec})")
+
+    # The detection is "does decoding change this", not a pattern match, so a
+    # bare ampersand and a chemical name do not fire.
+    clean = zs.entity_findings([{"key": "ENT3", "data": {
+        "itemType": "journalArticle",
+        "title": "Acids & bases, and the AT&T problem",
+        "publicationTitle": "Jones & Jones"}}])
+    check(clean == [], f"a bare ampersand is not an entity ({clean})")
+
+    # And the reason the probe reads records rather than library.bib: the bib
+    # writer decodes on output, so the bib cannot show the defect.
+    ent_doc = dict(DOCS[0], title="Industrial &amp; Engineering",
+                   id="entdoc", source="Industrial &amp; Engineering")
+    rendered = mm.bib_entry(ent_doc, "Ent2018Industrial", False)
+    check("&amp;" not in rendered and r"\&" in rendered,
+          f"library.bib shows \\& where the record holds &amp; -- which is why "
+          f"a grep of the bib is a probe that cannot fail ({rendered[:120]!r})")
+
     # ---- stale state entries, and why a blind prune is not the fix --------
     # library found four on the live library, 2026-10-05: status failed, 404
     # from the file endpoint, all four confirmed permanently deleted from

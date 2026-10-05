@@ -37,6 +37,7 @@ import argparse
 import json
 import re
 import unicodedata
+import html
 import sys
 import time
 from datetime import datetime, timezone
@@ -958,6 +959,104 @@ def stale_state_entries(files_by_doc: dict, state: dict, backend: str) -> list:
             if local_id(k, backend) and k not in listed]
 
 
+# Fields that are Zotero's bookkeeping rather than the record's content, or
+# that are structured rather than prose. Nothing here should ever be rewritten
+# by an entity audit.
+_NOT_CONTENT = {"key", "version", "itemType", "parentItem", "linkMode", "md5",
+                "mtime", "filename", "contentType", "charset", "dateAdded",
+                "dateModified", "relations", "tags", "collections", "creators",
+                "deleted", "note"}
+
+
+def entity_findings(items: list) -> list:
+    """Records holding HTML entities literally. `[(key, field, raw, decoded)]`.
+
+    **Read from the RECORDS, never from `library.bib`.** The bib writer calls
+    `html_decode` on the way out, so `Industrial &amp; Engineering` is written
+    to the bib as `Industrial \\& Engineering` and a grep of the bib for
+    `&amp;` returns zero. That is a probe that cannot fail — the same shape as
+    every silent success in this repo's history, and `library` named it as such
+    when reporting this.
+
+    Detection is `html.unescape(v) != v` rather than a pattern match, so the
+    test is "does decoding change this", which is the actual question. A
+    pattern would also fire on a bare `&` or a chemical name.
+
+    `creators` is examined but reported only, never written into the edits
+    file: `zotero_edit` replaces a creator list wholesale per type, and a
+    generated edit to a name list is how an editor gets dropped.
+    """
+    out = []
+    for it in items:
+        data = it.get("data") or {}
+        key = it.get("key") or data.get("key") or ""
+        for field, value in sorted(data.items()):
+            if field in _NOT_CONTENT or not isinstance(value, str) or not value:
+                continue
+            decoded = html.unescape(value)
+            if decoded != value:
+                out.append((key, field, value, decoded))
+        for i, c in enumerate(data.get("creators") or []):
+            for part in ("firstName", "lastName", "name"):
+                v = c.get(part) or ""
+                if v and html.unescape(v) != v:
+                    out.append((key, f"creators[{i}].{part}", v,
+                                html.unescape(v)))
+    return out
+
+
+def audit_entities(out: Path) -> int:
+    """Report every record holding an HTML entity, and write the repair file.
+
+    Read-only against Zotero. Writes `.mirror/entity-fixes.json` in
+    `zotero_edit.py`'s format, `{citekey: {field: value}}`, so the repair is a
+    dry run away rather than a hand-transcription of a list.
+    """
+    api_key, user_id = load_zotero_credentials()
+    z = Zotero(api_key, user_id)
+    items = [i for i in z.items_top()
+             if (i.get("data") or {}).get("itemType") not in ("attachment", "note")]
+    print(f"offprint {__version__} entity audit: {len(items)} records\n")
+
+    keymap = load_json(mirror_state_dir(out) / "citekeys.json", {})
+    by_key = {local_id(ident, BACKEND): ck for ident, ck in keymap.items()
+              if local_id(ident, BACKEND)}
+
+    findings = entity_findings(items)
+    if not findings:
+        print("No record holds an HTML entity.")
+        return 0
+
+    edits: dict = {}
+    skipped_creators = 0
+    for key, field, raw, decoded in findings:
+        ck = by_key.get(key, "")
+        print(f"  {ck or key:28s} {field}")
+        print(f"      now: {raw[:72]}")
+        print(f"      ->   {decoded[:72]}")
+        if field.startswith("creators["):
+            skipped_creators += 1
+            continue
+        if not ck:
+            print("      ! no citation key yet; repair it after the next refresh")
+            continue
+        edits.setdefault(ck, {})[field] = decoded
+
+    print(f"\n{len(findings)} field(s) across "
+          f"{len({k for k, _, _, _ in findings})} record(s)")
+    if skipped_creators:
+        print(f"  {skipped_creators} are in creator names and are NOT in the "
+              "repair file: zotero_edit replaces a creator list wholesale per "
+              "type, and a generated edit to a name list is how an editor gets "
+              "dropped. Fix those by hand.")
+    if edits:
+        path = mirror_state_dir(out) / "entity-fixes.json"
+        save_json(path, edits)
+        print(f"\nWrote {path}\n  uv run --script zotero_edit.py --edits "
+              f"{path} --dry-run")
+    return 0
+
+
 def resolve_only(names: list, keymap: dict, docs_by_id: dict,
                  backend: str) -> set:
     """`--only` values (citation keys or Zotero item keys) as a set of doc ids.
@@ -1364,6 +1463,11 @@ def main() -> int:
     ap.add_argument("--rescue-identifiers", action="store_true",
                     help="write a zotero_edit.py edits file restoring identifiers "
                          "the frozen library.bib has and Zotero does not")
+    ap.add_argument("--entities", action="store_true",
+                    help="report records holding HTML entities literally "
+                         "(&amp;, &#39;) and write a zotero_edit repair file. "
+                         "Reads the RECORDS: library.bib decodes on output, so "
+                         "grepping it for &amp; finds nothing")
     ap.add_argument("--compare", action="store_true",
                     help="regenerate every BibTeX entry from Zotero and diff it "
                          "against the frozen library.bib")
@@ -1375,9 +1479,12 @@ def main() -> int:
                        prune_state=args.prune_state)
     if args.rescue_identifiers:
         return rescue_identifiers(args.out)
+    if args.entities:
+        return audit_entities(args.out)
     if args.compare:
         return compare(args.out)
-    ap.error("pick a mode: --refresh, --compare or --rescue-identifiers.")
+    ap.error("pick a mode: --refresh, --compare, --entities or "
+             "--rescue-identifiers.")
     return 2
 
 

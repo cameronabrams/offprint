@@ -381,6 +381,26 @@ What it is actually for is bounding an **expensive** re-read: `--ocr` or
 `--reassess` this ROADMAP recorded as deliberately not built, and it arrived as
 a side effect of building the wrong thing.
 
+## Decode on the way in, not only on the way out
+
+`html_decode` has run in the BibTeX writer since it was written, so
+`Industrial &amp; Engineering` reaches `library.bib` as `Industrial \&
+Engineering` and looks right. Nothing decoded on the way **in**, so 0.29.x's
+create branch stored Crossref's entity literally in Zotero, where it is now
+the journal name on that record for good. `doc_to_zotero` is the single door
+into Zotero for both writers and decodes there.
+
+**The output decode is also what hid it.** A grep of `library.bib` for `&amp;`
+returns zero no matter how many records hold the entity — a probe that cannot
+fail, which is the shape of nearly every silent success in this file. So
+`--entities` reads the **records**, and its test is `html.unescape(v) != v`
+rather than a pattern, because "does decoding change this" is the actual
+question and a pattern also fires on `AT&T`.
+
+Creator names are reported but never written into the repair file:
+`zotero_edit` replaces a creator list wholesale per type, and a generated edit
+to a name list is how an editor gets dropped.
+
 ## A state entry outlives its attachment
 
 `state.json` is keyed by attachment id and nothing removes an entry when the
