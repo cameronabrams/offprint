@@ -38,6 +38,7 @@ import json
 import re
 import unicodedata
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -864,6 +865,37 @@ def zotero_fetch(z: Zotero):
     return fetch
 
 
+class Phases:
+    """Wall-clock per phase of a refresh, printed at the end.
+
+    Added 2026-10-05 after predicting a full refresh would drop to "about a
+    minute" and being told it was 203 seconds. The prediction was not careless
+    arithmetic -- removing 2,739 requests at ~0.22s each accounts for the 595
+    seconds that did disappear, almost exactly. The error was structural: **I
+    estimated the part I was removing and treated everything else as zero.**
+
+    So this measures everything else. A refresh is now fast enough that the
+    next optimisation is no longer obvious from reading the code, and the thing
+    that found the last one was a number from a real run.
+    """
+
+    def __init__(self):
+        self.marks: list = []
+        self.t0 = self.last = time.monotonic()
+
+    def mark(self, label: str) -> None:
+        now = time.monotonic()
+        self.marks.append((label, now - self.last))
+        self.last = now
+
+    def report(self) -> str:
+        total = time.monotonic() - self.t0
+        rows = [f"    {secs:7.1f}s  {label}" for label, secs in self.marks
+                if secs >= 0.05]
+        return ("\n  where the time went:\n" + "\n".join(rows)
+                + f"\n    {total:7.1f}s  total")
+
+
 def resolve_only(names: list, keymap: dict, docs_by_id: dict,
                  backend: str) -> set:
     """`--only` values (citation keys or Zotero item keys) as a set of doc ids.
@@ -938,10 +970,12 @@ def refresh(out: Path, ocr: bool = False, dry_run: bool = False,
     src = ZoteroSource(z)
     mirror = mirror_state_dir(out)
     started = datetime.now(timezone.utc)
+    phases = Phases()
 
     print(f"offprint {__version__} zotero refresh"
           f"{' -- DRY RUN, nothing is written' if dry_run else ''}")
     docs = src.documents()
+    phases.mark("fetch records (items/top)")
     print(f"  documents: {len(docs)}")
 
     keymap_path = mirror / "citekeys.json"
@@ -961,6 +995,7 @@ def refresh(out: Path, ocr: bool = False, dry_run: bool = False,
         if only else set()
 
     files = src.files_by_doc([d["id"] for d in docs])
+    phases.mark("fetch attachments (one bulk query)")
     print(f"  attachments: {sum(len(v) for v in files.values())}")
 
     # Loaded HERE rather than beside the extraction, because the attachment
@@ -992,6 +1027,7 @@ def refresh(out: Path, ocr: bool = False, dry_run: bool = False,
 
     save_json(keymap_path, keymap)
     write_bibtex(docs, keymap, out, include_abstract=True, backend=BACKEND)
+    phases.mark("write library.bib")
     docs_by_id = {d["id"]: d for d in docs}
 
     # A targeted refresh narrows the EXTRACTION and nothing else. `files` stays
@@ -1022,6 +1058,7 @@ def refresh(out: Path, ocr: bool = False, dry_run: bool = False,
             fetch=zotero_fetch(z), backend=BACKEND)
         save_json(mirror / "state.json", state)
         write_extraction_report(report, out, fetched)
+        phases.mark(f"extract text ({fetched} read, {skipped} skipped)")
         print(f"  text: {fetched} extracted, {skipped} unchanged, {failed} failed")
     except Exception as exc:
         # A crash must not leave the previous run's status standing. Without
@@ -1033,6 +1070,7 @@ def refresh(out: Path, ocr: bool = False, dry_run: bool = False,
         raise
 
     ann_by_doc = src.annotations_by_doc(files)
+    phases.mark("fetch annotations")
     n_ann = sum(len(v) for v in ann_by_doc.values())
     print(f"  annotations: {n_ann} across {len(ann_by_doc)} record(s)")
     if ann_by_doc:
@@ -1044,10 +1082,12 @@ def refresh(out: Path, ocr: bool = False, dry_run: bool = False,
                 annotation_markdown(docs_by_id[doc_id], key, anns), encoding="utf-8")
 
     folders, folder_docs = src.collections()
+    phases.mark(f"fetch collections ({len(folders)}, one request each)")
     print(f"  collections: {len(folders)}")
     if folders:
         write_folders(folders, folder_docs, keymap, out, backend=BACKEND)
     write_index(docs, keymap, files, ann_by_doc, out, backend=BACKEND)
+    phases.mark("write index.md and folders.json")
 
     # `write_status(out, True, ...)` was hardcoded here until 2026-10-02, so a
     # run in which all 2,734 extractions failed wrote **ok** and "Everything in
@@ -1063,6 +1103,7 @@ def refresh(out: Path, ocr: bool = False, dry_run: bool = False,
         # extraction had been failing for a week look freshly verified. The
         # same argument covers retired.json: declaring the mirror live again is
         # a whole-library claim.
+        print(phases.report())
         print(f"\n  mirror-status.md NOT updated: --only examined "
               f"{len(only_ids)} record(s), so it cannot speak for the mirror. "
               "Run a full refresh for that.")
@@ -1085,6 +1126,7 @@ def refresh(out: Path, ocr: bool = False, dry_run: bool = False,
                      f"extract; see extraction-report.md and the log above",
                      "unknown")
         print(f"\n! {failed} attachments FAILED. mirror-status.md says so.")
+    print(phases.report())
     print(f"\nDone. {len(docs)} references in {out / 'library.bib'}")
     return 0 if ok else 1
 

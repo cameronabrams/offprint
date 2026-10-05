@@ -2479,13 +2479,33 @@ below it, had been converted to a bulk query a week earlier and its docstring
 explains the reasoning at length; nothing applied it to its neighbour. A lesson
 written down next to the code that needs it is not the same as a lesson applied.
 
-**NOT YET MEASURED:** what a full refresh now costs. The arithmetic says about
-a minute. Nobody has run one. **`--only` was built on the assumption that a
-full refresh stays expensive, and if the full refresh is now a minute then
-`--only` is solving a problem that no longer exists** — it should be retired
-rather than carried, because every flag is a thing that can be wrong. The
-measurement is `library`'s to take and the decision waits on it. Do not treat
-`--only`'s existence as evidence it was needed.
+**MEASURED 2026-10-05 on 0.29.2, by `library`: 203 s, down from 798 s.** I had
+predicted "about a minute" and said so to a peer who then went and checked it.
+
+The prediction is worth dissecting, because the arithmetic in it was *right*.
+595 seconds disappeared; 2,739 requests at the ~0.22 s each I assumed accounts
+for 594 of them. What was wrong was not the estimate of the part I removed but
+the **assumption that everything else was near zero**. I never estimated the
+remainder at all, and the remainder is now the whole cost.
+
+That is a general failure mode in optimisation and it is worth naming: *the
+confident number was about the part I understood, and the error lived entirely
+in the part I had not looked at.* The same shape as item 26 — what has actually
+been run versus what is merely believed.
+
+0.29.3 therefore instruments the refresh by phase rather than guessing again.
+Roughly 60 HTTP requests remain (28 pages of records, 28 of attachments, one
+for annotations, one per collection) and they cannot account for 203 s either,
+so the next number has to come from a run, not from me.
+
+**`--only` is UNDECIDED and should stay that way until the phase report lands.**
+It was built assuming a full refresh stays expensive. At 203 s the fixed cost
+dominates and `--only` can only remove the extraction phase, so if extraction
+is a small share of 203 s then `--only` saves almost nothing and should be
+retired rather than carried — every flag is a thing that can be wrong. The
+experiment is one command: `--only` on one record, timed, against the phase
+report from a full run. Do not treat `--only`'s existence as evidence it was
+needed.
 
 ### The order problem the speedup created
 
@@ -2503,10 +2523,19 @@ names silently, under names other sessions already quote page numbers out of.
 what the files on disk were actually named for. New attachments append. Two
 attachments claiming one position is reported, never resolved.
 
-**This is unverified against the live library.** Every record with two or more
-attachments is a case; the fixtures cover the logic, not this library's data.
-The first full refresh on 0.29.x is the test, and a "claim position(s) twice"
-line in its output is the thing to stop for.
+**VERIFIED against the live library, 2026-10-05, and this is the strongest
+check anything in this repo has had.** `library` ran the first full 0.29.2
+refresh and body-hashed all 2,784 extracts against a pre-run snapshot: **3
+added (the three newly filed papers), 0 changed, 0 removed.** Zero "claim
+position(s) twice" lines, zero records reordered, no sync-conflict files.
+
+That is the real test, not the fixtures. Every multi-attachment record in the
+library was a chance for the bulk query to hand back a different order and
+rename two papers' extracts onto each other; 2,781 unchanged hashes say it did
+not. Note what made the check possible: `library` keeps pre-run body-hash
+snapshots in `~/.local/state/library/pre-*`. Without them the only available
+evidence would have been "the run finished", which is what every one of this
+repo's silent failures also looked like.
 
 ### What `library` reported and what it actually was
 
