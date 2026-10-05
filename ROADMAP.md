@@ -1711,9 +1711,11 @@ makes and has not tested:
   and **no full run has been reported.** The ~2,270-record audit it was built
   for has not happened, so the author-mismatch class is measured at three
   records and inferred beyond that.
-- **`zotero_push.py`.** One dry run, by me, on ff14SB. **It has never created a
-  record.** The `/items/new` template check, the duplicate refusal and the
-  "no citation key is assigned" property are all untested outside fixtures.
+- ~~**`zotero_push.py`.** It has never created a record.~~ **CLOSED
+  2026-10-05.** `library` created three records with it — FABXX33S (Woo 1994),
+  DQR4XUQZ (Srinivasan 1997), IM69RVAQ (Chang 2000) — and all three were then
+  filed and extracted without incident. The template check, the duplicate
+  refusal and "no citation key is assigned" are exercised.
 - **`--pair-by-order`.** The 62 ambiguous records were done by hand instead,
   which was the right call — so this code path has never run at all.
 - **`zotero_delete.py --stubs`.** The five byte-less stubs were deleted by hand
@@ -1727,6 +1729,15 @@ makes and has not tested:
   30-record sample verified, but **nobody confirmed an `imported_url` item was
   in that sample**, so whether Zotero accepts an upload against one is still
   not known from evidence. 24 records depend on the answer.
+
+**Added 2026-10-05, 0.29.0.** `zotero_inbox.py` can now create the record when
+none holds the paper — and **that branch has not run.** All three papers filed
+on 10-05 already had records (pushed an hour earlier), so what was exercised
+was the attach path and the md5 duplicate refusal, not the create. The Zotero
+DOI index that makes creating safe is the part that most needs a live run: its
+whole job is to find a record `library.bib` cannot see, and a lookup that
+silently matches nothing would look exactly like "no record exists" and mint a
+duplicate. The fixtures cover the decision; nothing covers the query.
 
 **A path deliberately not taken**, and the reasoning rather than the verdict:
 `--reassess` re-reads the whole library on every rules bump, ~93 minutes. A
@@ -2535,10 +2546,51 @@ line look reasonable** — `library` flagged it as "looks wrong" from the
 arithmetic, which is the second time in two days that someone doing division on
 my output found something I had not.
 
-What is left is two paged fetches, 123 s, and they are latency: ~2 s per page
-of 100 against the Zotero API. Reducing that means fewer round trips or
-`since=` incremental sync, neither of which anyone has measured. **Do not
-assume that estimate either.**
+### Verified, and where this stops
+
+`library` on 0.29.4, 2026-10-05: **130.0 s total** — records 73.3, attachments
+56.1, collections 0.1, everything else under a tenth of a second. 0 failed.
+`folders.json` byte-identical before and after (md5 59b656…), which is the
+check that matters: collection membership is now derived from a different
+source than it was, and the output did not move.
+
+**798 s to 130 s, and the remaining time is fully accounted for.** 129.4 of the
+130.0 is two paged fetches of 28 pages each against the Zotero API, at roughly
+2 s per page of 100. There is no unexamined remainder left to be wrong about —
+which, twice over in this item, is what the wrong predictions were made of.
+
+**Stopping here is a decision, not an omission.** Two routes remain and
+neither is taken:
+
+- *Concurrent paging.* 56 requests at ~2 s could overlap. Zotero publishes
+  `Backoff` and `Retry-After` headers and this client honours neither, so
+  adding concurrency means first handling rate limiting correctly — new
+  failure modes on the one path that rebuilds every file in the mirror, to
+  save at most two minutes on a job nothing waits for.
+- *`since=` incremental sync.* Zotero will return only what changed since a
+  library version, which would make an idle refresh nearly free. But
+  `library.bib` and `index.md` are regenerated from the **whole** document set
+  every run, so this requires caching that set in `.mirror/` and patching it.
+  A cached copy of someone else's library that drifts from the original is
+  precisely the failure in this repo's own notes: a faithful index over a stale
+  file is invisible to cross-checking, because every copy agrees. The refresh's
+  one durable virtue is that it reads the truth each time.
+
+The honest trade is that 130 s is already below the threshold where anyone
+cares — the timer is hourly and a manual run is two minutes — and both routes
+spend correctness on speed nobody has asked for. **Revisit only if someone
+reports waiting on it**, and if the answer is `since=`, build the cache
+validation before the cache.
+
+**One last correction, and it is `library`'s own:** the "~69 s unaccounted for"
+in their first phase report was their `grep -v 'items/top'`, added to hide the
+paging progress lines, also eating the `fetch records (items/top)` timer row.
+Worth keeping because the shape recurs — a filter written against noise that
+silently removes signal matching the same pattern. The number was never
+missing; the line naming it had been filtered out of the evidence before
+anyone read it. Compare the `| tail -N` defect in `inbox.py`: output discipline
+and filtering discipline fail the same way, by making an absence look like a
+fact.
 
 ### The order problem the speedup created
 
