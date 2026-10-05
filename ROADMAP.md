@@ -2462,6 +2462,75 @@ sessions read the same generated report, the cross-check dies and two copies of
 one opinion remain. Known classes go in; the hunt for unknown ones stays out.
 
 
+## 27. Filing a new paper, 0.29.x — what was measured and what was guessed
+
+Asked for by `library` on 2026-10-05, at Cameron's request, after he asked why
+every inbox drop needs a refresh. Four steps and roughly 26 minutes of refresh
+per new paper. Three things came out of it and they are not equally solid.
+
+**MEASURED, by `library`:** a refresh that extracted two changed attachments
+took 13.3 minutes. That is the only timing in this item taken from a real run.
+
+**FOUND BY READING:** `ZoteroSource.files_by_doc` asked `items/<key>/children`
+once per record — 2,739 serial requests. At a round trip plus the 0.05s paging
+sleep that accounts for roughly 11 of the 13.3 minutes. It is now **one**
+`items?itemType=attachment` query. `annotations_by_doc`, the method directly
+below it, had been converted to a bulk query a week earlier and its docstring
+explains the reasoning at length; nothing applied it to its neighbour. A lesson
+written down next to the code that needs it is not the same as a lesson applied.
+
+**NOT YET MEASURED:** what a full refresh now costs. The arithmetic says about
+a minute. Nobody has run one. **`--only` was built on the assumption that a
+full refresh stays expensive, and if the full refresh is now a minute then
+`--only` is solving a problem that no longer exists** — it should be retired
+rather than carried, because every flag is a thing that can be wrong. The
+measurement is `library`'s to take and the decision waits on it. Do not treat
+`--only`'s existence as evidence it was needed.
+
+### The order problem the speedup created
+
+Attachment position decides the archive stem (`<key>.pdf`, `<key>-2.pdf`) and
+therefore which attachment `text/<key>.md` is the extract OF. The per-record
+walk preserved that order by accident — the same endpoint answered the same way
+twice. A bulk query has no per-record order at all.
+
+The tempting fix is to sort the bulk result the way Zotero sorts `children`.
+That was rejected: it is a guess about an API's default that would be right
+until the day it changed, and the failure mode is two papers' extracts swapping
+names silently, under names other sessions already quote page numbers out of.
+`order_by_recorded_stems` instead takes the order from the `stem` recorded in
+`state.json` since 0.26.0 — the only authority that cannot drift, because it is
+what the files on disk were actually named for. New attachments append. Two
+attachments claiming one position is reported, never resolved.
+
+**This is unverified against the live library.** Every record with two or more
+attachments is a case; the fixtures cover the logic, not this library's data.
+The first full refresh on 0.29.x is the test, and a "claim position(s) twice"
+line in its output is the thing to stop for.
+
+### What `library` reported and what it actually was
+
+`library` reported `10.1002_(SICI)1097-4628(19970404)64.pdf` refused with
+"found DOIs but none matched the text on page 1", diagnosed as the title
+matcher losing a hyphen at a line break.
+
+The title matched at 16/16 overlap with the four-word phrase found.
+`stem_conflict` refused it: the stem was compared against the DOI's *suffix*,
+on the assumption that a stem is suffix-shaped the way a person names a file
+(`387527a0`, `science.1116480`). A browser names it after the whole DOI, so
+`10.1002sici...` was searched for inside a string beginning `sici...` and could
+never be found. All three files in the inbox were named that way.
+
+Two things worth keeping from it. First, **the refusal named the function's
+summary rather than the test that failed** — "none matched the text on page 1"
+is what `identify` says when its loop runs out, whatever stopped each
+candidate. It now names the stage, and says outright when page 1 was *not* the
+problem, because that is the thing a reader otherwise goes and investigates.
+Second, the diagnosis came from running the file and printing every
+intermediate, not from reading the code. Consistent with item 26: this repo's
+defects are found by execution, and its tests encode what their author already
+believed.
+
 ## Deliberately not doing
 
 **Packaging (PyPI, conda-forge, console entry points).** The PEP 723 headers

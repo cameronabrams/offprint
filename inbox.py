@@ -362,6 +362,8 @@ def identify(path: Path) -> tuple[dict | None, str, str]:
     tried: list[str] = []
     unresolved: list[str] = []      # looked up and got nothing back, which is not
                                     # the same failure as looked up and did not match
+    name_conflict: list[str] = []   # resolved fine; the FILE NAME is what refused it
+    title_mismatch: list[str] = []  # resolved fine; page 1 is what refused it
     # A 10.2210/pdb... DOI identifies a STRUCTURE DEPOSITION, not a paper, and its
     # title mirrors the paper's closely enough to pass any similarity test. Two
     # files in one batch resolved to the deposition instead of the article.
@@ -390,6 +392,7 @@ def identify(path: Path) -> tuple[dict | None, str, str]:
                 # page, so the first text in the file belongs to a different paper --
                 # that is how a CD4 paper came back as RNA polymerase II. The name is
                 # the deliberate act; refuse rather than trust the text over it.
+                name_conflict.append(doi)
                 continue
             if how == "file name" and len(front.strip()) < 200 and not has_content(path):
                 return None, "", ("this PDF has no text, no images and no marks on its first "
@@ -398,6 +401,7 @@ def identify(path: Path) -> tuple[dict | None, str, str]:
             if looks_right(meta, front) or (how == "file name" and len(front.strip()) < 200):
                 return meta, doi.lower(), how + (" (unverified: no text in the PDF)"
                                                  if not looks_right(meta, front) else "")
+            title_mismatch.append(doi)
 
     msg = crossref_search(page1)
     if msg and not usable(msg.get("doi", "")):
@@ -417,10 +421,26 @@ def identify(path: Path) -> tuple[dict | None, str, str]:
                               "registry failure, not a mismatch. Try again before "
                               "concluding anything about the file: "
                               + ", ".join(tried[:3]))
+        # And one level deeper, for the same reason. "None matched the text on
+        # page 1" is this function's summary of the whole loop, so it was the
+        # message a file got when the TITLE matched perfectly and the FILE NAME
+        # was what refused it. library spent a diagnosis on the title matcher
+        # over exactly that on 2026-10-05, and the message is why. A refusal
+        # names the test that refused.
+        if name_conflict and not title_mismatch:
+            return None, "", (
+                "the file name and the text name different papers, so the DOI was "
+                "not trusted: " + ", ".join(name_conflict[:3])
+                + f" -- page 1 was never the problem. If the name is right (a "
+                  f"browser often truncates or rewrites it), rename the file to "
+                  f"the DOI or pass --key.")
         matched_none = [d for d in tried if d not in unresolved]
         detail = ", ".join(matched_none[:3])
         if unresolved:
             detail += f" (and {len(unresolved)} that no registry answered for)"
+        if name_conflict:
+            detail += (f" (and {len(name_conflict)} refused by the file name "
+                       "rather than by page 1)")
         return None, "", ("found DOIs but none matched the text on page 1: " + detail)
     if len(page1.strip()) < 200:
         return None, "", ("this PDF is a scan with no text layer, so there is nothing "

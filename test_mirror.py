@@ -2736,6 +2736,29 @@ def main():
     check(not _ib.stem_conflict("casino", "10.1038/387527a0"),
           "and neither does a name with no digit run")
 
+    # A refusal must name the test that refused. "None matched the text on
+    # page 1" was this function's summary for the whole loop, so a file whose
+    # TITLE matched perfectly got a message pointing at the title check.
+    _rd, _pt = _ib.resolve_doi, _ib.pdf_text
+    try:
+        _ib.resolve_doi = lambda d: {"doi": d, "title": "Some other paper"}
+        _ib.pdf_text = lambda _p, n=2: "10.1038/387527a0 Some other paper"
+        cdir = tmp / "stemconflict"
+        cdir.mkdir(parents=True, exist_ok=True)
+        # The name is DOI-suffix-shaped but is not itself extractable as a DOI,
+        # so the DOI comes from the TEXT -- which is the only route the name
+        # check guards. A DOI written into the file name is trusted outright.
+        conflicting = cdir / "science.1116480.pdf"
+        conflicting.write_bytes(pdf_bytes)
+        _m, _d, why_c = _ib.identify(conflicting)
+        check(_m is None and "file name and the text name different papers" in why_c,
+              f"a name/text disagreement says so, instead of blaming page 1 ({why_c})")
+        check("page 1 was never the problem" in why_c,
+              "and says outright which test did NOT fail, because that is the one "
+              "a reader will otherwise go and investigate")
+    finally:
+        _ib.resolve_doi, _ib.pdf_text = _rd, _pt
+
     print("\nzotero_inbox: the only thing here that creates a Zotero item")
     import zotero_inbox as zi
 

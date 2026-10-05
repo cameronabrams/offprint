@@ -82,7 +82,7 @@ Eight scripts break that on purpose, five of them live:
 | `zotero_source.py --refresh` | Zotero | reads only; listed because it is the one that rewrites the mirror |
 | `zotero_edit.py` | Zotero | corrects fields on a record that already exists |
 | `zotero_attach.py` | Zotero | uploads PDFs into attachment slots that already exist |
-| `zotero_inbox.py` | Zotero | **creates an attachment** on an existing record, from a PDF you downloaded |
+| `zotero_inbox.py` | Zotero | **creates an attachment**, and since 0.29.0 **the record under it** when none exists, from a PDF you downloaded |
 | `zotero_push.py` | Zotero | **creates a record**, from a DOI or an arXiv id |
 | `zotero_delete.py` | Zotero | **removes** a record or a byte-less attachment |
 | `inbox.py`, `mendeley_push.py`, `mendeley_edit.py` | Mendeley | the same three jobs, retired with the account on 2026-10-02 |
@@ -95,11 +95,23 @@ goes, refuses to delete a record with no surviving sibling unless told to, and
 backs up every item and its children before sending anything.
 
 `zotero_inbox.py` and `zotero_push.py` are the only scripts that **create**
-anything, and each creates exactly one kind of thing. The inbox will not create
-a record; the push will not create an attachment. That line is deliberate —
-"how does a paper get into the library" is two different operations with
-different risks, and running them together is how a library acquires a second
-record for a paper it already had.
+anything. Until 0.29.0 each created exactly one kind of thing and the inbox
+would not create a record, on the reasoning that running the two together is
+how a library acquires a second record for a paper it already had.
+
+That reasoning was sound and the mechanism behind it was not. The duplicate
+check read `library.bib`, which only knows what the last refresh saw — so a
+record pushed an hour ago was invisible to it, and the separation did not
+actually prevent the duplicate it was named for. What it did cost was two full
+refreshes per new paper, one to mint the citation key and one to extract the
+text, which on this library is about 26 minutes.
+
+0.29.0 closes the hole properly by asking **Zotero itself** by DOI before
+creating anything — which is what the Mendeley-era `inbox.py` always did — and
+lets the inbox create the record once that check has passed. It still will not
+create a record it cannot identify by DOI: a title match is enough to attach a
+PDF to a record a human already made, and not enough to mint one, because the
+metadata would be guesswork. `--no-create` restores the old refusal.
 
 The three Mendeley scripts were interactive by default. `--dry-run` was the safe
 thing to run and the right thing to show someone before a batch; `--yes` was for
@@ -135,6 +147,32 @@ copy of each fact** — a second copy is a second thing to keep true.
 
 If you are running this yourself rather than through an agent, neither file is
 required reading; everything a person needs is in these pages.
+
+## Filing one new paper
+
+Since 0.29.0 this is two commands rather than four, and one short refresh
+rather than two long ones:
+
+```
+uv run --script zotero_inbox.py --yes
+uv run --script zotero_source.py --refresh --only Srinivasan1997Amorphous
+```
+
+The first prints the exact second command, naming the records it filed. A
+record it has just created has no citation key yet, so it prints the Zotero
+item key instead; `--only` takes either.
+
+`--only` narrows the **extraction** and nothing else. `library.bib`, `index.md`
+and `folders.json` are still rebuilt in full, because they are regenerated from
+the whole library every time — a "targeted" run that narrowed them would
+quietly drop every record it did not name. It also leaves `mirror-status.md`
+untouched, since that file records when the mirror as a whole was last
+verified and a run that looked at one record cannot speak for it.
+
+Run a full refresh when you want that statement refreshed. Since 0.29.0 a full
+refresh asks Zotero for every attachment in **one** query rather than one per
+record, which is where a 13-minute refresh for two changed attachments was
+going.
 
 ## Getting every attachment onto disk
 
