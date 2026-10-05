@@ -45,7 +45,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from mendeley_mirror import (DEFAULT_OUT, __version__, assign_citekeys,  # noqa: E402
                              bib_entry, harvest_attachments, load_json,
-                             annotation_markdown, mirror_state_dir, qualify,
+                             annotation_markdown, local_id, mirror_state_dir,
+                             qualify,
                              require_ocr_stack,
                              save_json, write_bibtex, write_extraction_report,
                              write_folders, write_index, write_status)
@@ -293,8 +294,54 @@ class ZoteroSource:
                  if (i.get("data") or {}).get("itemType") not in ("attachment", "note")]
         return [item_to_doc(i) for i in items]
 
-    def files_by_doc(self, doc_ids: list) -> dict:
-        out = {}
+    def files_by_doc(self, doc_ids: list, bulk: bool = True) -> dict:
+        """Every record's storage-backed attachments, grouped by record.
+
+        **In ONE query, not one per record.** The per-record form asked
+        `items/<key>/children` 2,739 times; at a round trip plus the paging
+        courtesy sleep that is roughly eleven minutes, and it was the whole
+        reason a refresh for two changed attachments took 13.3 minutes on
+        2026-10-05. `annotations_by_doc` right below this had already learned
+        the lesson -- and said so in its docstring -- a week before anything
+        applied it here.
+
+        Order is NOT taken from this query. Position decides the archive stem
+        (`<key>.pdf`, then `<key>-2.pdf`) and therefore which extract is
+        `text/<key>.md`, so it is a contract with files already on disk, not a
+        detail. `order_by_recorded_stems` reimposes the order the mirror
+        already recorded; this returns the group.
+
+        `bulk=False` restores the per-record walk, which exists so a mismatch
+        can be diagnosed against the endpoint the stems were built from rather
+        than argued about.
+        """
+        wanted = set(doc_ids)
+        out: dict = {}
+        if bulk:
+            try:
+                rows = self.z.paged("items", quiet=True, itemType="attachment")
+            except Exception as exc:
+                # Loud, because the fallback costs eleven minutes. A refresh
+                # that silently takes 25x longer looks like a hang.
+                print(f"  ! the bulk attachment query failed ({type(exc).__name__}: "
+                      f"{exc}); falling back to one request per record, which "
+                      "takes minutes rather than seconds")
+                return self.files_by_doc(doc_ids, bulk=False)
+            for c in rows:
+                d = c.get("data") or {}
+                parent = d.get("parentItem")
+                if parent not in wanted:
+                    # A child of something that is not a mirrored record, or an
+                    # attachment whose parent was deleted. Not ours.
+                    continue
+                if d.get("linkMode") not in ("imported_file", "imported_url"):
+                    continue
+                out.setdefault(parent, []).append(
+                    {"id": c.get("key"), "file_name": d.get("filename") or "",
+                     "mime_type": d.get("contentType") or "",
+                     "filehash": d.get("md5") or ""})
+            return out
+
         for key in doc_ids:
             kids = self.z.paged(f"items/{key}/children", quiet=True)
             files = []
@@ -683,6 +730,70 @@ def rescue_identifiers(out: Path) -> int:
     return 0
 
 
+def order_by_recorded_stems(files_by_doc: dict, keymap: dict, state: dict,
+                            backend: str) -> tuple[dict, list]:
+    """Reimpose the attachment order the mirror already recorded.
+
+    Position decides the archive stem -- `<key>.pdf`, then `<key>-2.pdf` -- and
+    therefore which file `text/<key>.md` is the extract OF. Those names are a
+    contract: other sessions quote page numbers out of them, and
+    `docs/reference.md` tells readers `-2` is a second file and not a second
+    paper. So the order cannot be whatever an API happened to return this time.
+
+    The per-record `children` walk preserved it by accident, because the same
+    endpoint answered the same way twice. One bulk query does not, and rather
+    than guess at Zotero's sort order and be right until the day it changes,
+    this takes the order from the only authority that cannot drift: the
+    `stem` each attachment was last extracted under, recorded in `state.json`
+    since 0.26.0.
+
+    An attachment with no recorded stem is new and goes last, which is exactly
+    where a new attachment belongs -- first position is already spoken for by
+    the file sitting in `text/<key>.md`.
+
+    Returns `(ordered, anomalies)`. An anomaly is two attachments on one record
+    claiming the same position, which cannot both be honoured; it is reported
+    rather than silently broken, because the resolution is a human decision and
+    `pairings.tsv` is where it gets recorded.
+    """
+    known = state.get("files") or {}
+    ordered, anomalies = {}, []
+    for doc_id, files in files_by_doc.items():
+        key = keymap.get(qualify(doc_id, backend))
+        if not key or len(files) < 2:
+            # One attachment cannot be out of order with itself, and a record
+            # with no citation key has no stems to be faithful to.
+            ordered[doc_id] = files
+            continue
+
+        def recorded_index(f):
+            stem = (known.get(qualify(f.get("id", ""), backend)) or {}).get("stem", "")
+            if stem == key:
+                return 0
+            if stem.startswith(f"{key}-"):
+                tail = stem[len(key) + 1:]
+                if tail.isdigit() and int(tail) >= 2:
+                    return int(tail) - 1
+            return None
+
+        placed = [(recorded_index(f), f) for f in files]
+        seats = [n for n, _ in placed if n is not None]
+        if len(seats) != len(set(seats)):
+            dup = sorted({n for n in seats if seats.count(n) > 1})
+            anomalies.append(f"{key}: {len(files)} attachments claim position(s) "
+                             f"{[n + 1 for n in dup]} twice; order left as fetched")
+            ordered[doc_id] = files
+            continue
+        # Known positions first, in their recorded order; new attachments after,
+        # in a stable order of their own so two runs agree.
+        head = [f for n, f in sorted((p for p in placed if p[0] is not None),
+                                     key=lambda p: p[0])]
+        tail = sorted((f for n, f in placed if n is None),
+                      key=lambda f: f.get("id", ""))
+        ordered[doc_id] = head + tail
+    return ordered, anomalies
+
+
 def order_by_pairings(citekey: str, files: list, pairings: dict) -> tuple:
     """Order one record's attachments to match a hand-decided `pairings.tsv`.
 
@@ -753,8 +864,44 @@ def zotero_fetch(z: Zotero):
     return fetch
 
 
+def resolve_only(names: list, keymap: dict, docs_by_id: dict,
+                 backend: str) -> set:
+    """`--only` values (citation keys or Zotero item keys) as a set of doc ids.
+
+    An unrecognised name is an ERROR, never a silent no-op. The whole point of
+    a targeted refresh is that the operator names the record they just filed;
+    a typo that quietly selects nothing would extract nothing, report a clean
+    run, and look exactly like success. `mendeley_edit.py` refuses an unknown
+    citation key for the same reason.
+    """
+    # `local_id` defaults to BACKEND = "mendeley" and returns None for anything
+    # else -- deliberately, so one service's id cannot be sent to another's
+    # API. Pass the backend or every zotero: entry reads as a foreign id and
+    # every citation key looks unknown.
+    by_citekey = {}
+    for ident, ck in keymap.items():
+        local = local_id(ident, backend)
+        if local:
+            by_citekey.setdefault(ck, local)
+    want, unknown = set(), []
+    for name in names:
+        if name in docs_by_id:
+            want.add(name)
+        elif name in by_citekey and by_citekey[name] in docs_by_id:
+            want.add(by_citekey[name])
+        else:
+            unknown.append(name)
+    if unknown:
+        sys.exit("error: --only names nothing in this library: "
+                 + ", ".join(unknown)
+                 + "\n  Give a citation key (Abrams2013Enhanced) or a Zotero "
+                   "item key (FABXX33S). A record pushed since the last "
+                   "refresh has no citation key yet -- use its item key.")
+    return want
+
+
 def refresh(out: Path, ocr: bool = False, dry_run: bool = False,
-            reassess: bool = False) -> int:
+            reassess: bool = False, only: list | None = None) -> int:
     """Rebuild the mirror from Zotero.
 
     The generators are `mendeley_mirror`'s and are untouched; what changed is
@@ -810,8 +957,18 @@ def refresh(out: Path, ocr: bool = False, dry_run: bool = False,
               "every Zotero id already had one. Check the backend namespacing "
               "before trusting anything below.")
 
+    only_ids = resolve_only(only, keymap, {d["id"]: d for d in docs}, BACKEND) \
+        if only else set()
+
     files = src.files_by_doc([d["id"] for d in docs])
     print(f"  attachments: {sum(len(v) for v in files.values())}")
+
+    # Loaded HERE rather than beside the extraction, because the attachment
+    # order comes out of it and the order decides the archive stems.
+    state = load_json(mirror / "state.json", {})
+    files, stem_anomalies = order_by_recorded_stems(files, keymap, state, BACKEND)
+    for line in stem_anomalies:
+        print(f"  ! {line}")
 
     # The hand-decided order wins over whatever Zotero returned.
     pairings = load_pairings(out)
@@ -837,15 +994,30 @@ def refresh(out: Path, ocr: bool = False, dry_run: bool = False,
     write_bibtex(docs, keymap, out, include_abstract=True, backend=BACKEND)
     docs_by_id = {d["id"]: d for d in docs}
 
+    # A targeted refresh narrows the EXTRACTION and nothing else. `files` stays
+    # whole because `write_index` builds index.md from it -- narrowing it there
+    # would rewrite the index with 2,774 records' attachments missing, which is
+    # a far worse outcome than a slow refresh. The subset is a separate name so
+    # that it cannot be passed anywhere by accident.
+    harvest = files
+    if only_ids:
+        harvest = {k: v for k, v in files.items() if k in only_ids}
+        named = sorted(keymap.get(qualify(k, BACKEND), k) for k in only_ids)
+        print(f"  --only: extracting {sum(len(v) for v in harvest.values())} "
+              f"attachment(s) on {len(only_ids)} record(s): {', '.join(named)}")
+        empty = [k for k in only_ids if k not in files]
+        for k in empty:
+            print(f"  ! {keymap.get(qualify(k, BACKEND), k)} has no storage-backed "
+                  "attachment in Zotero -- nothing to extract for it")
+
     # EXTRACTION FIRST. Annotations and collections used to run before it, so
     # when one attachment's children endpoint answered 400 the exception left
     # 2,732 extractions undone and no status written at all. Order the expensive
     # irreplaceable work ahead of the cheap optional work, so that a failure in
     # the second costs only the second.
     try:
-        state = load_json(mirror / "state.json", {})
         fetched, skipped, failed, report = harvest_attachments(
-            None, files, keymap, docs_by_id, out, state, "text",
+            None, harvest, keymap, docs_by_id, out, state, "text",
             state_path=mirror / "state.json", ocr=ocr, reassess=reassess,
             fetch=zotero_fetch(z), backend=BACKEND)
         save_json(mirror / "state.json", state)
@@ -883,6 +1055,20 @@ def refresh(out: Path, ocr: bool = False, dry_run: bool = False,
     # times and I built a fresh one in the newest code. The status reflects the
     # run.
     ok = failed == 0
+    if only_ids:
+        # **A targeted run does not touch mirror-status.md.** That file is the
+        # record of the scheduled FULL refresh -- "last successful run" is what
+        # tells a reader the mirror is current. A run that examined three
+        # records out of 2,777 resetting that clock would make a mirror whose
+        # extraction had been failing for a week look freshly verified. The
+        # same argument covers retired.json: declaring the mirror live again is
+        # a whole-library claim.
+        print(f"\n  mirror-status.md NOT updated: --only examined "
+              f"{len(only_ids)} record(s), so it cannot speak for the mirror. "
+              "Run a full refresh for that.")
+        print(f"\nDone. {len(docs)} references in {out / 'library.bib'}")
+        return 0 if ok else 1
+
     retired = mirror / "retired.json"
     if ok and retired.exists():
         retired.unlink()
@@ -981,6 +1167,11 @@ def main() -> int:
                     help="with --refresh: OCR attachments with no text layer")
     ap.add_argument("--dry-run", action="store_true",
                     help="with --refresh: read and report, write nothing")
+    ap.add_argument("--only", nargs="+", metavar="KEY",
+                    help="with --refresh: extract text for only these records "
+                         "(citation keys or Zotero item keys). library.bib, "
+                         "index.md and folders.json are still rebuilt in full; "
+                         "mirror-status.md is left alone")
     ap.add_argument("--reassess", action="store_true",
                     help="with --refresh: re-read attachments whose extract was "
                          "produced under older extraction rules")
@@ -994,7 +1185,7 @@ def main() -> int:
     args = ap.parse_args()
     if args.refresh:
         return refresh(args.out, ocr=args.ocr, dry_run=args.dry_run,
-                       reassess=args.reassess)
+                       reassess=args.reassess, only=args.only)
     if args.rescue_identifiers:
         return rescue_identifiers(args.out)
     if args.compare:

@@ -234,15 +234,29 @@ empty ones, so a name that is not already a key of `data` is a typo — and a ty
 that reached Zotero would be ignored server-side, which is a silent no-op
 wearing the clothes of a successful edit.
 
-**`zotero_inbox.py` is the only script in the repo that creates a Zotero
-item**, and it creates exactly one kind: a child attachment on a record that
-already exists. `zotero_attach.py` fills slots; it cannot make one, which is why
-a paper fetched by hand had no route into the library. Four refusals keep that
-narrow — it never creates a *record*, never attaches bytes a record already
-holds (checked by md5 before anything is created), never files a PDF with no
-readable text, and never guesses which record. It reuses `inbox.py`'s
+**`zotero_inbox.py` creates both kinds of Zotero item**, a child attachment
+and — since 0.29.0 — the record under it when none exists. It reuses `inbox.py`'s
 identification pipeline unchanged, which was always backend-agnostic; only the
 create-and-upload half was Mendeley's.
+
+Separating the two creates was deliberate and was reversed deliberately, which
+is worth reading before re-separating them. The separation guarded against a
+second record for a paper already held — but the check behind it read
+`library.bib`, which only knows what the last refresh saw, so a record pushed
+an hour earlier was invisible to it anyway. The separation cost two full
+refreshes per paper and closed nothing. `zotero_doi_index()` asks **Zotero**
+before creating, which is what actually closes it and is what `inbox.py` always
+did for Mendeley. Four refusals keep the create narrow: no record without a
+DOI (a title match may attach, never mint — the metadata would be guesswork),
+never bytes a record already holds (md5, checked before anything is created),
+never a PDF with no readable text, never a guess at which record. `--no-create`
+restores the old refusal.
+
+**Record metadata goes through `from_doi`, not through the Crossref message the
+script is already holding.** That looks like a wasted request and is not:
+`from_doi` is where `csl_year()` lives, and a second creator of records doing
+its own date handling is a second chance at filing an Advance Access paper
+under its online year, which is how CHARMM36m was cited as 2016.
 
 **`zotero_delete.py` is the only operation here with no undo**, so it is the
 most guarded. A dry run names what **survives** as well as what goes, because
@@ -327,6 +341,33 @@ Two implementation notes that exist because of real failures:
 - **Every attachment on a record is extracted**, and all but the first are
   suffixed, so `text/<key>-2.md` is a second file, not a second paper. Anything
   that reports extraction results must say which it means.
+
+## Attachment order is a contract
+
+Position decides the archive stem — `<key>.pdf`, then `<key>-2.pdf` — and
+therefore which attachment `text/<key>.md` is the extract OF. Until 0.29.0 that
+order came from `items/<key>/children`, preserved by accident because the same
+endpoint answered the same way twice.
+
+0.29.0 replaced 2,739 `children` requests with **one** `items?itemType=attachment`
+query, which is where a 13-minute refresh for two changed attachments was
+going. A bulk query has no per-record order, so `order_by_recorded_stems()`
+reimposes it from the `stem` recorded in `state.json` — the only authority that
+cannot drift, since it is what the files on disk were actually named for. New
+attachments go last, because first position is already spoken for by the file
+sitting in `text/<key>.md`. Two attachments claiming one position is reported,
+never silently resolved: `pairings.tsv` is where that decision gets recorded.
+
+Don't re-derive the order from the API, however stable its sort looks. The
+cost of being wrong is two papers' extracts swapping names, silently, under
+names other sessions already quote page numbers out of.
+
+`--only` narrows the **extraction** and nothing else. `library.bib`, `index.md`
+and `folders.json` are still rebuilt whole, because they are regenerated from
+the full document and attachment maps — narrowing those maps would rewrite the
+index with every unnamed record's attachments missing. It also leaves
+`mirror-status.md` alone: that file says when the mirror was last verified, and
+a run that examined three records out of 2,777 does not get to reset it.
 
 ## Tests
 

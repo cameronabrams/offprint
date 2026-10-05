@@ -2735,16 +2735,16 @@ def main():
     # a library that is missing something.
     notpdf = zdir / "notapdf.pdf"
     notpdf.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 64)
-    key_, why_ = zi.plan_one(zdir, notpdf, "")
-    check(key_ == "" and "not a PDF" in why_,
+    key_, why_ = zi.plan_one(zdir, notpdf, "", "", {}, True)
+    check(key_ == {} and "not a PDF" in why_,
           f"a file that is not a PDF by its bytes is refused ({why_})")
 
     blank = zdir / "blank.pdf"
     blankdoc = _fitz.open()
     blankdoc.new_page()
     blank.write_bytes(blankdoc.tobytes())
-    key_b, why_b = zi.plan_one(zdir, blank, "")
-    check(key_b == "" and "no readable text" in why_b,
+    key_b, why_b = zi.plan_one(zdir, blank, "", "", {}, True)
+    check(key_b == {} and "no readable text" in why_b,
           f"a scan with no text layer is refused, because one filed silently "
           f"looks complete and cannot be quoted ({why_b})")
 
@@ -2753,9 +2753,73 @@ def main():
     # could not have made itself.
     real = zdir / "real.pdf"
     real.write_bytes(pdf_bytes)
-    key_f, why_f = zi.plan_one(zdir, real, "Shan2001Influence")
-    check(key_f == "Shan2001Influence" and "--key" in why_f,
+    key_f, why_f = zi.plan_one(zdir, real, "Shan2001Influence", "", {}, True)
+    check(key_f == {"citekey": "Shan2001Influence"} and "--key" in why_f,
           f"--key names the record and skips identification ({key_f}, {why_f})")
+    key_i, why_i = zi.plan_one(zdir, real, "", "FABXX33S", {}, True)
+    check(key_i == {"item": "FABXX33S"} and "--item" in why_i,
+          f"--item names a record with no citation key yet ({key_i}, {why_i})")
+
+    # ---- filing a paper the library does not have, in one pass ----------
+    # Requested by library on 2026-10-05 (Cameron): a new paper took two full
+    # refreshes, one to mint the citation key and one to extract the text.
+    #
+    # `identify` is stubbed because it calls Crossref and this suite is
+    # offline. What is NOT stubbed is the decision underneath -- which of the
+    # three outcomes a file gets -- and that is the part that can file one
+    # paper's PDF under another paper's record.
+    _real_identify, _real_existing = zi.identify, zi.existing_document
+    try:
+        msg_ = {"title": ["A brand new paper"]}
+
+        zi.identify = lambda _p: (msg_, "10.1234/new", "first pages")
+        zi.existing_document = lambda *_a, **_k: ("", "")
+        plan_n, why_n = zi.plan_one(zdir, real, "", "", {}, True)
+        check(plan_n == {"create": "10.1234/new"} and "NEW record" in why_n,
+              f"a DOI no record holds becomes a record to create ({plan_n})")
+
+        # The case the old script got wrong. A record pushed since the last
+        # refresh has NO citation key, so library.bib cannot answer for it --
+        # and "not in library.bib" used to mean "not in the library".
+        plan_p, why_p = zi.plan_one(zdir, real, "", "",
+                                    {"10.1234/new": "PUSHED01"}, True)
+        check(plan_p == {"item": "PUSHED01"} and "not yet in library.bib" in why_p,
+              f"a record pushed since the last refresh is ATTACHED to, not "
+              f"duplicated ({plan_p}, {why_p})")
+
+        # And the same DOI once the mirror has caught up resolves the ordinary
+        # way, so the Zotero lookup never overrides library.bib.
+        zi.existing_document = lambda *_a, **_k: ("", "New2024Paper")
+        plan_c, _ = zi.plan_one(zdir, real, "", "",
+                                {"10.1234/new": "PUSHED01"}, True)
+        check(plan_c == {"citekey": "New2024Paper"},
+              f"once the mirror knows it, the citation key wins ({plan_c})")
+
+        # The negative library asked for: identification refused, so nothing is
+        # created. The refusal has to short-circuit the create branch, not be
+        # weighed against it.
+        zi.existing_document = lambda *_a, **_k: ("", "")
+        zi.identify = lambda _p: (None, "", "the first page does not match the "
+                                            "title that DOI resolves to")
+        plan_r, why_r = zi.plan_one(zdir, real, "", "", {}, True)
+        check(plan_r == {} and "does not match" in why_r,
+              f"a page-1 mismatch creates nothing and files nothing ({why_r})")
+
+        # A title-only identification cannot create a record: there is no DOI
+        # to build one from, and guessing the metadata is how a library gets a
+        # second record for a paper it already has.
+        zi.identify = lambda _p: (msg_, "", "first pages")
+        plan_t, why_t = zi.plan_one(zdir, real, "", "", {}, True)
+        check(plan_t == {} and "without a DOI" in why_t,
+              f"no DOI means no creation, however confident the title is ({why_t})")
+
+        # --no-create restores the refusal the script shipped with.
+        zi.identify = lambda _p: (msg_, "10.1234/new", "first pages")
+        plan_x, why_x = zi.plan_one(zdir, real, "", "", {}, False)
+        check(plan_x == {} and "--no-create" in why_x,
+              f"--no-create brings back the old refusal ({why_x})")
+    finally:
+        zi.identify, zi.existing_document = _real_identify, _real_existing
 
     print("\nzotero_source: a Zotero item in the shape the generators take")
     import zotero_source as zs
@@ -3470,6 +3534,7 @@ def main():
         "publicationTitle": "Journal of Applied Polymer Science",
         "volume": "80", "pages": "917-927", "date": "2001", "DOI": "10.1002/app.1171"}}
     ZCHILD = {"key": "ZA1", "data": {"linkMode": "imported_file",
+                                     "parentItem": "ZK1",
                                      "filename": "paper.pdf",
                                      "contentType": "application/pdf",
                                      "md5": "deadbeef"}}
@@ -3489,16 +3554,29 @@ def main():
                                     "annotationSortIndex": "00004|000100|00080"}}
 
     class StubZ:
-        """One query for all annotations, which is what the API is asked now."""
+        """One query for all annotations AND one for all attachments.
+
+        Both are bulk now. `asked` records what was actually requested, so a
+        test can assert the per-record walk did NOT happen -- the absence of
+        2,739 requests is the entire point of the change and is invisible in
+        the output otherwise.
+        """
         annotations_raise = False
+        attachments_raise = False
         def __init__(self, *a, **kw):
             self.base, self.session = "https://api/users/1", None
+            self.asked = []
         def items_top(self): return [ZITEM]
         def paged(self, path, quiet=False, **kw):
+            self.asked.append((path, kw.get("itemType")))
             if path == "items" and kw.get("itemType") == "annotation":
                 if type(self).annotations_raise:
                     raise RuntimeError("400 Client Error on items/HNH4IS55/children")
                 return [ZANN, ZANN1]
+            if path == "items" and kw.get("itemType") == "attachment":
+                if type(self).attachments_raise:
+                    raise RuntimeError("502 Bad Gateway")
+                return [ZCHILD]
             if path == "items/ZK1/children":
                 return [ZCHILD]
             return []
@@ -3559,6 +3637,165 @@ def main():
           "one part not recoverable from the PDF")
     check("p. 5" in anntext,
           "and the printed page LABEL is used, not the zero-based index")
+
+    # ---- one bulk query, not one per record -------------------------------
+    # The refresh above went through the new path; this is what it cost. A
+    # per-record walk is invisible in the output -- it just takes eleven
+    # minutes -- so the absence of those requests has to be asserted.
+    probe = StubZ()
+    got = zs.ZoteroSource(probe).files_by_doc(["ZK1"])
+    check(got == {"ZK1": [{"id": "ZA1", "file_name": "paper.pdf",
+                           "mime_type": "application/pdf",
+                           "filehash": "deadbeef"}]},
+          f"the bulk query groups attachments by parentItem ({got})")
+    check(("items", "attachment") in probe.asked,
+          "it asks items?itemType=attachment ONCE")
+    check(not any(pth.endswith("/children") for pth, _ in probe.asked),
+          f"and asks no record for its children at all ({probe.asked})")
+
+    # An attachment whose parent is not a mirrored record is not ours. The
+    # per-record form could not produce one; the bulk form asks for every
+    # attachment in the library, including children of records that were
+    # deleted or are not top-level.
+    orphan = zs.ZoteroSource(StubZ()).files_by_doc(["SOMETHINGELSE"])
+    check(orphan == {}, f"an attachment whose parent is not asked for is dropped ({orphan})")
+
+    # The fallback costs eleven minutes, so it must be loud and it must work.
+    StubZ.attachments_raise = True
+    try:
+        fb_probe = StubZ()
+        fb = zs.ZoteroSource(fb_probe).files_by_doc(["ZK1"])
+    finally:
+        StubZ.attachments_raise = False
+    check(fb == {"ZK1": [{"id": "ZA1", "file_name": "paper.pdf",
+                          "mime_type": "application/pdf",
+                          "filehash": "deadbeef"}]},
+          f"a failed bulk query falls back to the per-record walk ({fb})")
+    check(("items/ZK1/children", None) in fb_probe.asked,
+          "and the fallback really does ask per record")
+
+    # ---- attachment ORDER is a contract, and bulk does not preserve it ----
+    # Position decides the stem: text/<key>.md and text/<key>-2.md. Two
+    # attachments coming back in the other order would swap which paper each
+    # extract is OF, silently, under names other sessions already quote.
+    A, B = {"id": "aaa"}, {"id": "bbb"}
+    km = {"zotero:D1": "Key2001One"}
+    st = {"files": {"zotero:bbb": {"stem": "Key2001One"},
+                    "zotero:aaa": {"stem": "Key2001One-2"}}}
+    ordered, anom = zs.order_by_recorded_stems({"D1": [A, B]}, km, st, "zotero")
+    check([f["id"] for f in ordered["D1"]] == ["bbb", "aaa"] and not anom,
+          f"the recorded stems put the attachments back in their old order ({ordered})")
+
+    # A new attachment has no recorded stem and goes LAST -- first position is
+    # already spoken for by the file sitting in text/<key>.md.
+    C = {"id": "ccc"}
+    ordered2, _ = zs.order_by_recorded_stems({"D1": [C, A, B]}, km, st, "zotero")
+    check([f["id"] for f in ordered2["D1"]] == ["bbb", "aaa", "ccc"],
+          f"a new attachment is appended, not inserted ({ordered2})")
+
+    # Two attachments claiming one seat cannot both be honoured. Reported, not
+    # silently resolved: which is first is a human decision, and pairings.tsv
+    # is where it gets recorded.
+    st_clash = {"files": {"zotero:aaa": {"stem": "Key2001One"},
+                          "zotero:bbb": {"stem": "Key2001One"}}}
+    _o3, anom3 = zs.order_by_recorded_stems({"D1": [A, B]}, km, st_clash, "zotero")
+    check(len(anom3) == 1 and "twice" in anom3[0],
+          f"two attachments claiming one position is reported ({anom3})")
+
+    # A fresh mirror has no stems to be faithful to, and must not crash.
+    o4, a4 = zs.order_by_recorded_stems({"D1": [A, B]}, km, {}, "zotero")
+    check([f["id"] for f in o4["D1"]] == ["aaa", "bbb"] and not a4,
+          f"with no recorded stems the fetch order stands ({o4})")
+
+    # ---- --only resolves both kinds of name, and refuses a typo -----------
+    only_km = {"zotero:ZK1": "Shan2001Influence", "mendeley:m1": "Shan2001Influence"}
+    only_docs = {"ZK1": {"id": "ZK1"}, "ZK2": {"id": "ZK2"}}
+    check(zs.resolve_only(["Shan2001Influence"], only_km, only_docs, "zotero") == {"ZK1"},
+          "--only takes a citation key")
+    check(zs.resolve_only(["ZK2"], only_km, only_docs, "zotero") == {"ZK2"},
+          "--only takes a Zotero item key, which is all a just-pushed record has")
+    rc_typo = 0
+    try:
+        zs.resolve_only(["Shan2001Infleunce"], only_km, only_docs, "zotero")
+    except SystemExit as exc:
+        rc_typo = str(exc)
+    check("Shan2001Infleunce" in str(rc_typo),
+          f"and a typo is an ERROR, not a run that extracts nothing and reports "
+          f"success ({rc_typo!r})")
+
+    # ---- a targeted refresh touches only what it names --------------------
+    # library's fixture, 2026-10-05: "--only on one key -> body-hash snapshot
+    # of every OTHER text/*.md unchanged". The hazard is not the extraction, it
+    # is everything ELSE a refresh rewrites wholesale -- index.md is built from
+    # the attachment map, so narrowing that map would rewrite the index with
+    # every other record's attachments missing.
+    ZITEM2 = {"key": "ZK2", "data": {"itemType": "journalArticle",
+                                     "title": "The other paper",
+                                     "creators": [{"creatorType": "author",
+                                                   "firstName": "B.",
+                                                   "lastName": "Other"}],
+                                     "date": "2002", "publicationTitle": "J. Two"}}
+    ZCHILD2 = {"key": "ZA2", "data": {"linkMode": "imported_file",
+                                      "parentItem": "ZK2",
+                                      "filename": "other.pdf",
+                                      "contentType": "application/pdf",
+                                      "md5": "cafe"}}
+
+    class StubZ2(StubZ):
+        def items_top(self): return [ZITEM, ZITEM2]
+        def paged(self, path, quiet=False, **kw):
+            self.asked.append((path, kw.get("itemType")))
+            if path == "items" and kw.get("itemType") == "attachment":
+                return [ZCHILD, ZCHILD2]
+            if path == "items" and kw.get("itemType") == "annotation":
+                return []
+            return []
+
+    tout = tmp / "ztargeted"
+    tstate = mm.mirror_state_dir(tout)
+    mm.save_json(tstate / "citekeys.json", {"zotero:ZK1": "Shan2001Influence",
+                                            "zotero:ZK2": "Other2002The"})
+    (tout / "pdf").mkdir(parents=True, exist_ok=True)
+    (tout / "pdf" / "Shan2001Influence.pdf").write_bytes(pdf_bytes)
+    (tout / "pdf" / "Other2002The.pdf").write_bytes(pdf_bytes)
+    (tout / "text").mkdir(parents=True, exist_ok=True)
+    # The sentinel stands in for library's body-hash snapshot: if the targeted
+    # run re-extracts this record, the line is gone.
+    sentinel = "SENTINEL: this extract must survive a run that did not name it"
+    (tout / "text" / "Other2002The.md").write_text(sentinel, encoding="utf-8")
+    mm.save_json(tout / "mirror-status.md", {}) if False else None
+    (tout / "mirror-status.md").write_text("# Mirror status\n\n- last attempt: "
+                                           "2026-01-01 00:00 UTC — **ok** (9.9 min)\n"
+                                           "- last successful run: 2026-01-01 00:00 UTC\n",
+                                           encoding="utf-8")
+
+    _Z3, _c3 = zs.Zotero, zs.load_zotero_credentials
+    zs.Zotero = StubZ2
+    zs.load_zotero_credentials = lambda: ("key", "1")
+    try:
+        rc_only = zs.refresh(tout, only=["Shan2001Influence"])
+    finally:
+        zs.Zotero, zs.load_zotero_credentials = _Z3, _c3
+
+    check(rc_only == 0, f"a targeted refresh completes ({rc_only})")
+    check((tout / "text" / "Shan2001Influence.md").exists(),
+          "the named record IS extracted")
+    check((tout / "text" / "Other2002The.md").read_text(encoding="utf-8") == sentinel,
+          "and every other extract is byte-for-byte untouched")
+
+    tbib = (tout / "library.bib").read_text(encoding="utf-8")
+    check("Shan2001Influence" in tbib and "Other2002The" in tbib,
+          "library.bib is still rebuilt IN FULL -- a targeted refresh narrows "
+          "the extraction and nothing else")
+    tindex = (tout / "index.md").read_text(encoding="utf-8")
+    check("Shan2001Influence" in tindex and "Other2002The" in tindex,
+          "and so is index.md, which is built from the attachment map and would "
+          "lose every unnamed record if that map were the narrowed one")
+
+    tstatus = (tout / "mirror-status.md").read_text(encoding="utf-8")
+    check("2026-01-01" in tstatus,
+          "mirror-status.md is LEFT ALONE: a run that examined one record of "
+          "two cannot reset the clock that says the mirror is current")
 
     # One attachment the API will not describe must not take down 2,732
     # extractions. The .avi on Shan2011How answers 400 on its children endpoint,
