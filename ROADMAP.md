@@ -301,9 +301,44 @@ apart.
       which is the one outcome this script is built to refuse. With both modes
       counted it is two `.pdf` candidates and therefore a report.
 
-- [ ] **UNVERIFIED: whether Zotero accepts an upload against an `imported_url`
-      item.** Nobody has tested it, because testing it is a write. The first
-      live run does one alone with `--key` before the rest.
+- [x] **ANSWERED, and at a scale nobody set out to measure.** `library`
+      reported 2026-10-05 that `Weeks1971Role` was step 1 of the upload and
+      came back with 857,517 bytes, matching md5 and a `%PDF-` header. That is
+      one record, and it rests on `Weeks1971Role` having been `imported_url`,
+      which is asserted rather than shown here.
+
+      The stronger evidence is already on disk and needed no write and no
+      query. `state.json` holds a status per attachment, and `ok`, `ocr`,
+      `garbled`, `no-text` and `not-pdf` are all verdicts a reader can only
+      reach **after receiving bytes**. On the Zotero side: 2,652 `ok`, 121
+      `ocr`, 12 `garbled` — **2,785 of 2,789 attachments demonstrably served
+      their bytes back.** Whichever 24 the `imported_url` records are, they are
+      in that 2,785 unless they are among the four below. The upload path works
+      for both storage-backed modes; that is settled.
+
+- [ ] **NEW 2026-10-05, found while checking the above: four attachments have
+      no bytes, and no refresh has said so.** `2EPBZYCA`, `W2Q4HEVE`,
+      `EWTQJLR8`, `M7HLHPRC` each carry `status: failed` with a **404 from the
+      file endpoint** — the item exists, the file does not.
+
+      `failed` is deliberately not in `DONE_STATUSES` (1b9ca98: "a failed entry
+      is unfinished work, not a result"), so every refresh should retry these
+      four and report four failures. `library`'s last two runs reported **0
+      failed**. Both cannot be true, and the likely reconciliation is that
+      these four are **stale entries for attachments no longer in Zotero** —
+      the current run lists 2,780 attachments against 2,789 state entries, so
+      at least nine entries describe things that are gone.
+
+      That is worth fixing either way, because the two cases are
+      indistinguishable from the file: **nothing prunes a state entry whose
+      attachment has disappeared, so a dead `failed` looks exactly like a live
+      one.** If instead they ARE live, the refresh is reporting a clean run
+      over four attachments it cannot read, which is the silent-skip family
+      this repo has now hit five times.
+
+      These four are also the first real candidates for `zotero_delete.py
+      --stubs`, which has never met one — and a 404 from the file endpoint is
+      precisely the test it uses.
 - [x] **The headline counter reported lines as records.** On `8970622`: 2,608
       to upload, 4,250,487,080 bytes, and the arithmetic closes at 2,740. But
       the header announced "123 record(s) uploaded nothing" where the truth is
@@ -1724,11 +1759,14 @@ makes and has not tested:
 - **`get_pdf.py`'s Zotero fallback.** Every call so far was answered by the
   cache or the archive. Now that `<out>/pdf/` is empty it is the only path left,
   so the first real use will exercise it.
-- **An `imported_url` upload.** ROADMAP item 1 records this as UNVERIFIED and
-  asks for one to be done alone with `--key` first. The bulk upload ran and a
-  30-record sample verified, but **nobody confirmed an `imported_url` item was
-  in that sample**, so whether Zotero accepts an upload against one is still
-  not known from evidence. 24 records depend on the answer.
+- ~~**An `imported_url` upload.**~~ **CLOSED 2026-10-05**, and not by the test
+  that was planned. `state.json` already held the answer: 2,785 of 2,789
+  Zotero attachments carry a status that only a reader holding bytes can
+  produce. The 24 are inside that number. **The measurement existed for three
+  days before anyone read it as an answer to this question** — the item asked
+  for a write that was never needed, which is its own lesson about what
+  "unverified" means. Flagged by `library`, who had a single-record
+  measurement from 10-01 and asked whether it counted.
 
 **Added 2026-10-05 in 0.29.0 and CLOSED the same day on 0.29.6.**
 `zotero_inbox.py` creating the record when none holds the paper has now run
