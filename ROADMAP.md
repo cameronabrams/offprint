@@ -1730,14 +1730,35 @@ makes and has not tested:
   in that sample**, so whether Zotero accepts an upload against one is still
   not known from evidence. 24 records depend on the answer.
 
-**Added 2026-10-05, 0.29.0.** `zotero_inbox.py` can now create the record when
-none holds the paper — and **that branch has not run.** All three papers filed
-on 10-05 already had records (pushed an hour earlier), so what was exercised
-was the attach path and the md5 duplicate refusal, not the create. The Zotero
-DOI index that makes creating safe is the part that most needs a live run: its
-whole job is to find a record `library.bib` cannot see, and a lookup that
-silently matches nothing would look exactly like "no record exists" and mint a
-duplicate. The fixtures cover the decision; nothing covers the query.
+**Added 2026-10-05 in 0.29.0 and CLOSED the same day on 0.29.6.**
+`zotero_inbox.py` creating the record when none holds the paper has now run
+live: two records (P2U2F798, NZA2Z5EM), Kinloch & Taylor Parts I and II. The
+refresh assigned `Kinloch2002Toughening` and `Kinloch2003Toughening`, extracts
+came out at 28 and 15 pages matching each PDF, and `library`'s body-hash diff
+over the whole mirror was **2 added, 0 changed, 0 removed**.
+
+Three properties were exercised at once, and a clean run only proves them if
+someone writes down what they were:
+
+- **The Zotero DOI index did its job, silently and correctly.** Its whole
+  purpose is to find a record `library.bib` cannot see; its failure mode is
+  matching nothing, which looks exactly like "no record exists" and mints a
+  duplicate. Two creates for two genuinely absent papers, and no second record
+  for anything already held.
+- **Two companion papers with near-identical titles did not collapse into
+  one.** `assign_citekeys` separated them on year. The suite has carried a
+  fixture for that case since the Mendeley era; this is the first time it has
+  been met in the wild.
+- **A `crossref title search` identification was strong enough to create
+  from** — the weakest of the four routes, since the DOI is inferred from
+  page-1 text rather than printed on it. It held. But what made that
+  acceptable was `library` reading the 0.29.6 metadata preview against page 1
+  before passing `--yes`: the tool's safeguard is *showing* the record, and
+  the judgement stayed with the person holding the PDF. Had the preview
+  landed a day later, the same run would have been a guess that happened to
+  be right.
+
+Refresh with the two new extracts: 136.7 s, against 130.0 s idle.
 
 **A path deliberately not taken**, and the reasoning rather than the verdict:
 `--reassess` re-reads the whole library on every rules bump, ~93 minutes. A
