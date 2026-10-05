@@ -318,6 +318,9 @@ def main():
     print("\nbibtex")
     mm.write_bibtex(DOCS, keymap, out, include_abstract=True)
     bib = (out / "library.bib").read_text(encoding="utf-8")
+    # Captured HERE rather than read off `bib` at the end, so the closing
+    # sample cannot depend on a name staying unshadowed for 3,400 lines.
+    sample_entry = bib.split("@")[1][:600] if "@" in bib else ""
     check("@article{Muller2020Yield," in bib, "journal -> @article")
     check("@incollection{Bird2021Transport," in bib, "book_section -> @incollection")
     check("@phdthesis" in bib and "school" in bib, "thesis -> @phdthesis with school")
@@ -2961,9 +2964,12 @@ def main():
         ("Sundquist2012Hiv", "2157-1422 (Electronic)", "21571422", "same"),
         ("Bajaj1987Tertiary", "0006-3002 (Print)", "01674838", "differs"),
     ]
-    for key, bib, zot, want in cases:
-        got = zs.classify_isbn_value(bib, zot)
-        check(got == want, f"{key}: {bib[:38]!r} vs {zot!r} is {want} (got {got})")
+    # NOT `bib` as the loop name, per the NB above: this script is flat, and
+    # `bib` holds the generated BibTeX. Shadowing it here left the suite's own
+    # epilogue reading an ISSN string, which is e8141d5's actual legacy.
+    for key, bibval, zot, want in cases:
+        got = zs.classify_isbn_value(bibval, zot)
+        check(got == want, f"{key}: {bibval[:38]!r} vs {zot!r} is {want} (got {got})")
 
     # The genuine junk: digit strings with no ISSN structure. The word
     # boundaries are what stop an eight-digit window inside a thirteen-digit
@@ -3758,8 +3764,9 @@ def main():
           "exactly one file defines __version__")
 
     print("\n" + ("ALL CHECKS PASSED" if not fails else f"{len(fails)} FAILURES: {fails}"))
-    print("sample entry:\n")
-    print(bib.split("@")[1][:600])
+    if sample_entry:
+        print("sample entry:\n")
+        print(sample_entry)
     return 1 if fails else 0
 
 
