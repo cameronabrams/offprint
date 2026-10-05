@@ -2826,6 +2826,42 @@ still uses. T1 and fontspec render both characters correctly.
 *What would change it:* someone reporting a `.bib` that typesets wrong, with
 the field named. Not before.
 
+## 29. `stem_conflict` assumes a file name is a DOI claim — it often is not
+
+Two false refusals on 2026-10-05, hours apart, both from `library`, both the
+same assumption: **a run of five digits in the file name means the stem is a
+DOI suffix.**
+
+1. `10.1002_(SICI)1097-4628(19970404)64.pdf` — a browser naming the file after
+   the whole DOI, prefix included, compared against only the DOI's suffix.
+   Fixed in 0.29.1 by comparing against the full DOI as well.
+2. `1-s2.0-S2211124720314170-main.pdf` — Elsevier's default download name,
+   built from the **PII**. A PII is a different identifier for the same
+   article and shares no characters with `10.1016/j.celrep.2020.108428`, so it
+   can never match any DOI by containment. Every Elsevier download was refused
+   as its own name disagreeing with its own text. Excluded by template in
+   0.30.1.
+
+### Why this is excluded by name rather than fixed in general
+
+The tempting repair is to default to "no opinion" when the stem is not
+recognisably a DOI. **That cannot be done**, and the reason is the case the
+guard exists for: a file correctly named `science.1116480` whose page 1 is the
+*previous article's* last page, so the text resolves to a different paper. The
+stem there is unrecognisable too — there is nothing distinguishing it from a
+blob name — so a looser default would silently trust the text over the name in
+exactly the situation the guard was written to catch. Four papers in one batch
+were about to be filed that way.
+
+So each publisher template is excluded as it turns up. That is slow and
+visibly incomplete, and it is the only shape that cannot weaken the default.
+**Known templates: Elsevier `1-s2.0-<PII>-main`. That is the whole list.**
+Expect to add to it; do not redesign around it without an answer to the
+previous-article case.
+
+*What a real fix would need:* a positive test for "a human or a DOI-derived
+process chose this name", which nothing in the file can currently supply.
+
 ## Deliberately not doing
 
 **Packaging (PyPI, conda-forge, console entry points).** The PEP 723 headers

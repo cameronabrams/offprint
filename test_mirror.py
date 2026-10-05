@@ -2736,6 +2736,27 @@ def main():
     check(not _ib.stem_conflict("casino", "10.1038/387527a0"),
           "and neither does a name with no digit run")
 
+    # A PUBLISHER'S OWN DOWNLOAD NAME MAKES NO CLAIM ABOUT WHICH PAPER THIS IS.
+    # Elsevier's default is built from the PII -- a different identifier for
+    # the same article, sharing no characters with the DOI, so it can never
+    # match by containment and every Elsevier download was refused as its own
+    # name disagreeing with its own text. library, 2026-10-05, hours after the
+    # browser-full-DOI case: two failures of one assumption, that a five-digit
+    # run means the stem is a DOI suffix.
+    check(not _ib.stem_conflict("1-s2.0-S2211124720314170-main",
+                                "10.1016/j.celrep.2020.108428"),
+          "an Elsevier PII download name is not a conflict with the DOI")
+    check(not _ib.stem_conflict("1-s2.0-S0032386199006163-main",
+                                "10.1016/s0032-3861(99)00616-3"),
+          "including when the PII and the DOI DO share digits")
+
+    # And the exclusion must not become a hole: the default for an
+    # unrecognised stem stays "conflict", because the case this guard exists
+    # for -- a correctly named file whose page 1 is the previous article's
+    # tail -- leaves nothing in the stem to recognise either.
+    check(_ib.stem_conflict("1-s2-0-notatemplate-12345", "10.1038/387527a0"),
+          "a name that merely resembles the template is still judged")
+
     # A refusal must name the test that refused. "None matched the text on
     # page 1" was this function's summary for the whole loop, so a file whose
     # TITLE matched perfectly got a message pointing at the title check.

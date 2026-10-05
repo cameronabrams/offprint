@@ -253,6 +253,12 @@ def title_of(meta: dict) -> str:
     return meta.get("title", "")
 
 
+# Elsevier's default download name: `1-s2.0-<PII>-main.pdf`. The PII is a
+# publisher identifier, not a DOI, and the `1-s2.0-` prefix and `-main` suffix
+# are the template rather than anything about the article.
+ELSEVIER_DOWNLOAD = re.compile(r"1-s2\.0-S?[\dX-]{8,}(-main)?", re.I)
+
+
 def stem_conflict(stem: str, doi: str) -> bool:
     """True when the file name looks like it names a DIFFERENT DOI than `doi`.
 
@@ -272,6 +278,27 @@ def stem_conflict(stem: str, doi: str) -> bool:
     # four fired on twenty files in a forty-four file batch and refused most of them.
     if not re.search(r"\d{5}", stem):
         return False                      # not DOI-suffix-shaped; no opinion
+
+    # A PUBLISHER'S OWN DOWNLOAD NAME IS NOT A CLAIM ABOUT WHICH PAPER THIS IS.
+    # This guard exists for a name a HUMAN chose, or that was derived from a
+    # DOI: "the file says Smith2001, the text says something else, trust the
+    # name." Elsevier's default is `1-s2.0-S2211124720314170-main.pdf`, built
+    # from the PII -- a different identifier for the same article, sharing no
+    # characters with `10.1016/j.celrep.2020.108428` and therefore unable to
+    # match any DOI by containment, ever. Every Elsevier download would be
+    # refused as its own name disagreeing with its own text.
+    #
+    # Reported by `library` 2026-10-05, hours after the browser-full-DOI case.
+    # Two failures of one assumption: that a five-digit run means the stem is
+    # a DOI suffix. It can equally be a PII, an issue number, or a timestamp.
+    # The guard cannot be loosened in general -- an unrecognised stem must keep
+    # defaulting to "conflict", because the case it was built for is a stem
+    # that names the right paper while page 1 shows the previous article's
+    # tail, and there is nothing in that stem to recognise either. So each
+    # publisher template gets excluded by name as it turns up, which is slow
+    # but cannot weaken the default.
+    if ELSEVIER_DOWNLOAD.search(stem):
+        return False
     st = re.sub(r"[^a-z0-9.]", "", stem.lower())
     if len(st) < 6:
         return False

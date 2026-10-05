@@ -381,6 +381,23 @@ What it is actually for is bounding an **expensive** re-read: `--ocr` or
 `--reassess` this ROADMAP recorded as deliberately not built, and it arrived as
 a side effect of building the wrong thing.
 
+## A file name is not always a claim about which paper this is
+
+`stem_conflict` refuses a DOI found in the text when the file name looks like
+it names a different paper, because a downloaded issue scan often opens on the
+previous article's last page and the human-chosen name is the thing to trust.
+Its trigger is a five-digit run in the stem, and **that assumption failed
+twice on 2026-10-05**: a browser naming the file after the whole DOI (fixed by
+comparing against the full DOI, not just its suffix), and Elsevier's
+`1-s2.0-<PII>-main.pdf`, built from an identifier that shares no characters
+with the DOI and so can never match.
+
+**Do not fix this by defaulting to "no opinion" for an unrecognised stem.**
+The case the guard exists for — `science.1116480` whose page 1 belongs to the
+preceding article — has an unrecognisable stem too, so a looser default trusts
+the text over the name exactly where that is wrong. Publisher templates are
+excluded one at a time instead. The list is Elsevier's, and that is all of it.
+
 ## Decode on the way in, not only on the way out
 
 `html_decode` has run in the BibTeX writer since it was written, so
