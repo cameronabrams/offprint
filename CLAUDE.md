@@ -367,7 +367,19 @@ and `folders.json` are still rebuilt whole, because they are regenerated from
 the full document and attachment maps — narrowing those maps would rewrite the
 index with every unnamed record's attachments missing. It also leaves
 `mirror-status.md` alone: that file says when the mirror was last verified, and
-a run that examined three records out of 2,777 does not get to reset it.
+a run that examined three records out of 2,780 does not get to reset it.
+
+**It does not make an ordinary refresh faster, and it was built believing it
+would.** Measured 2026-10-05 on the live library: full 203.1 s, `--only` one
+record 199.4 s. Extraction is 0.1 s of that, because skipping an attachment
+whose filehash is unchanged costs nothing — the time is in three API fetches
+that `--only` cannot avoid and must not avoid. Keep that number next to the
+flag, or the next reader will reach for it to speed up a refresh.
+
+What it is actually for is bounding an **expensive** re-read: `--ocr` or
+`--reassess` over named records rather than 2,780. That is the bounded
+`--reassess` this ROADMAP recorded as deliberately not built, and it arrived as
+a side effect of building the wrong thing.
 
 ## Tests
 

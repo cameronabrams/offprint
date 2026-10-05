@@ -289,10 +289,16 @@ class ZoteroSource:
 
     def __init__(self, z: Zotero):
         self.z = z
+        # Filled by `documents()`: which collections each record is in, read
+        # off the records themselves. See `collections()` for why.
+        self.item_collections: dict = {}
 
     def documents(self) -> list:
         items = [i for i in self.z.items_top()
                  if (i.get("data") or {}).get("itemType") not in ("attachment", "note")]
+        self.item_collections = {
+            i.get("key"): ((i.get("data") or {}).get("collections") or [])
+            for i in items}
         return [item_to_doc(i) for i in items]
 
     def files_by_doc(self, doc_ids: list, bulk: bool = True) -> dict:
@@ -409,6 +415,26 @@ class ZoteroSource:
             data = c.get("data") or {}
             key = c.get("key") or data.get("key")
             folders.append({"id": key, "name": data.get("name") or "(unnamed)"})
+            folder_docs[key] = []
+
+        if self.item_collections:
+            # **Read off the records, which are already in hand.** Asking
+            # `collections/<key>/items/top` per collection cost 79.7 of a
+            # 203-second refresh on 2026-10-05 -- not five requests, as the
+            # phase label wrongly said, but five PAGED walks over collections
+            # holding most of the library. Every item already carries the
+            # collections it belongs to, so this is the same answer for no
+            # requests at all.
+            for item_key, colls in self.item_collections.items():
+                for ck in colls:
+                    if ck in folder_docs:
+                        folder_docs[ck].append(item_key)
+            return folders, folder_docs
+
+        # No record list was fetched (a caller using this class on its own), so
+        # ask per collection as before.
+        for c in raw:
+            key = c.get("key") or (c.get("data") or {}).get("key")
             folder_docs[key] = [i.get("key") for i in
                                 self.z.paged(f"collections/{key}/items/top", quiet=True)]
         return folders, folder_docs
@@ -1082,7 +1108,7 @@ def refresh(out: Path, ocr: bool = False, dry_run: bool = False,
                 annotation_markdown(docs_by_id[doc_id], key, anns), encoding="utf-8")
 
     folders, folder_docs = src.collections()
-    phases.mark(f"fetch collections ({len(folders)}, one request each)")
+    phases.mark(f"build collections ({len(folders)})")
     print(f"  collections: {len(folders)}")
     if folders:
         write_folders(folders, folder_docs, keymap, out, backend=BACKEND)
@@ -1210,10 +1236,12 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true",
                     help="with --refresh: read and report, write nothing")
     ap.add_argument("--only", nargs="+", metavar="KEY",
-                    help="with --refresh: extract text for only these records "
-                         "(citation keys or Zotero item keys). library.bib, "
-                         "index.md and folders.json are still rebuilt in full; "
-                         "mirror-status.md is left alone")
+                    help="with --refresh: extract text for only these records. "
+                         "This does NOT make an ordinary refresh faster -- "
+                         "measured 199.4s against 203.1s -- because skipping an "
+                         "unchanged attachment already costs nothing. Use it to "
+                         "bound an EXPENSIVE re-read: --ocr or --reassess over "
+                         "named records instead of 2,780")
     ap.add_argument("--reassess", action="store_true",
                     help="with --refresh: re-read attachments whose extract was "
                          "produced under older extraction rules")

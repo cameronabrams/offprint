@@ -3587,7 +3587,8 @@ def main():
         "itemType": "journalArticle", "title": "Influence of vinyl ester",
         "creators": [{"creatorType": "author", "firstName": "J.", "lastName": "Shan"}],
         "publicationTitle": "Journal of Applied Polymer Science",
-        "volume": "80", "pages": "917-927", "date": "2001", "DOI": "10.1002/app.1171"}}
+        "volume": "80", "pages": "917-927", "date": "2001", "DOI": "10.1002/app.1171",
+        "collections": ["COL1"]}}
     ZCHILD = {"key": "ZA1", "data": {"linkMode": "imported_file",
                                      "parentItem": "ZK1",
                                      "filename": "paper.pdf",
@@ -3777,6 +3778,36 @@ def main():
     check("Shan2001Infleunce" in str(rc_typo),
           f"and a typo is an ERROR, not a run that extracts nothing and reports "
           f"success ({rc_typo!r})")
+
+    # ---- collections come off the records, not from a walk per collection --
+    # Measured 2026-10-05 on the live library: 79.7 of 203 seconds. The phase
+    # label called it "5, one request each" and it was five PAGED walks over
+    # collections holding most of the library. Every item already carries the
+    # collections it is in.
+    class StubZC(StubZ):
+        def paged(self, path, quiet=False, **kw):
+            self.asked.append((path, kw.get("itemType")))
+            if path == "collections":
+                return [{"key": "COL1", "data": {"name": "Cyanate esters"}}]
+            return StubZ.paged(self, path, quiet=quiet, **kw)
+
+    csrc = zs.ZoteroSource(StubZC())
+    csrc.documents()                      # this is what fills item_collections
+    cfolders, cdocs = csrc.collections()
+    check(cfolders == [{"id": "COL1", "name": "Cyanate esters"}],
+          f"the collection list is still read ({cfolders})")
+    check(cdocs == {"COL1": ["ZK1"]},
+          f"and membership comes off the records already fetched ({cdocs})")
+    check(not any("/items/top" in pth for pth, _ in csrc.z.asked),
+          f"with NO per-collection walk ({csrc.z.asked})")
+
+    # Used on its own, with no record list fetched, it must still answer.
+    fsrc = zs.ZoteroSource(StubZC())
+    ffolders, _fdocs = fsrc.collections()
+    check(ffolders == [{"id": "COL1", "name": "Cyanate esters"}]
+          and any("collections/COL1/items/top" == pth for pth, _ in fsrc.z.asked),
+          f"and falls back to the per-collection walk when it has no records "
+          f"({fsrc.z.asked})")
 
     # ---- a targeted refresh touches only what it names --------------------
     # library's fixture, 2026-10-05: "--only on one key -> body-hash snapshot

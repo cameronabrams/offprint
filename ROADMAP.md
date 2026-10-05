@@ -2498,14 +2498,47 @@ Roughly 60 HTTP requests remain (28 pages of records, 28 of attachments, one
 for annotations, one per collection) and they cannot account for 203 s either,
 so the next number has to come from a run, not from me.
 
-**`--only` is UNDECIDED and should stay that way until the phase report lands.**
-It was built assuming a full refresh stays expensive. At 203 s the fixed cost
-dominates and `--only` can only remove the extraction phase, so if extraction
-is a small share of 203 s then `--only` saves almost nothing and should be
-retired rather than carried — every flag is a thing that can be wrong. The
-experiment is one command: `--only` on one record, timed, against the phase
-report from a full run. Do not treat `--only`'s existence as evidence it was
-needed.
+### The phase report, and what `--only` turned out to be for
+
+`library` ran both on 0.29.3, 2026-10-05:
+
+```
+    69.3s  fetch records (items/top)
+    53.5s  fetch attachments (one bulk query)
+     0.4s  write library.bib
+     0.1s  extract text (0 read, 2780 skipped)
+     0.1s  fetch annotations
+    79.7s  fetch collections (5)
+   203.1s  total          --only Woo1994Phase: 199.4s
+```
+
+**`--only` saves 3.7 seconds and was built to save minutes.** Extraction is a
+tenth of a second, because skipping an attachment whose filehash is unchanged
+costs nothing — the premise that a targeted run avoids expensive work was
+simply false, and nothing checked it before the flag existed.
+
+It is kept rather than retired, for a reason it was not built for: it bounds an
+**expensive** re-read. `--reassess --only KEY` re-reads one record under new
+extraction rules instead of 2,780, which is the bounded `--reassess` recorded
+further up this file as deliberately not built. It arrived as a side effect of
+building the wrong thing, which is not a vindication — the measurement is now
+written beside the flag in three places precisely so the next reader does not
+reach for it to speed up a refresh.
+
+**The collections row was the real finding, and my own label hid it.** The
+phase printed "(5, one request each)". It is not five requests; it is five
+*paged walks* over collections holding most of the library, and at 79.7 s it
+was 39% of the refresh. Every item already carries the collections it belongs
+to, so folder membership now comes off the records already in hand, for no
+requests at all. **A label I wrote asserting a cost model is what made a 79.7 s
+line look reasonable** — `library` flagged it as "looks wrong" from the
+arithmetic, which is the second time in two days that someone doing division on
+my output found something I had not.
+
+What is left is two paged fetches, 123 s, and they are latency: ~2 s per page
+of 100 against the Zotero API. Reducing that means fewer round trips or
+`since=` incremental sync, neither of which anyone has measured. **Do not
+assume that estimate either.**
 
 ### The order problem the speedup created
 

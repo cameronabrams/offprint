@@ -169,10 +169,17 @@ quietly drop every record it did not name. It also leaves `mirror-status.md`
 untouched, since that file records when the mirror as a whole was last
 verified and a run that looked at one record cannot speak for it.
 
-Run a full refresh when you want that statement refreshed. Since 0.29.0 a full
-refresh asks Zotero for every attachment in **one** query rather than one per
-record, which is where a 13-minute refresh for two changed attachments was
-going.
+**`--only` will not make the refresh noticeably faster.** Measured on this
+library: 199.4 s against 203.1 s for the full run. Extraction is a tenth of a
+second of that, because an attachment whose contents have not changed is
+skipped before anything is read. The time is in asking Zotero for the library,
+and a targeted run still has to do that. Reach for `--only` when the re-read
+itself is expensive — `--ocr`, or `--reassess` after an extraction-rules
+change — not to save a minute on an ordinary refresh.
+
+A full refresh took 13.3 minutes before 0.29.0 and takes about two now: the
+attachment list is one query rather than one per record, and collection
+membership is read off the records instead of walking each collection.
 
 ## Getting every attachment onto disk
 
