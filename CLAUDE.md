@@ -381,6 +381,32 @@ What it is actually for is bounding an **expensive** re-read: `--ocr` or
 `--reassess` this ROADMAP recorded as deliberately not built, and it arrived as
 a side effect of building the wrong thing.
 
+## A state entry outlives its attachment
+
+`state.json` is keyed by attachment id and nothing removes an entry when the
+attachment goes. On 2026-10-05 four carried `status: failed` with a 404 from
+the file endpoint, and `library` confirmed all four permanently deleted from
+Zotero — residue from the 11 duplicate records pruned on 10-02.
+
+**The bug was not the residue. It was that residue and a live failure read
+identically.** `failed` is deliberately outside `DONE_STATUSES` so a failed
+attachment is retried next run — but a key absent from the attachment listing
+is never visited, so the retry can never fire, and the run reports `0 failed`
+while the file holds four. Both readings fit the evidence, which is the whole
+problem. A refresh now names them.
+
+`--prune-state` removes them, and is **guarded against its own coupling**: the
+stale set is computed from *this run's* listing, so a listing that came back
+empty or short would condemn state for a library that is perfectly intact and
+cost a full re-extraction of every attachment. An empty listing is a broken
+run, never an empty library — that is the same reasoning as "a pass that does
+no work does not get to report success", applied to a pass that would destroy
+something. `--only` cannot prune either: it does not speak for the mirror, and
+pruning is a whole-library claim.
+
+Report by default, destroy only when asked, and refuse when the input that
+justifies the destruction looks wrong.
+
 ## Tests
 
 ```

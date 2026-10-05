@@ -922,6 +922,28 @@ class Phases:
                 + f"\n    {total:7.1f}s  total")
 
 
+def stale_state_entries(files_by_doc: dict, state: dict, backend: str) -> list:
+    """State entries for attachments the library no longer lists.
+
+    `library` found four on 2026-10-05 — all `status: failed` with a 404 from
+    the file endpoint, all four confirmed permanently deleted from Zotero
+    (absent from `items/<key>`, present in the deleted log, against a positive
+    control that answered 200). They are residue, almost certainly the children
+    of the 11 duplicate records pruned on 10-02.
+
+    **The defect they exposed is not the residue, it is that residue and a live
+    failure look identical.** `failed` is deliberately outside `DONE_STATUSES`
+    so a failed attachment is retried on the next run — but a key absent from
+    the listing is never visited at all, so the retry rule cannot fire for it
+    and the run reports 0 failed while `state.json` holds 4. Both readings fit
+    the file, which is the problem; naming them is the fix.
+    """
+    listed = {qualify(f.get("id", ""), backend)
+              for flist in files_by_doc.values() for f in flist}
+    return [k for k in (state.get("files") or {})
+            if local_id(k, backend) and k not in listed]
+
+
 def resolve_only(names: list, keymap: dict, docs_by_id: dict,
                  backend: str) -> set:
     """`--only` values (citation keys or Zotero item keys) as a set of doc ids.
@@ -959,7 +981,8 @@ def resolve_only(names: list, keymap: dict, docs_by_id: dict,
 
 
 def refresh(out: Path, ocr: bool = False, dry_run: bool = False,
-            reassess: bool = False, only: list | None = None) -> int:
+            reassess: bool = False, only: list | None = None,
+            prune_state: bool = False) -> int:
     """Rebuild the mirror from Zotero.
 
     The generators are `mendeley_mirror`'s and are untouched; what changed is
@@ -1094,6 +1117,42 @@ def refresh(out: Path, ocr: bool = False, dry_run: bool = False,
         print(f"\n! the refresh raised: {type(exc).__name__}: {exc}")
         print("  mirror-status.md records the failure.")
         raise
+
+    stale = stale_state_entries(files, state, BACKEND)
+    if stale:
+        dead_failed = [k for k in stale
+                       if (state["files"][k] or {}).get("status") == "failed"]
+        print(f"  state.json: {len(stale)} entr(ies) for attachments Zotero no "
+              f"longer lists")
+        if dead_failed:
+            print(f"    {len(dead_failed)} of them recorded FAILED and will "
+                  "never be retried, because a key absent from the listing is "
+                  "never visited: " + ", ".join(local_id(k, BACKEND) or k
+                                                for k in dead_failed[:6]))
+            print("    These are residue, not a live failure. That is why the "
+                  "run above says 0 failed.")
+        if prune_state and not only_ids:
+            # Guarded, because the coupling is dangerous: this prunes against
+            # THIS RUN's attachment listing, and a listing that came back empty
+            # or short would delete state for a library that is perfectly
+            # intact -- costing a full re-extraction of every attachment. The
+            # repo has already shipped one bug where a lookup missed on every
+            # document and nothing raised. An empty listing is a broken run,
+            # never an empty library.
+            if not any(files.values()):
+                print("    ! NOT pruning: this run listed no attachments at "
+                      "all, which is a broken listing rather than an empty "
+                      "library.")
+            else:
+                for k in stale:
+                    del state["files"][k]
+                save_json(mirror / "state.json", state)
+                print(f"    pruned {len(stale)} stale entr(ies) from state.json")
+        elif prune_state and only_ids:
+            print("    ! NOT pruning: --only does not speak for the mirror, "
+                  "and pruning is a whole-library claim.")
+        elif not prune_state:
+            print("    Pass --prune-state to remove them.")
 
     ann_by_doc = src.annotations_by_doc(files)
     phases.mark("fetch annotations")
@@ -1242,6 +1301,10 @@ def main() -> int:
                          "unchanged attachment already costs nothing. Use it to "
                          "bound an EXPENSIVE re-read: --ocr or --reassess over "
                          "named records instead of 2,780")
+    ap.add_argument("--prune-state", action="store_true",
+                    help="with --refresh: drop state.json entries for "
+                         "attachments Zotero no longer lists. Without it they "
+                         "are only reported")
     ap.add_argument("--reassess", action="store_true",
                     help="with --refresh: re-read attachments whose extract was "
                          "produced under older extraction rules")
@@ -1255,7 +1318,8 @@ def main() -> int:
     args = ap.parse_args()
     if args.refresh:
         return refresh(args.out, ocr=args.ocr, dry_run=args.dry_run,
-                       reassess=args.reassess, only=args.only)
+                       reassess=args.reassess, only=args.only,
+                       prune_state=args.prune_state)
     if args.rescue_identifiers:
         return rescue_identifiers(args.out)
     if args.compare:

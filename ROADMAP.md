@@ -336,9 +336,32 @@ apart.
       over four attachments it cannot read, which is the silent-skip family
       this repo has now hit five times.
 
-      These four are also the first real candidates for `zotero_delete.py
-      --stubs`, which has never met one — and a 404 from the file endpoint is
-      precisely the test it uses.
+      **RESOLVED the same day.** `library` checked all four read-only against
+      `items/<key>`, the file endpoint and Zotero's deleted log, with
+      `Q5IWNJIM` as a positive control (200 and 302). All four are 404 on both
+      and present in the deleted log; a trashed-but-not-emptied item would
+      still answer with `data.deleted=1`, so these are permanently deleted.
+      None appears in `.mirror/deleted-20261003T223611Z.json`, so
+      `zotero_delete.py` did not remove them — most likely they were children
+      of the 11 duplicate records pruned on 10-02, which `library` marked
+      UNVERIFIED rather than asserting.
+
+      So they are **not** `--stubs` candidates after all: there is nothing left
+      in Zotero to delete. That item stays open.
+
+      0.29.7 reports stale entries on every refresh and names any recorded
+      `failed`, which closes the ambiguity. `--prune-state` removes them and is
+      guarded against its own coupling: the stale set comes from *this run's*
+      listing, so an empty or short listing would condemn state for an intact
+      library and cost a full re-extraction. An empty listing is a broken run,
+      not an empty library. `--only` cannot prune, because pruning is a
+      whole-library claim and `--only` does not speak for the mirror.
+
+      The method is worth copying: `library` ran a **positive control** through
+      the same two endpoints in the same session. Without it, four 404s are
+      equally consistent with "these are gone" and "my credentials or base URL
+      are wrong" — and the second has been the true answer before in this
+      fleet.
 - [x] **The headline counter reported lines as records.** On `8970622`: 2,608
       to upload, 4,250,487,080 bytes, and the arithmetic closes at 2,740. But
       the header announced "123 record(s) uploaded nothing" where the truth is

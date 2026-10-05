@@ -3849,6 +3849,34 @@ def main():
           f"and falls back to the per-collection walk when it has no records "
           f"({fsrc.z.asked})")
 
+    # ---- stale state entries, and why a blind prune is not the fix --------
+    # library found four on the live library, 2026-10-05: status failed, 404
+    # from the file endpoint, all four confirmed permanently deleted from
+    # Zotero against a positive control. The defect is not the residue, it is
+    # that residue and a live failure are indistinguishable in the file.
+    live_files = {"D1": [{"id": "keep1"}, {"id": "keep2"}]}
+    st_stale = {"files": {"zotero:keep1": {"status": "ok"},
+                          "zotero:keep2": {"status": "ok"},
+                          "zotero:gone1": {"status": "failed"},
+                          "zotero:gone2": {"status": "ok"},
+                          "mendeley:old1": {"status": "ok"}}}
+    st_list = zs.stale_state_entries(live_files, st_stale, "zotero")
+    check(sorted(st_list) == ["zotero:gone1", "zotero:gone2"],
+          f"an entry whose attachment is not listed is stale ({st_list})")
+    check("mendeley:old1" not in st_list,
+          "and the OTHER backend's entries are never stale by this test -- they "
+          "are the frozen Mendeley half of the map and nothing lists them")
+    check(zs.stale_state_entries(live_files, {}, "zotero") == [],
+          "an empty state has nothing stale in it")
+
+    # The dangerous coupling: this is computed against THIS RUN's listing. A
+    # listing that came back empty would mark every entry stale, and pruning on
+    # that would cost a full re-extraction of a library that is perfectly fine.
+    everything = zs.stale_state_entries({}, st_stale, "zotero")
+    check(len(everything) == 4,
+          f"an empty listing marks EVERY zotero entry stale ({len(everything)}) "
+          "-- which is why --prune-state refuses to act on one")
+
     # ---- a targeted refresh touches only what it names --------------------
     # library's fixture, 2026-10-05: "--only on one key -> body-hash snapshot
     # of every OTHER text/*.md unchanged". The hazard is not the extraction, it
