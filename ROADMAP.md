@@ -2862,6 +2862,61 @@ previous-article case.
 *What a real fix would need:* a positive test for "a human or a DOI-derived
 process chose this name", which nothing in the file can currently supply.
 
+## 30. `finding.py` wrote a wrong page locator and refused the right one
+
+`library`, 2026-10-06, on `Garau2003Dual` (Org. Lett. 5:2227–2229, 3 pages):
+`derive_offset` returned **+4 agreeing on 3 pages**, so the tool wrote
+`printed 6` into `findings/Garau2003Dual.md` **and refused the operator's
+correct `--journal-page 2228`**. Both halves matter — a wrong locator was
+filed, and the right one was blocked by the same wrong belief.
+
+### What it actually was
+
+Not "stray single digits", which was the reasonable first guess. Every page
+carries a publisher download stamp:
+
+```
+article-pdf/5/13/2227/42994452/ol034650u.pdf by DREXEL UNIV user on 06 October 2026
+```
+
+It sits at the **trailing edge**, which is precisely where a running footer
+sits and where `derive_offset` looks. +4 then took one vote on each of three
+pages from three *unrelated* numbers — `05` on page 1, `06` on page 2, `7` on
+page 3. The true +2226 took two, because page 2's running head never reaches
+the edge window. One vote per page per offset cannot tell three coincidences
+from a running head.
+
+### The fix, and the fix that was measured and thrown away
+
+`library.bib` already records `pages = {2227--2229}`. The derivation's own
+docstring cites that field as the ground truth its two earlier corrections
+were *scored against* — and then never lets it near a runtime decision. It
+does now, as a tie-break that cannot invent an offset no page voted for.
+
+Measured over the 2,482 extracts whose bib entry has a numeric first page:
+
+| | precision | wrong | coverage |
+|---|---|---|---|
+| before | 84.4% | 339 | 87.4% |
+| with the bib's first page | **89.6%** | **228** | **88.1%** |
+
+111 fewer wrong page numbers with coverage slightly **up** — unlike both
+earlier corrections, which bought precision with silence. It beats the
+"winner must lead by 2" rule this file rejected (89.0%) and, unlike that rule,
+still derives `Kendrick1990Calculated` and `Hamerton1996Molecular` correctly.
+
+**A second fix was built, measured, and removed.** Stripping lines that repeat
+identically across pages — the download stamp itself — is the obvious
+structural answer and it does not work: 84.4% → 84.3%, three papers fixed and
+seven broken, and *worse in combination with the hint* (89.4% against 89.6%).
+It was deleted rather than kept as a wash, because a plausible mechanism with
+no measured benefit is what a later reader will reinstate. Recorded here so
+the next person reaches for the bib, not the stamp.
+
+*Still uncovered:* `Georjon1997Molecular` derives `None` before and after — its
+running head lands mid-page, where no edge window reaches. `confirm_offset`
+covers it once an operator supplies the number.
+
 ## Deliberately not doing
 
 **Packaging (PyPI, conda-forge, console entry points).** The PEP 723 headers
