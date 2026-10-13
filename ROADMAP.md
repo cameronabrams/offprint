@@ -2911,7 +2911,39 @@ page — which is what these records said before the tool tried to be clever.
 rule about refusals, and its bias is now documented twice. The check is
 `library`'s replay.
 
+### The replay: no regressions
+
+`library` replayed the same 148 findings against 0.31.2 (`5bf33d2`) on
+2026-10-13: **AGREE 129, DISAGREE 3, LOST 10, BARE 6, REFUSED 0**, and all
+three non-agreeing classes resolved in the tool's favor. Report:
+`~/.local/state/fleet/drops/library-findings-replay-0.31.2-20261013.md`.
+
+- **The 3 DISAGREE are corrections.** `Hamerton1996Molecular` #1 313 (matching
+  its own #3/#4, against a recorded `printed 3`), `Ikeno2011Molecular` #1 311,
+  `Kendrick1990Calculated` #1 3996. Each recorded value was wrong.
+- **The 10 LOST were the replay script**, not the tool: it never passed
+  `--journal-page`, so every `confirm_offset` record could only come back bare.
+  Re-run with the page, 8 confirm — including `Hendrickson2006Transduction` 321
+  and `Garau2003Dual` 2228, the two the table above predicted — and
+  `Lopez2022Composition` is refused, which is correct, since 2442 is printed
+  nowhere in the online-first PDF. A wrong-page control (`Hendrickson` with 325)
+  is refused too, so the confirm step can still fail.
+- **The 6 BARE are what 0.31.2 gives up**: `Georjon1997Molecular` #1-4,
+  `Knight2015Memgen` #2 and `Lin1999Effect` #4, derived under 0.31.1 and bare
+  again. All six were bare when recorded, so nothing is lost against the
+  records — and `Georjon1997Molecular` is the running-head-mid-page case
+  item 31 already records as uncovered.
+
+`Berthier2023Modern` is the one to keep in view. Passed its own page, it
+confirms **6** — the preprint's pagination, correct for that attachment. 0.31.1
+emitted `printed 110`. The difference between those two outputs is the whole
+argument: the published range belongs to a different artifact than the one on
+disk, and only the operator knows which they are holding.
+
 ## 31. 0.31.0's own measurement was circular, and `library` found the cost
+
+*Read item 32 first: the derivation this item diagnoses was withdrawn entirely
+in 0.31.2, so the closing advice below — reach for the bib — no longer holds.*
 
 **The number I shipped 0.31.0 on was 89.6% precision against 84.4%, and it was
 not a real number.** The rule took `library.bib`'s first page, and the corpus
