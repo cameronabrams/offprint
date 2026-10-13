@@ -283,7 +283,7 @@ apart.
       nothing like it: the `linked_url` child of `Vanommeslaeghe2009Charmm` has
       no filename and an empty content type. `imported_url` is what Mendeley's
       import produced for attachments it had recorded as fetched from a URL; the
-      provenance differs, the storage behaviour does not.
+      provenance differs, the storage behavior does not.
 
       **The function was called `imported_files`, and that is how this stayed
       invisible.** The name made the filter look obviously correct, and the
@@ -454,11 +454,11 @@ the figure was bytes *considered*, attached to a count of files *sent*. Bytes
 actually uploaded were not recoverable from the output at all.
 
 Now two totals: `sent_bytes`, incremented only after a successful transfer, and
-the read-and-offered total, labelled as such. And a dry run says plainly that it
+the read-and-offered total, labeled as such. And a dry run says plainly that it
 cannot know how much would really be sent, because it never authorizes.
 
 **Four counting defects in one tool in two days** — a silent zero, a measurement
-that could not fire, lines counted as records, and a byte total labelled as a
+that could not fire, lines counted as records, and a byte total labeled as a
 different byte total. Three of the four read as plausible and only one looked
 missing. Every one was found by someone running the tool and adding the numbers
 up by hand, none by reading the code. That is the argument for the tool doing
@@ -795,7 +795,7 @@ Two other gaps the same run measured, both fixed:
   the word `arXiv` appearing somewhere in `extra`. The ids arrive bare,
   prefixed and versioned — `1106.1296`, `arXiv:1401.0387v1`, `cond-mat/0510639`
   — and a containment test on the literal string answered a different question
-  from the one being asked. Ids are normalised now and compared as ids.
+  from the one being asked. Ids are normalized now and compared as ids.
 - **25 lost `url`s were not rescued at all** because the generator never looked
   at `url`. 23 are `journalArticle`, which has the field.
 
@@ -838,7 +838,7 @@ separately now: `already_same` and `discarded_junk`.
 as a label that merges two actions.** Both were in this file within an hour.
 
 **And then it happened a third time, in the fix.** `already_same` was decided by
-a normalised whole-string equality, which reported 41 same / 160 junk against
+a normalized whole-string equality, which reported 41 same / 160 junk against
 the library session's measured 91 / 101. The frozen bib's `isbn` often holds a
 **pair** with PubMed's labels — `1091-6490 (Electronic)\r0027-8424 (Linking)` —
 which is the journal's electronic and print ISSN, and Zotero stores one of the
@@ -864,7 +864,7 @@ the live library rather than with me.
 
 ### The fourth split was real and the right answer was to stop
 
-`issn_differs` was also mislabelled: resolved through Crossref's `/journals`,
+`issn_differs` was also mislabeled: resolved through Crossref's `/journals`,
 `Brooks2009Charmm`'s `1096-987X` and `0192-8651` are **both** the *Journal of
 Computational Chemistry*, and `Bartesaghi2013Prefusion`'s pair are both *Nature
 Structural & Molecular Biology*. Print and electronic ISSN, both correct, the two
@@ -984,7 +984,7 @@ DOI/ISSN/ISBN into their own fields. Two refusals are built in. It never appends
 blindly to `extra` — the field is free text, a PATCH replaces it, and a re-run
 must not double a line. And **it does not restore an `isbn` that is not shaped
 like one**: 45 of the frozen bib's 201 `isbn` values are ISSNs Mendeley
-mislabelled, and copying a known defect into the live library because it sits in
+mislabeled, and copying a known defect into the live library because it sits in
 a file we trust is how a defect becomes permanent. Those are routed to `ISSN`
 and counted as reclassified.
 
@@ -1022,10 +1022,10 @@ The other differences, with the library session's reading of them:
   of ours. All 31 are now accounted for**, in three groups, and the biggest
   group was noise hiding the only real loss.
 
-  **17 are Unicode normalisation and are not differences at all.** The frozen
+  **17 are Unicode normalization and are not differences at all.** The frozen
   bib is decomposed, Zotero is precomposed: `Mullerplathe1998Microscopic` has a
   combining diaeresis on one side and a precomposed `ü` on the other. All 17 are
-  equal under NFC. `--compare` now normalises both sides, because **a diff that
+  equal under NFC. `--compare` now normalizes both sides, because **a diff that
   reports a difference nobody can act on trains its reader to skim it** — and
   the library session nearly skipped past the patents for exactly that reason.
 
@@ -1209,7 +1209,7 @@ with nothing on disk.
 
 `DONE_STATUSES` is now an explicit list of what counts as examined — `ok`,
 `ocr`, `garbled`, `no-text`, `not-pdf` — and anything else, including `failed`,
-an unrecognised value, or nothing at all, is unfinished work and gets
+an unrecognized value, or nothing at all, is unfinished work and gets
 re-examined. **Deliberately a list of what IS done rather than of what is not:**
 a failure status added later should default to being retried, not to being
 skipped, and that default is the whole difference between this bug and no bug.
@@ -1249,7 +1249,7 @@ again.
 **And the handler discarded `exc`.** "2734 failed" with no reason for any of
 them turns a one-line diagnosis into an investigation. The first five failures
 are logged individually now and the sixth says that further ones are not,
-because five is enough to recognise a systematic cause and 2,734 lines is not a
+because five is enough to recognize a systematic cause and 2,734 lines is not a
 log.
 
 Nothing was destroyed: `library.bib` and `index.md` were correct throughout, the
@@ -1897,7 +1897,7 @@ currently shouts when that stops being true.
       and its start; one success clears it.
 
 **Brought forward 2026-09-24.** The Mendeley backend is being retired, so the
-account's behaviour will change. An auth failure arriving as a shrug was a
+account's behavior will change. An auth failure arriving as a shrug was a
 general risk when this item was written; against an account nobody is
 maintaining it is a specific one.
 
@@ -1913,7 +1913,7 @@ Cameron has not confirmed any lapse date: on 09-28, "what cancellation? that's o
 hold", and on 10-01, "we are migrating away from mendeley altogether" with no
 date. The migration is real; the date is not established and is not stated here
 until he states it. The library session reports he has already downgraded to the
-free tier, which if so is a change in the account's behaviour today and not on
+free tier, which if so is a change in the account's behavior today and not on
 some future date.
 
 A deadline nobody set is worse than no deadline: it makes a thing look safe until
@@ -2372,7 +2372,7 @@ The skip branch fires when the filehash matches and the extract exists, and
 `continue`s long before the unlink, so all 2,745 currently skip. The exposure is
 exactly the attachments that changed in Mendeley since the last run: each one is
 reprocessed, and its archived copy is then removed. One changed paper, one PDF
-gone. Nothing reports it, because deleting the PDF is the documented behaviour of
+gone. Nothing reports it, because deleting the PDF is the documented behavior of
 that mode.
 
 **This is the standing configuration, not a hazard of some future manual run.**
@@ -2388,7 +2388,7 @@ schedule — the timer is `OnCalendar=*:07` with **`Persistent=true`**, and
 trigger of 2026-09-29 11:08:12 EDT. So the moment it becomes active again
 systemd sees a missed elapse and fires **immediately**, not at the next `:07`,
 with no arguments, in delete mode. The unit's own comment says catching up after
-the machine was asleep is the whole point, and it is: the behaviour is correct
+the machine was asleep is the whole point, and it is: the behavior is correct
 and predates the archive it now threatens.
 
 panacea has been up since 2026-09-16, so a reboot is ordinary rather than
@@ -2476,7 +2476,7 @@ Three defects, and the first is the smallest:
 
 **A third test was found asserting its own defect.** `erode.n == 1` had "the
 .cif only" written beside it as though re-fetching a non-PDF were expected
-behaviour; it was the hardcoded `.pdf`. The two before it were the 0.11.0
+behavior; it was the hardcoded `.pdf`. The two before it were the 0.11.0
 erosion pair. All three were found by changing the code and watching a test go
 red — none by reading the test, and each had been read several times.
 
@@ -2542,7 +2542,7 @@ twice in one day. A hand-maintained shared list would catch the same disease, so
 it should be derived from `library.bib` on every refresh, the way
 `extraction-report.md` already is.
 
-What makes the proposal more than a list of greps is its organising principle:
+What makes the proposal more than a list of greps is its organizing principle:
 **every line names who fixes it.**
 
 | bucket | fixer |
@@ -2552,7 +2552,7 @@ What makes the proposal more than a list of greps is its organising principle:
 | unfixable by design | nobody, and the report must say so |
 
 That third row is the one that earns the file. The three frozen-year keys are
-correct behaviour, and without an explicit "do not report this" at the point of
+correct behavior, and without an explicit "do not report this" at the point of
 discovery they get rediscovered every few months by whoever next notices a 2002
 key on a 1976 paper. `f2e00a5` says it in `docs/`; a reader of the report is not
 reading `docs/`.
@@ -2845,10 +2845,10 @@ DOI suffix.**
 ### Why this is excluded by name rather than fixed in general
 
 The tempting repair is to default to "no opinion" when the stem is not
-recognisably a DOI. **That cannot be done**, and the reason is the case the
+recognizably a DOI. **That cannot be done**, and the reason is the case the
 guard exists for: a file correctly named `science.1116480` whose page 1 is the
 *previous article's* last page, so the text resolves to a different paper. The
-stem there is unrecognisable too — there is nothing distinguishing it from a
+stem there is unrecognizable too — there is nothing distinguishing it from a
 blob name — so a looser default would silently trust the text over the name in
 exactly the situation the guard was written to catch. Four papers in one batch
 were about to be filed that way.
@@ -2861,6 +2861,71 @@ previous-article case.
 
 *What a real fix would need:* a positive test for "a human or a DOI-derived
 process chose this name", which nothing in the file can currently supply.
+
+## 31. 0.31.0's own measurement was circular, and `library` found the cost
+
+**The number I shipped 0.31.0 on was 89.6% precision against 84.4%, and it was
+not a real number.** The rule took `library.bib`'s first page, and the corpus
+scored every derivation against `library.bib`'s first page. Wherever the rule
+fired it agreed with the thing it was built from, so the metric could only
+report success. I noted the circularity risk in the same session, decided to
+measure the boilerplate strip around it, and then quoted the headline figure
+anyway.
+
+`library` replayed all 148 recorded findings — evidence that does not come
+from the bib — and found what the corpus could not:
+
+- **`Ikeno2011Molecular`: a correct `+307` with three votes was overridden by
+  a wrong `+308` with one.** Its extract opens a page before the article, so
+  `first page − marker 1` was off by one and collected a single coincidental
+  vote. My `>= 1` threshold was the whole bug: one vote is exactly the
+  coincidence rate the recurrence rule exists to reject.
+- Two more, reported as regressions, were **not** — `Chang2000Morphology` and
+  `Lin1999Effect` derive `None` before and after 0.31.0, and had always been
+  recorded through `confirm_offset` with an operator-supplied number. Worth
+  stating, because "0.31.0 no longer finds" and "0.31.0 broke" read alike and
+  only one is true.
+
+### What replaced it, 0.31.1
+
+The **page range**, not the first page. An offset is a claim about where every
+marker lands and the range says where they are allowed to land, so it
+constrains the whole extract instead of one marker. Three constraints, each
+from a case in the regression list rather than from taste:
+
+- the winning offset must place at least half of `min(markers, pages)` markers
+  inside the range — `Butterwick2018Cryo` is 21 markers over a 6-page article
+  and won on 2;
+- the extract may begin at most `LEAD_PAGES` (2) before the first printed page
+  — `Gardner2015Aav` accepted an offset putting marker 1 nine pages before the
+  article started, with a perfect range score;
+- ties inside the range are decided by votes, which is what makes
+  `Ikeno2011Molecular` come out right.
+
+It also reaches two papers neither earlier form could: `Chang2000Morphology`
+(+4512) and `Lin1999Effect` (+1926) have **one** edge-window vote each and
+never met the recurrence threshold, but place 9 of 9 and 12 of 12 markers in
+range while no rival places a single one. Those stop needing an operator.
+
+| | precision | wrong | coverage |
+|---|---|---|---|
+| before any bib use | 84.4% | 339 | 87.4% |
+| 0.31.1, page range | 89.8% | 222 | 87.9% |
+
+**This table is still biased and must not be quoted as 0.31.0's was.** A rule
+that consults the bib, scored against the bib, flatters itself. What can be
+trusted in it: 11 papers that derived correctly before now derive wrongly, and
+114 that were refused now derive. The unbiased check is `library`'s replay of
+the 148 findings, which has not been run against 0.31.1 yet.
+
+### The backstop, which does not depend on any of this
+
+`library` asked for one guard: **never emit a printed page outside the bib's
+page range.** It is in `outside_pages()` and refuses rather than files, because
+a findings record is quoted back months later as the place a passage sits. It
+catches what `derive_offset` structurally cannot — the derivation sees markers
+in aggregate, the guard sees the marker the operator actually cited, and an
+offset can place most markers in range while putting that one outside it.
 
 ## 30. `finding.py` wrote a wrong page locator and refused the right one
 

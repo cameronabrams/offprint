@@ -88,7 +88,7 @@ def cache_path() -> Path:
 def norm_surname(name: str) -> str:
     """A surname reduced to letters, for an EXACT comparison.
 
-    `ascii_fold` normalises to NFKD and drops combining marks, so `Müller`
+    `ascii_fold` normalizes to NFKD and drops combining marks, so `Müller`
     becomes `Muller` rather than `Mller` -- deleting the letter instead of the
     accent is a real bug this repo has already shipped once, in the checker that
     verified the Zotero migration.

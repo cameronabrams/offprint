@@ -262,7 +262,7 @@ ELSEVIER_DOWNLOAD = re.compile(r"1-s2\.0-S?[\dX-]{8,}(-main)?", re.I)
 def stem_conflict(stem: str, doi: str) -> bool:
     """True when the file name looks like it names a DIFFERENT DOI than `doi`.
 
-    Only fires when the stem is recognisably a DOI suffix -- "387527a0",
+    Only fires when the stem is recognizably a DOI suffix -- "387527a0",
     "science.1116480", "16.18.5572" -- so ordinary names like "kwong2000" or
     "casino" never trigger it. Those stems are a deliberate statement about which
     paper this is, and when the PDF's own text disagrees, the text is the thing to
@@ -291,10 +291,10 @@ def stem_conflict(stem: str, doi: str) -> bool:
     # Reported by `library` 2026-10-05, hours after the browser-full-DOI case.
     # Two failures of one assumption: that a five-digit run means the stem is
     # a DOI suffix. It can equally be a PII, an issue number, or a timestamp.
-    # The guard cannot be loosened in general -- an unrecognised stem must keep
+    # The guard cannot be loosened in general -- an unrecognized stem must keep
     # defaulting to "conflict", because the case it was built for is a stem
     # that names the right paper while page 1 shows the previous article's
-    # tail, and there is nothing in that stem to recognise either. So each
+    # tail, and there is nothing in that stem to recognize either. So each
     # publisher template gets excluded by name as it turns up, which is slow
     # but cannot weaken the default.
     if ELSEVIER_DOWNLOAD.search(stem):

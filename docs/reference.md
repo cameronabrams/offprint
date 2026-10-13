@@ -165,7 +165,7 @@ ones already marked finished.
 
 What counts as "examined" is an explicit list — `ok`, `ocr`, `garbled`,
 `no-text`, `not-pdf` — and **anything else, including `failed` and an
-unrecognised value, is unfinished work and gets re-examined.** It is a list of
+unrecognized value, is unfinished work and gets re-examined.** It is a list of
 what is done rather than of what is not, so a failure status added later
 defaults to being retried. That default is load-bearing: a run that had recorded
 2,732 attachments as `failed` once skipped every one of them on the next pass,
@@ -209,7 +209,7 @@ Mendeley account. It prints a line per check and exits non-zero on failure.
 
 ## Which version wrote this mirror?
 
-Extraction behaviour has changed more than once — OCR for scanned attachments,
+Extraction behavior has changed more than once — OCR for scanned attachments,
 then a `pdftotext` fallback for garbled text layers — and an extract carries no
 sign of which rules produced it. So the version is recorded where a reader will
 actually find it:

@@ -112,12 +112,12 @@ def storage_attachments(children: list) -> list:
 
     `linked_url` children are bookmarks -- 149 came across in the migration and
     they are links, not attachments. Counting them is how the import's 2,894
-    became the mirror's 2,745. A bookmark is recognisable without consulting the
+    became the mirror's 2,745. A bookmark is recognizable without consulting the
     mode at all: it has no `filename` and an empty `contentType`.
 
     `imported_url` is what Mendeley's import produced for attachments it had
     recorded as fetched from a URL. The provenance differs from `imported_file`;
-    the storage behaviour does not. 24 records in this library have one as their
+    the storage behavior does not. 24 records in this library have one as their
     only child, each carrying `application/pdf`, an `m-api-<uuid>.pdf` filename
     and `md5: None` -- storage slots awaiting bytes, and until this was widened
     they were skipped as though they were bookmarks, then reported as records
@@ -556,7 +556,7 @@ def main() -> None:
     print(f"  records {len(zotero_keys)}\n")
 
     uploaded = existing = skipped_removed = patched = 0
-    # Two totals, because one of them was labelled as the other. `would_bytes`
+    # Two totals, because one of them was labeled as the other. `would_bytes`
     # accumulates for every file this run READ and offered; `sent_bytes` only
     # for bytes that actually went over the wire. On the 2026-10-01 live run
     # 1,060 files were read, offered, and answered `{"exists": 1}` -- so a

@@ -149,7 +149,7 @@ The row above is about the Windows laptops, which do pull and which is why the
 sentence reads that way.
 
 What follows is that **the version a run prints is the only record of which code
-it used** — not a convenience for labelling logs. And that a long run is on the
+it used** — not a convenience for labeling logs. And that a long run is on the
 code as it stood when Python read the file, so editing during one is safe for
 that run and silently changes the next. The 09-24 namespacing was announced with 45 minutes
 to spare and the library session found a consumer of `citekeys.json` that the
@@ -392,9 +392,9 @@ comparing against the full DOI, not just its suffix), and Elsevier's
 `1-s2.0-<PII>-main.pdf`, built from an identifier that shares no characters
 with the DOI and so can never match.
 
-**Do not fix this by defaulting to "no opinion" for an unrecognised stem.**
+**Do not fix this by defaulting to "no opinion" for an unrecognized stem.**
 The case the guard exists for — `science.1116480` whose page 1 belongs to the
-preceding article — has an unrecognisable stem too, so a looser default trusts
+preceding article — has an unrecognizable stem too, so a looser default trusts
 the text over the name exactly where that is wrong. Publisher templates are
 excluded one at a time instead. The list is Elsevier's, and that is all of it.
 

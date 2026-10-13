@@ -495,7 +495,7 @@ def main():
     stamped.close()
     check(st_chars >= mm.MIN_CHARS_PER_PAGE * st_pages,
           f"stamped scan clears the raw threshold, as the real one did ({st_chars})")
-    check(st_content == 0, f"stamp is recognised as boilerplate, not content ({st_content})")
+    check(st_content == 0, f"stamp is recognized as boilerplate, not content ({st_content})")
 
     # The same logic must not strip a real paper down: a running head repeats on
     # every page too, and removing it should leave the body untouched.
@@ -2642,7 +2642,7 @@ def main():
     check(zp.TO_ZOTERO_TYPE["journal"] == "journalArticle"
           and zp.TO_ZOTERO_TYPE["working_paper"] == "preprint",
           "the type map is the inverse of the one the reader uses")
-    # Out and back: every type this writes must be one the reader recognises,
+    # Out and back: every type this writes must be one the reader recognizes,
     # or a record pushed today reads as `generic` on the next refresh.
     unknown = [m for m, z_ in zp.TO_ZOTERO_TYPE.items()
                if z_ not in _zs.ITEM_TYPES and z_ != "document"]
@@ -2724,7 +2724,7 @@ def main():
     bare = _fd.derive_offset(garau)
     check(bare is not None and bare[0] == 4,
           f"without the bib, three coincidences win and the answer is wrong ({bare})")
-    hinted = _fd.derive_offset(garau, 2227)
+    hinted = _fd.derive_offset(garau, (2227, 2229))
     check(hinted is not None and hinted[0] == 2226,
           f"with the bib's first page, the TRUE offset wins ({hinted})")
     check(2 + hinted[0] == 2228,
@@ -2737,7 +2737,7 @@ def main():
              "<!-- p. 2 -->\nbody text here 41\nrunning head 41\n"
              "<!-- p. 3 -->\nmore body 42\nrunning head 42\n"
              "<!-- p. 4 -->\nyet more 43\nrunning head 43\n")
-    cov = _fd.derive_offset(cover, 900)
+    cov = _fd.derive_offset(cover, (900, 904))
     check(cov is None or cov[0] != 899,
           f"a first page no page corroborates is never invented ({cov})")
 
@@ -2748,12 +2748,25 @@ def main():
         "@article{Garau2003Dual,\n  title = {{Dual Binding}},\n"
         "  pages   = {2227--2229},\n}\n\n"
         "@article{NoPages2001Thing,\n  title = {{No pages}},\n}\n", encoding="utf-8")
-    check(_fd.bib_first_page(bibdir, "Garau2003Dual") == 2227,
-          "the first page comes off library.bib")
-    check(_fd.bib_first_page(bibdir, "NoPages2001Thing") is None,
+    check(_fd.bib_page_range(bibdir, "Garau2003Dual") == (2227, 2229),
+          "the page RANGE comes off library.bib, not just the first page")
+    check(_fd.bib_page_range(bibdir, "NoPages2001Thing") is None,
           "a record with no pages field yields None, not a guess")
-    check(_fd.bib_first_page(bibdir, "Absent1999Key") is None,
+    check(_fd.bib_page_range(bibdir, "Absent1999Key") is None,
           "and so does a key the bib does not hold")
+
+    # library's backstop, 2026-10-06: 0.31.0 emitted "printed 312" for a paper
+    # whose bib says 309-311. Whatever reasoning produced a number, a page the
+    # article does not contain is wrong -- and this sees the marker actually
+    # cited, which derive_offset never does.
+    check(_fd.outside_pages(312, (309, 311)),
+          "a printed page past the article's last page is refused")
+    check(_fd.outside_pages(308, (309, 311)),
+          "and so is one before its first")
+    check(not _fd.outside_pages(310, (309, 311)),
+          "a page inside the range passes")
+    check(not _fd.outside_pages(9999, None),
+          "and with no pages field in the bib there is nothing to check against")
 
     print("\nstem_conflict: the file name against the DOI the text gives")
     import inbox as _ib
@@ -2802,9 +2815,9 @@ def main():
           "including when the PII and the DOI DO share digits")
 
     # And the exclusion must not become a hole: the default for an
-    # unrecognised stem stays "conflict", because the case this guard exists
+    # unrecognized stem stays "conflict", because the case this guard exists
     # for -- a correctly named file whose page 1 is the previous article's
-    # tail -- leaves nothing in the stem to recognise either.
+    # tail -- leaves nothing in the stem to recognize either.
     check(_ib.stem_conflict("1-s2-0-notatemplate-12345", "10.1038/387527a0"),
           "a name that merely resembles the template is still judged")
 
@@ -2843,7 +2856,7 @@ def main():
                                     "md5": _h.md5(body_bytes).hexdigest()}},
             {"key": "AT2", "data": {"linkMode": "imported_file", "md5": "0" * 32}}]
     check(zi.already_attached(kids, body_bytes) == "AT1",
-          "a file whose bytes are already attached is recognised")
+          "a file whose bytes are already attached is recognized")
     check(zi.already_attached(kids, b"%PDF-1.4 something else") == "",
           "and a different file is not")
     check(zi.already_attached([], body_bytes) == "",
@@ -3027,7 +3040,7 @@ def main():
     # A type in neither set must FAIL VISIBLY. An extra author shows up in the
     # bibliography; a missing one does not, which is how the inventors vanished.
     check(zs.creator_role({"creatorType": "sampleTaker"}) == "unknown",
-          "an unrecognised creator type is unknown, not silently secondary")
+          "an unrecognized creator type is unknown, not silently secondary")
     odd_c = zs.item_to_doc({"key": "P2", "data": {
         "itemType": "document", "title": "T",
         "creators": [{"creatorType": "sampleTaker", "lastName": "Someone"}]}})
@@ -3047,7 +3060,7 @@ def main():
           "a single-field name that reads as a person is flagged")
     check(not zs.looks_like_a_person("US Environmental Protection Agency")
           and not zs.looks_like_a_person("WHO"),
-          "and an organisation is not -- this reports candidates, it changes nothing")
+          "and an organization is not -- this reports candidates, it changes nothing")
     check(doc["authors"][1] == {"name": "IUPAC"},
           "a corporate author stays one field -- splitting it is how a "
           "bibliography acquires an author called Norway")
@@ -3108,7 +3121,7 @@ def main():
     check(pat["institution"] == "Drexel", "and its assignee is the institution")
 
     # An unmapped type degrades to generic, which TYPE_MAP renders @misc --
-    # where an unrecognised Mendeley type already went. It must not raise.
+    # where an unrecognized Mendeley type already went. It must not raise.
     odd = zs.item_to_doc({"key": "K5", "data": {"itemType": "podcast", "title": "P"}})
     check(odd["type"] == "generic", f"an unmapped item type degrades ({odd['type']})")
 
@@ -3139,13 +3152,13 @@ def main():
     check(zs.extra_with("PMID: 999", "PMID", "12345") == "PMID: 999",
           "an existing label is left alone, so a re-run does not double the line")
 
-    # 45 of the frozen bib's 201 isbn values are ISSNs Mendeley mislabelled.
+    # 45 of the frozen bib's 201 isbn values are ISSNs Mendeley mislabeled.
     # Restoring those as ISBN would make a known defect permanent because it
     # appears in a file we trust.
     check(zs.looks_like_issn("1520-6106") and not zs.looks_like_isbn("1520-6106"),
-          "an ISSN is recognised as one even when the frozen bib calls it an isbn")
+          "an ISSN is recognized as one even when the frozen bib calls it an isbn")
     check(zs.looks_like_isbn("978-0-521-42476-2") and not zs.looks_like_issn("978-0-521-42476-2"),
-          "a real ISBN is recognised as one")
+          "a real ISBN is recognized as one")
     check(not zs.looks_like_isbn("whatever") and not zs.looks_like_issn("whatever"),
           "and a value of neither shape is neither -- reported, not guessed at")
 
@@ -3211,7 +3224,7 @@ def main():
     check(zs.issn_tokens("1493605872292") == set(),
           f"a 13-digit run yields no ISSN token ({zs.issn_tokens('1493605872292')})")
     check(zs.issn_tokens("2157-1422 (Electronic)") == {"21571422"},
-          "while a labelled ISSN yields exactly itself")
+          "while a labeled ISSN yields exactly itself")
 
     # Alberty1958Application's url was three URLs joined by a literal \n: a
     # publisher link, a papers2:// scheme, and a local Mac path under a
@@ -3237,10 +3250,10 @@ def main():
     check(zs.norm_arxiv("arXiv:1401.0387v1") == "1401.0387"
           and zs.norm_arxiv("1106.1296") == "1106.1296"
           and zs.norm_arxiv("cond-mat/0510639") == "cond-mat/0510639",
-          f"the three forms normalise to the same shape "
+          f"the three forms normalize to the same shape "
           f"({zs.norm_arxiv('arXiv:1401.0387v1')})")
     check(zs.norm_arxiv("arXiv:1401.0387v1") in zs.norm_arxiv_all("arXiv: 1401.0387"),
-          "a versioned id is recognised in an unversioned one already present")
+          "a versioned id is recognized in an unversioned one already present")
     check(zs.norm_arxiv("2507.07887") not in zs.norm_arxiv_all("arXiv: 1106.1296"),
           "and a DIFFERENT id is not -- the old test said 'arXiv' appears, "
           "which was true and irrelevant")
@@ -3387,7 +3400,7 @@ def main():
     check(fst["files"][mm.qualify("x1")]["status"] == "ok",
           "with the state corrected, so the next run can skip it honestly")
 
-    # An unrecognised status is not a result either. A failure status added
+    # An unrecognized status is not a result either. A failure status added
     # later must default to being retried, not to being skipped.
     ust = {"files": {mm.qualify("x1"): {"filehash": "h1", "status": "quarantined"}}}
     (fdir / "text" / "Muller2020Yield.md").write_text("old\n", encoding="utf-8")

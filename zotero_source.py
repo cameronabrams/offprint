@@ -59,7 +59,7 @@ BACKEND = "zotero"
 
 # Zotero's itemType to the vocabulary TYPE_MAP already speaks. Anything absent
 # falls through to "generic", which TYPE_MAP renders as @misc -- the same place
-# an unrecognised Mendeley type went, so an unmapped type degrades rather than
+# an unrecognized Mendeley type went, so an unmapped type degrades rather than
 # raising.
 ITEM_TYPES = {
     "journalArticle": "journal",
@@ -125,7 +125,7 @@ def creator_role(c: dict) -> str:
 
 
 def looks_like_a_person(name: str) -> str:
-    """Why a single-field creator looks like a person rather than an organisation.
+    """Why a single-field creator looks like a person rather than an organization.
 
     Reporting only. Zotero storing a name in one field is Zotero asserting the
     name is unstructured, and `{Braces}` are the faithful rendering of that --
@@ -137,7 +137,7 @@ def looks_like_a_person(name: str) -> str:
     if re.match(r"^(?:[A-Z]\.\s*)+[A-Z][a-z]", n):
         return "initials then a capitalised word"
     if n.count(" ") in (1, 2) and n.replace(" ", "").isalpha() and n.istitle():
-        return "two or three capitalised words, no organisation marker"
+        return "two or three capitalised words, no organization marker"
     return ""
 
 
@@ -472,7 +472,7 @@ ARXIV_RE = re.compile(r"(?:arxiv\s*:\s*)?([a-z-]+(?:\.[A-Z]{2})?/\d{7}|\d{4}\.\d
 
 
 def norm_arxiv_all(extra: str) -> set:
-    """Every arXiv id already present in `extra`, normalised."""
+    """Every arXiv id already present in `extra`, normalized."""
     return {m.group(1).lower() for m in ARXIV_RE.finditer(extra or "")}
 
 
@@ -499,7 +499,7 @@ ISSN_TOKEN = re.compile(r"\b\d{4}-?\d{3}[\dXx]\b")
 
 
 def issn_tokens(value: str) -> set:
-    """Every ISSN-shaped token in a string, normalised.
+    """Every ISSN-shaped token in a string, normalized.
 
     The word boundaries matter: they are what stops an eight-digit window
     inside `1493605872292` from reading as an ISSN. A thirteen-digit run has no
@@ -596,7 +596,7 @@ def rescue_identifiers(out: Path) -> int:
     Two things it deliberately does not do.
 
     It does not restore an `isbn` that is not shaped like one. 45 of the frozen
-    bib's 201 `isbn` values are ISSNs that Mendeley mislabelled, and copying a
+    bib's 201 `isbn` values are ISSNs that Mendeley mislabeled, and copying a
     known defect into the live library because it is in a file we trust is how a
     defect becomes permanent. Those are routed to `ISSN` and reported.
 
@@ -1061,7 +1061,7 @@ def resolve_only(names: list, keymap: dict, docs_by_id: dict,
                  backend: str) -> set:
     """`--only` values (citation keys or Zotero item keys) as a set of doc ids.
 
-    An unrecognised name is an ERROR, never a silent no-op. The whole point of
+    An unrecognized name is an ERROR, never a silent no-op. The whole point of
     a targeted refresh is that the operator names the record they just filed;
     a typo that quietly selects nothing would extract nothing, report a clean
     run, and look exactly like success. `mendeley_edit.py` refuses an unknown

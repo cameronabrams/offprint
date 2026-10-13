@@ -37,17 +37,17 @@ Usage:
 
 from __future__ import annotations
 
-__version__ = "0.31.0"
+__version__ = "0.31.1"
 """The tool's version, and the only place it is written down.
 
-It exists so a mirror can say what produced it. Extraction behaviour has changed
+It exists so a mirror can say what produced it. Extraction behavior has changed
 under people's feet twice -- OCR for scanned attachments, then a pdftotext
 fallback for garbled text layers -- and both times the only record of when was a
 git log that the library itself does not carry. `mirror-status.md` and
 `.mirror/state.json` now both record it, so "this extract predates the garbled-
 text fix" is a question the library can answer about itself.
 
-Bump it in the same commit as the behaviour it describes; nothing generates it.
+Bump it in the same commit as the behavior it describes; nothing generates it.
 """
 
 
@@ -975,7 +975,7 @@ def load_removed(out: Path) -> dict:
 
 
 # The statuses that mean an attachment was examined and a verdict reached.
-# Anything else -- `failed`, an unrecognised value, or nothing at all -- is
+# Anything else -- `failed`, an unrecognized value, or nothing at all -- is
 # unfinished work and gets re-examined. Deliberately a list of what IS done
 # rather than of what is not: a new failure status added later should default to
 # being retried, not to being skipped.
@@ -1838,7 +1838,7 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                     # the run reported "2734 failed" with no reason for any of
                     # them. A swallowed exception turns a one-line diagnosis
                     # into an investigation, and the first few are enough to
-                    # recognise a systematic cause.
+                    # recognize a systematic cause.
                     if failed <= 5:
                         note(f"  ! {stem}: {type(exc).__name__}: {exc}")
                     elif failed == 6:

@@ -146,7 +146,7 @@ def one(v) -> str:
 
 
 # CSL-JSON type -> Mendeley document type. Anything unlisted becomes "generic",
-# which is Mendeley's own catch-all and is better than mislabelling.
+# which is Mendeley's own catch-all and is better than mislabeling.
 # Crossref emits "journal-article" where the CSL spec says "article-journal";
 # both appear in the wild, so both are mapped.
 CSL_TO_MENDELEY = {

@@ -30,7 +30,7 @@ rest of the mirror does rather than juggling Mendeley's UUIDs:
 Keys are resolved through .mirror/citekeys.json, which is also why a key that
 the mirror has never seen is an error rather than a silent no-op.
 
-Two behaviours worth knowing. "identifiers" is MERGED into the document's
+Two behaviors worth knowing. "identifiers" is MERGED into the document's
 existing identifiers, not substituted for them, so correcting a DOI does not
 silently drop an ISSN or PMID. Everything else is replaced field-for-field.
 And a value already equal to what Mendeley holds is skipped, not re-sent, so a
