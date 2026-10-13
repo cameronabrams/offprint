@@ -2704,16 +2704,13 @@ def main():
     check(any("/file" in u for u in zf.session.asked),
           f"the FILE endpoint is what gets asked ({zf.session.asked[:1]})")
 
-    print("\nfinding.py: the bib's first page breaks a tie three coincidences won")
+    print("\nfinding.py: the bib vetoes a derivation, it never makes one")
     import finding as _fd
 
-    # Garau2003Dual, reported by library 2026-10-06. A publisher download stamp
-    # on every page -- "article-pdf/5/13/2227/.../ol034650u.pdf by DREXEL UNIV
-    # user on 06 October 2026" -- put small integers at the trailing edge, which
-    # is exactly where a running footer sits. +4 took one vote on each of three
-    # pages from three UNRELATED numbers (05, 06, 7), beating the true +2226.
-    # The tool wrote "printed 6" into a findings file and refused the correct
-    # --journal-page 2228.
+    # Garau2003Dual, library 2026-10-06. A publisher download stamp on every
+    # page put small integers at the trailing edge, where a running footer
+    # sits. +4 took one vote on each of three pages from three UNRELATED
+    # numbers (05, 06, 7) and beat the true +2226.
     garau = (
         "<!-- p. 1 -->\nDual Binding Mode of s-Triazine\n05 Org. Lett. 2003 2227\n"
         "article-pdf/5/13/2227/ol034650u.pdf by DREXEL UNIV user on 06 October 2026\n"
@@ -2721,52 +2718,44 @@ def main():
         "article-pdf/5/13/2227/ol034650u.pdf by DREXEL UNIV user on 06 October 2026\n"
         "<!-- p. 3 -->\ndecreases on going from complex 1 to 3\n7 Org. Lett. 2003 2229\n"
         "article-pdf/5/13/2227/ol034650u.pdf by DREXEL UNIV user on 06 October 2026\n")
-    bare = _fd.derive_offset(garau)
-    check(bare is not None and bare[0] == 4,
-          f"without the bib, three coincidences win and the answer is wrong ({bare})")
-    hinted = _fd.derive_offset(garau, (2227, 2229))
-    check(hinted is not None and hinted[0] == 2226,
-          f"with the bib's first page, the TRUE offset wins ({hinted})")
-    check(2 + hinted[0] == 2228,
-          "so marker 2 is printed 2228 -- the number the operator was refused")
+    bad = _fd.derive_offset(garau)
+    check(bad is not None and bad[0] == 4,
+          f"the edge scan still prefers three coincidences ({bad})")
+    # ... and the bib refuses the answer rather than replacing it. Two attempts
+    # at replacing it -- 0.31.0 by first page, 0.31.1 by range -- each traded
+    # one wrong locator for another, 10 fixed against 15 broken on library's
+    # replay of 148 real findings. A veto cannot do that.
+    check(_fd.outside_pages(2 + bad[0], (2227, 2229)),
+          "marker 2 under that offset is page 6, which the article does not contain")
+    check(not _fd.outside_pages(2228, (2227, 2229)),
+          "while the operator's own 2228 is inside it")
 
-    # The hint cannot INVENT an offset. An extract that opens on a cover sheet
-    # has marker 1 somewhere other than the first printed page, so the hint is
-    # wrong, nothing corroborates it, and it must not fire.
-    cover = ("<!-- p. 1 -->\nTHIS IS A COVER SHEET\n"
-             "<!-- p. 2 -->\nbody text here 41\nrunning head 41\n"
-             "<!-- p. 3 -->\nmore body 42\nrunning head 42\n"
-             "<!-- p. 4 -->\nyet more 43\nrunning head 43\n")
-    cov = _fd.derive_offset(cover, (900, 904))
-    check(cov is None or cov[0] != 899,
-          f"a first page no page corroborates is never invented ({cov})")
+    # The case no derivation can answer: a 17-page arXiv preprint attached to a
+    # record whose pages are the published 15-page range. The extract is not
+    # the document the pages describe, so every offset is wrong and refusing is
+    # the only correct output. 0.31.1 emitted "printed 110".
+    check(_fd.outside_pages(6, (102, 116)),
+          "a preprint's own page 6 is refused against a published 102-116")
 
-    # And it reads the bib rather than being told.
+    # **A lone page number is not a one-page article.** It is an article number
+    # -- 126606, 012005, MDPI's 1219 -- or a truncated range. Reading it as the
+    # range N-N cost library nine good offsets and four refused records.
     bibdir = tmp / "findbib"
     bibdir.mkdir(parents=True, exist_ok=True)
     (bibdir / "library.bib").write_text(
-        "@article{Garau2003Dual,\n  title = {{Dual Binding}},\n"
-        "  pages   = {2227--2229},\n}\n\n"
+        "@article{Garau2003Dual,\n  pages   = {2227--2229},\n}\n\n"
+        "@article{Bai2024Development,\n  pages   = {126606},\n}\n\n"
         "@article{NoPages2001Thing,\n  title = {{No pages}},\n}\n", encoding="utf-8")
     check(_fd.bib_page_range(bibdir, "Garau2003Dual") == (2227, 2229),
-          "the page RANGE comes off library.bib, not just the first page")
+          "a real range is read as one")
+    check(_fd.bib_page_range(bibdir, "Bai2024Development") is None,
+          "an article number constrains NOTHING -- it is not the range 126606-126606")
     check(_fd.bib_page_range(bibdir, "NoPages2001Thing") is None,
-          "a record with no pages field yields None, not a guess")
+          "and a record with no pages field yields None, not a guess")
     check(_fd.bib_page_range(bibdir, "Absent1999Key") is None,
-          "and so does a key the bib does not hold")
-
-    # library's backstop, 2026-10-06: 0.31.0 emitted "printed 312" for a paper
-    # whose bib says 309-311. Whatever reasoning produced a number, a page the
-    # article does not contain is wrong -- and this sees the marker actually
-    # cited, which derive_offset never does.
-    check(_fd.outside_pages(312, (309, 311)),
-          "a printed page past the article's last page is refused")
-    check(_fd.outside_pages(308, (309, 311)),
-          "and so is one before its first")
-    check(not _fd.outside_pages(310, (309, 311)),
-          "a page inside the range passes")
-    check(not _fd.outside_pages(9999, None),
-          "and with no pages field in the bib there is nothing to check against")
+          "as does a key the bib does not hold")
+    check(not _fd.outside_pages(1, None),
+          "with no range there is nothing to veto, so an offset stands")
 
     print("\nstem_conflict: the file name against the DOI the text gives")
     import inbox as _ib

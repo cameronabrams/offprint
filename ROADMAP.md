@@ -2862,6 +2862,55 @@ previous-article case.
 *What a real fix would need:* a positive test for "a human or a DOI-derived
 process chose this name", which nothing in the file can currently supply.
 
+## 32. Two attempts to let the bib DERIVE an offset, both withdrawn
+
+`library` replayed 148 recorded findings against 0.31.1: **10 correctly fixed,
+15 newly broken.** A net loss on the only evidence that does not come from the
+bib. 0.31.0 and 0.31.1 are both withdrawn, and what stays is the half that was
+never in question.
+
+### Why each attempt failed differently, and why that is the lesson
+
+- **0.31.0, by first page.** Scored 89.6% against 84.4% on a corpus that
+  defined truth as the bib's first page — the rule agreed with its own input.
+  `library` found a correct `+307` overridden by a wrong `+308` holding one
+  coincidental vote.
+- **0.31.1, by page range.** Scored 89.8% on the same biased corpus, and
+  ROADMAP 31 said so in writing. It still lost: a lone `pages` number read as
+  the range N-N cost nine good offsets and four refusals outright, because an
+  article number (`126606`, `012005`, MDPI's `1219`) is not a one-page article.
+
+Both failures have one shape. **An offset built partly from the bib is wrong
+in a way that looks plausible**, so each version traded one confident wrong
+locator for a different one, and the corpus could not see it because the
+corpus was made of the same material.
+
+### What 0.31.2 keeps
+
+The bib **vetoes** a derivation and never makes one. If the derived offset puts
+the cited marker on a page the article does not contain, the derivation is
+discarded — not overruled, discarded — and the operator's own `--journal-page`
+goes through `confirm_offset` exactly as it did before any of this.
+
+Checked against every case in `library`'s two reports:
+
+| record | before | now |
+|---|---|---|
+| `Garau2003Dual` | filed `printed 6` | vetoed; operator's 2228 confirms on 3 pages |
+| `Ikeno2011Molecular` | filed `printed 312` | 311, derived |
+| `Berthier2023Modern` | filed `printed 110` | vetoed — a 17-page preprint against a published 15-page range |
+| `Lopez2022Composition` | — | vetoed, which `library` had already called correct |
+| `Hendrickson2006Transduction` | lost | confirms on 10 pages |
+| `Bai2024Development`, `Hamerton1996Molecular` | lost to the N-N range | unaffected: a lone number constrains nothing |
+
+A veto cannot invent a locator, which is the property neither derivation had.
+It can only refuse one, and the worst it costs is a record that says no printed
+page — which is what these records said before the tool tried to be clever.
+
+**No corpus number is quoted for 0.31.2 on purpose.** The corpus cannot score a
+rule about refusals, and its bias is now documented twice. The check is
+`library`'s replay.
+
 ## 31. 0.31.0's own measurement was circular, and `library` found the cost
 
 **The number I shipped 0.31.0 on was 89.6% precision against 84.4%, and it was

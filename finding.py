@@ -151,11 +151,16 @@ def bib_page_range(out: Path, key: str) -> tuple[int, int] | None:
     if not m:
         return None
     span = re.search(r"pages\s*=\s*\{+\s*(\d+)\s*-+\s*(\d+)", m.group(1))
-    if span:
-        first, last = int(span.group(1)), int(span.group(2))
-        return (first, last) if last >= first else (first, first)
-    one = re.search(r"pages\s*=\s*\{+\s*(\d+)", m.group(1))
-    return (int(one.group(1)), int(one.group(1))) if one else None
+    if not span:
+        # **A lone number is not a one-page article.** It is usually an article
+        # number -- `126606`, `012005`, MDPI's `1219` -- or a range the record
+        # truncated. 0.31.1 read it as the range N-N, which made every marker
+        # "outside" and cost 13 of `library`'s 148 findings: nine good offsets
+        # lost and four records refused outright. There is no safe reading, so
+        # there is no reading: a bib with no range constrains nothing.
+        return None
+    first, last = int(span.group(1)), int(span.group(2))
+    return (first, last) if last >= first else None
 
 
 def outside_pages(printed: int, pages: tuple[int, int] | None) -> bool:
@@ -177,7 +182,7 @@ def outside_pages(printed: int, pages: tuple[int, int] | None) -> bool:
     return not (first <= printed <= last)
 
 
-def derive_offset(extract: str, pages: tuple[int, int] | None = None) -> tuple[int, int] | None:
+def derive_offset(extract: str) -> tuple[int, int] | None:
     """(offset, how many pages agree), or None if the printed pages cannot be read.
 
     Do not trust a claimed page number: derive it. A running head or footer prints
@@ -268,47 +273,6 @@ def derive_offset(extract: str, pages: tuple[int, int] | None = None) -> tuple[i
     # The bib's first page breaks ties and nothing more. It cannot manufacture
     # support for an offset no page voted for, so an extract that starts on a
     # cover sheet still derives its real offset -- or refuses.
-    # **The bib's PAGE RANGE, not just its first page.** An offset is a claim
-    # about where every marker lands; the range says where they are allowed to
-    # land, so counting how many markers an offset places inside it uses the
-    # whole field instead of constraining a single marker.
-    #
-    # The first-page form shipped in 0.31.0 and `library` found it wrong within
-    # the hour. Ikeno2011Molecular's extract opens a page before the article,
-    # so `first page - marker 1` was off by one, picked up a single coincidental
-    # vote, and overrode a correct +307 that had three. Under the range both
-    # offsets place markers inside it and votes decide, which is right.
-    #
-    # It also reaches what neither form could. Chang2000Morphology (+4512) and
-    # Lin1999Effect (+1926) have ONE edge-window vote each and never met the
-    # recurrence threshold -- but they place 9 of 9 and 12 of 12 markers inside
-    # their range while no rival candidate places a single one.
-    if pages is not None and marks:
-        first, last = pages
-        scored = [(sum(1 for (_s2, _e2, n2) in marks if first <= n2 + off <= last),
-                   votes, off)
-                  for off, votes in tally.items()]
-        # An article's extract begins AT its first printed page, or a page or
-        # two before it when a cover sheet was scanned in. It never begins ten
-        # pages into the article. Without this, Gardner2015Aav (16 markers over
-        # a 5-page article) accepted +77, which puts markers 10-14 in range and
-        # marker 1 nine pages before the paper starts -- a perfect range score
-        # for an offset that is nonsense.
-        scored = [sc for sc in scored if marks[0][2] + sc[2] >= first - LEAD_PAGES]
-        if not scored:
-            return None
-        best_in = max(sc[0] for sc in scored)
-        # Half of what the geometry allows, so an extract with far more markers
-        # than the article has pages cannot win on two stray hits:
-        # Butterwick2018Cryo is 21 markers over 6 pages and scored 2.
-        reach = min(len(marks), last - first + 1)
-        if best_in >= max(2, reach // 2):
-            top = sorted((sc for sc in scored if sc[0] == best_in),
-                         key=lambda sc: (-sc[1], abs(sc[2])))
-            if len(top) > 1 and top[1][1] == top[0][1]:
-                return None      # two offsets fit the range equally well
-            return (top[0][2], top[0][1])
-
     ranked = sorted(tally.items(), key=lambda kv: (-kv[1], abs(kv[0])))
     best = ranked[0]
     # A real running footer appears on nearly every page. A coincidence appears on a
@@ -489,7 +453,32 @@ def main() -> int:
 
     locator = f"marker p. {args.page}"
     page_range = bib_page_range(out, args.key)
-    derived = derive_offset(text, page_range)
+    derived = derive_offset(text)
+    # **The bib vetoes a derivation; it never makes one.** 0.31.0 and 0.31.1
+    # both tried to let `library.bib` steer the derivation -- first by its
+    # first page, then by its range -- and `library`'s replay of 148 real
+    # findings scored the second at 10 fixed against 15 newly broken. Each
+    # version traded a wrong locator for a different wrong locator, because an
+    # offset built partly from the bib is wrong in a way that looks plausible.
+    #
+    # Used only to REFUSE, it has none of that. An offset that puts the cited
+    # marker on a page the article does not contain is wrong whatever supports
+    # it, and discarding it loses nothing: the operator's own --journal-page
+    # still goes through `confirm_offset`, which is how these records were
+    # written before any of this.
+    #
+    # It is also the only thing that answers Berthier2023Modern, where the
+    # attachment is a 17-page arXiv preprint and the bib holds the published
+    # 15-page range. No derivation can be right there -- the extract is not
+    # the document the pages describe -- and a refusal is the only correct
+    # output. 0.31.1 emitted "printed 110" instead.
+    vetoed = ""
+    if derived and args.page and page_range:
+        if outside_pages(args.page + derived[0], page_range):
+            vetoed = (f"derived offset {derived[0]:+d} would put marker "
+                      f"p. {args.page} on page {args.page + derived[0]}, outside "
+                      f"the {page_range[0]}-{page_range[1]} library.bib records")
+            derived = None
     if args.journal_page:
         if derived is None:
             # The edge scan found nothing. Before refusing -- which blocks a
@@ -498,6 +487,10 @@ def main() -> int:
             # it can only agree or stay silent.
             support = confirm_offset(text, args.page, int(args.journal_page))
             if support is None:
+                if vetoed:
+                    die(f"{vetoed}, and marker p. {args.page} does not carry "
+                        f"{args.journal_page} at a consistent position either. "
+                        f"Nothing written.")
                 die(f"cannot derive a page offset for {args.key}, and marker p. {args.page} "
                     f"does not carry {args.journal_page} at a consistent position either. "
                     f"Check the printed number on the rendered page "
@@ -513,25 +506,15 @@ def main() -> int:
                 die(f"offset says marker p. {args.page} is printed page {want} "
                     f"(offset {off:+d}, agreeing on {agree} pages), not {args.journal_page}. "
                     f"Nothing written.")
-            if outside_pages(want, page_range):
-                die(f"offset says marker p. {args.page} is printed page {want}, "
-                    f"which is outside the pages library.bib records for "
-                    f"{args.key} ({page_range[0]}-{page_range[1]}). The offset "
-                    f"is wrong, whatever it agreed with. Nothing written.")
             locator += f" · printed {want} (offset {off:+d}, derived from {agree} pages)"
     elif derived:
         off, agree = derived
-        printed = args.page + off
-        if outside_pages(printed, page_range):
-            # Refusing beats filing. A findings record is quoted back months
-            # later as the place a passage sits, and a page the article does
-            # not contain sends the reader somewhere that does not exist.
-            die(f"the derived offset {off:+d} puts marker p. {args.page} on "
-                f"printed page {printed}, outside the {page_range[0]}-"
-                f"{page_range[1]} that library.bib records for {args.key}. "
-                f"Nothing written -- pass --journal-page with the number "
-                f"printed on the page if you can read it.")
-        locator += f" · printed {printed} (offset {off:+d}, derived from {agree} pages)"
+        locator += f" · printed {args.page + off} (offset {off:+d}, derived from {agree} pages)"
+    elif vetoed:
+        # No printed page rather than a wrong one. A findings record is quoted
+        # back months later as the place a passage sits.
+        print(f"note: no printed page recorded -- {vetoed}. Pass --journal-page "
+              f"if you can read the number on the page.")
 
     lines = [f"## {next_ordinal(path)} · FINDING · {today}",
              f"question:  {args.question}"]
