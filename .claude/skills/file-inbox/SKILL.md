@@ -12,10 +12,15 @@ with a second copy of a paper the library already had.
 **STALE BEYOND THE PATHS, 2026-10-02.** This skill drives `inbox.py`, which
 POSTs to Mendeley, and Mendeley is retired. The live tool is
 `zotero_inbox.py`: it takes the same `<out>/inbox/` directory and reuses this
-same identification, but creates a **Zotero** attachment on a record that
-already exists, and refuses to create a record. `zotero_push.py` adds a
-reference. The identification half of what follows still holds; every command
-naming `inbox.py` does not. Rewriting it properly is open work.
+same identification, but creates a **Zotero** attachment — and, since 0.29.0,
+the record under it when the paper has a DOI and nothing in Zotero holds it, so
+step two below is now done by the tool against Zotero rather than by hand
+against `library.bib`. `zotero_push.py` adds a reference with no PDF behind it.
+Since 0.32.0 the dry run is required: `--yes` over the inbox files exactly what
+the dry run listed and refuses to run without one, so steps three and four are
+two commands and must not be collapsed into one. The identification half of
+what follows still holds; every command naming `inbox.py` does not. Rewriting
+it properly is open work.
 
 Paths: mirror is `~/Sync/library` (`DEFAULT_OUT`, absolute on purpose — every
 entry point also takes `--out`). Scripts are run from the clone with

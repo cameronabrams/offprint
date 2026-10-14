@@ -92,7 +92,7 @@ Two habits that came out of the same failure, and are cheaper than the debugging
 | where | what | why |
 |---|---|---|
 | the clone | all code | replaceable; `git pull` is the update mechanism **for other machines** |
-| `<out>/.mirror/` | `citekeys.json`, `state.json`, `removed.tsv`, `pairings.tsv`, `mirror.log` | travels with the library, so every machine agrees what a citation key means and nobody re-extracts 2500 PDFs |
+| `<out>/.mirror/` | `citekeys.json`, `state.json`, `removed.tsv`, `pairings.tsv`, `inbox-plan.json`, `mirror.log` | travels with the library, so every machine agrees what a citation key means and nobody re-extracts 2500 PDFs |
 | `~/.config/mendeley-mirror` (`%LOCALAPPDATA%` on Windows) | app ID, secret, tokens | per-machine on purpose: a public repo and a synced library both stay free of credentials |
 | `~/.cache/mendeley-mirror/pdf` | fetched PDFs | outside the library so grabbing one doesn't sync it everywhere |
 
@@ -417,6 +417,30 @@ question and a pattern also fires on `AT&T`.
 Creator names are reported but never written into the repair file:
 `zotero_edit` replaces a creator list wholesale per type, and a generated edit
 to a name list is how an editor gets dropped.
+
+## An approval is for a list, never for a directory
+
+`--yes` has always meant "do the run I just read". Over `<out>/inbox/` that
+sentence has a gap in it: the dry run and the live run are separate processes
+reading a mutable directory, and on 2026-10-14 a non-paper PDF landed between
+them, was filed, and had to be deleted out of Zotero by hand — leaving an
+orphaned extract behind. **Neither run reported anything false.** The dry run
+cannot mention a file that does not exist yet, and the live run has no reason
+to doubt that the operator saw one that does.
+
+So `zotero_inbox.py`'s dry run records each file's md5 and its decision in
+`.mirror/inbox-plan.json`, and `--yes` over the inbox files only what that
+record names, reporting and skipping anything new, changed, or now destined
+elsewhere. With no record, it refuses before reaching the network.
+
+**Files named on the command line are exempt and must stay exempt.** Naming a
+file IS approving it, and there is no gap between the naming and the doing;
+making `--key X paper.pdf --yes` consult a stored plan would add state to the
+one path that never needed it.
+
+The general rule, if another `--yes` is ever added here: the thing a human
+approved is the output they read. If the live run can derive a different one
+from the same command, it owes them the difference rather than the action.
 
 ## A state entry outlives its attachment
 

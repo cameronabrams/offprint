@@ -2990,6 +2990,65 @@ def main():
     finally:
         zi.identify, zi.existing_document = _real_identify, _real_existing
 
+    # ---- --yes files what the dry run listed, and nothing else ----------
+    # 2026-10-14: a non-paper PDF landed in <out>/inbox/ between library's dry
+    # run and its --yes. Both runs reported correctly; they were reading
+    # different sets of files. The approval is for a LIST, not a directory.
+    approved_pdf = zdir / "approved.pdf"
+    approved_pdf.write_bytes(pdf_bytes)
+    manifest = {approved_pdf.name: zi.plan_record(approved_pdf,
+                                                  {"citekey": "Shan2001Influence"})}
+    check(zi.plan_departure(approved_pdf, {"citekey": "Shan2001Influence"},
+                            manifest) == "",
+          "a file whose bytes and decision are both what the dry run showed is "
+          "filed")
+
+    intruder = zdir / "intruder.pdf"
+    intruder.write_bytes(pdf_bytes)
+    drift_new = zi.plan_departure(intruder, {"citekey": "Shan2001Influence"},
+                                  manifest)
+    check("appeared afterwards" in drift_new,
+          f"a file that appeared after the dry run is refused ({drift_new})")
+
+    swapped = zdir / "approved.pdf"
+    swapped.write_bytes(pdf_bytes + b"\n% a different download\n")
+    drift_bytes = zi.plan_departure(swapped, {"citekey": "Shan2001Influence"},
+                                    manifest)
+    check("bytes have changed" in drift_bytes,
+          f"and so is one whose bytes were replaced under the same name "
+          f"({drift_bytes})")
+    swapped.write_bytes(pdf_bytes)
+
+    drift_plan = zi.plan_departure(approved_pdf, {"create": "10.1234/new"},
+                                   manifest)
+    check("now it would do" in drift_plan and "create" in drift_plan,
+          f"and so is one the same bytes would now do something ELSE with -- "
+          f"the approval was for the decision, not just the file ({drift_plan})")
+    check(zi.plan_departure(approved_pdf, {}, manifest) != "",
+          "including a file that would now be skipped, which is reported rather "
+          "than passed over in silence")
+
+    # A refusal recorded by the dry run stays a refusal, and does not read as
+    # drift: nothing is filed either way, and a spurious warning teaches the
+    # operator to ignore these.
+    refused_m = {"x.pdf": {"md5": _h.md5(b"x").hexdigest(), "plan": {}}}
+    xpdf = zdir / "x.pdf"
+    xpdf.write_bytes(b"x")
+    check(zi.plan_departure(xpdf, {}, refused_m) == "",
+          "a file the dry run refused, still refused, is not reported as drift")
+
+    # The record itself: written where the mirror's other bookkeeping lives, so
+    # it travels with the library rather than with the machine.
+    pf = zi.write_inbox_plan(zdir, manifest, False)
+    check(pf == mm.mirror_state_dir(zdir) / "inbox-plan.json" and pf.exists(),
+          f"the dry run's record lands in .mirror/ ({pf})")
+    saved_plan = mm.load_json(pf, {})
+    check(saved_plan.get("files") == manifest
+          and saved_plan.get("no_create") is False
+          and saved_plan.get("version") == mm.__version__,
+          "carrying the files, the --no-create setting it was read under, and "
+          "the version that wrote it")
+
     print("\nzotero_source: a Zotero item in the shape the generators take")
     import zotero_source as zs
 

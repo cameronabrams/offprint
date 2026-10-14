@@ -38,7 +38,7 @@ means travels *with the library*, not with the code.
 | where | what | why there |
 |---|---|---|
 | the clone | all code | replaceable; nothing generated lives here |
-| `<out>/.mirror/` | `citekeys.json`, `state.json`, `removed.tsv`, `pairings.tsv`, `mirror.log` | travels with the library, so every machine agrees what a citation key means and nobody re-extracts everything |
+| `<out>/.mirror/` | `citekeys.json`, `state.json`, `removed.tsv`, `pairings.tsv`, `inbox-plan.json`, `mirror.log` | travels with the library, so every machine agrees what a citation key means and nobody re-extracts everything |
 | `~/.config/offprint` (`%LOCALAPPDATA%` on Windows) | the Zotero API key | per-machine on purpose: a public repo and a synced library both stay free of credentials |
 | `~/.config/mendeley-mirror` | Mendeley's application ID, secret and tokens | the old location, still read; new credentials go to `offprint` |
 | `~/.cache/mendeley-mirror/pdf` | fetched PDFs | outside the library, so pulling one paper's PDF does not sync it to every machine |
@@ -150,15 +150,23 @@ required reading; everything a person needs is in these pages.
 
 ## Filing one new paper
 
-Since 0.29.0 this is two commands rather than four, and one short refresh
-rather than two long ones:
+Since 0.29.0 this is one short refresh rather than two long ones, and since
+0.32.0 the dry run is a required step rather than a recommended one:
 
 ```
+uv run --script zotero_inbox.py
 uv run --script zotero_inbox.py --yes
 uv run --script zotero_source.py --refresh --only Srinivasan1997Amorphous
 ```
 
-The first prints the exact second command, naming the records it filed. A
+Read the first before running the second. `--yes` over the inbox now files
+exactly what that dry run listed and refuses to run at all without one, because
+the two commands are separate processes reading a directory that can change
+between them — which is how a PDF nobody meant to file got filed on 2026-10-14.
+A file named on the command line (`--key X paper.pdf --yes`) skips this: naming
+it is approving it.
+
+The `--yes` run prints the exact third command, naming the records it filed. A
 record it has just created has no citation key yet, so it prints the Zotero
 item key instead; `--only` takes either.
 

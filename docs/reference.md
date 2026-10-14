@@ -42,13 +42,23 @@ also why an OCR recovery run must be given the flag or it does nothing at all.
 ```
 [FILE ...]             PDFs to file; default is everything in <out>/inbox/
 --key CITEKEY          file ONE named PDF under this key, skipping identification
+--item KEY             file ONE named PDF onto this Zotero item key
+--no-create            refuse a paper no record holds, instead of creating one
 --yes                  create and upload; without it this is a dry run
 ```
 
-Creates a child **attachment** on a record that already exists. It will not
-create a record, will not attach bytes the record already holds (checked by md5
-before anything is created), will not file a PDF with no readable text, and will
-not guess which record.
+Creates a child **attachment**, and the record under it when the paper has a
+DOI and nothing in Zotero holds it. It will not mint a record from a title-only
+match, will not attach bytes the record already holds (checked by md5 before
+anything is created), will not file a PDF with no readable text, and will not
+guess which record.
+
+**`--yes` over `<out>/inbox/` files what the dry run listed and nothing else.**
+The dry run writes each file's md5 and its decision to
+`.mirror/inbox-plan.json`; `--yes` reports and skips anything that appeared
+afterwards, whose bytes changed, or that would now be filed elsewhere, and
+refuses the whole run if no dry run is recorded. A file named on the command
+line is exempt: naming it is approving it.
 
 ### `zotero_push.py` — add one reference
 

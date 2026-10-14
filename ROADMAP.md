@@ -378,9 +378,13 @@ apart.
       not a body hash, because those bodies are no longer on disk — strong,
       not proof.
 
-      **Three orphan extracts remain in the mirror** —
+      **Four orphan extracts remain in the mirror** —
       `Shan2011How-3.md`, `Hirota2000Effect-2.md`, `Daoulas2005Molecular-2.md`
-      — all byte-identical in body to live extracts. Sweeping them is OPEN and
+      — all byte-identical in body to live extracts — and, since 2026-10-14,
+      `Abraham2015Gromacs-2.md` (attachment H529ZEWH), which is a different
+      case: not a duplicate of anything but the extract of a non-paper PDF
+      that reached Zotero through the `--yes` race item 33 records, and whose
+      attachment `library` then deleted. Sweeping them is OPEN and
       is deliberately **not** attached to `--prune-state`: that flag's claim is
       "Zotero no longer lists this attachment", and a file being safe to delete
       is a different claim on different evidence. It took a body-hash
@@ -2861,6 +2865,59 @@ previous-article case.
 
 *What a real fix would need:* a positive test for "a human or a DOI-derived
 process chose this name", which nothing in the file can currently supply.
+
+## 33. `--yes` approved a list and acted on a directory — FIXED 0.32.0
+
+On 2026-10-14 `library` dry-ran `zotero_inbox.py` over `<out>/inbox/`, read
+what it would file, and re-ran with `--yes`. Between the two, a non-paper PDF
+landed in the inbox. The `--yes` run filed it, the next refresh extracted it,
+`library` deleted the attachment with `zotero_delete.py --attachment`, and
+`text/Abraham2015Gromacs-2.md` was left behind as a fourth orphan.
+
+**Neither run was wrong.** Each read the directory, reported truthfully what
+it saw, and acted on it. They simply saw different directories, and nothing
+in either output could have told the operator that — the dry run cannot
+mention a file that does not exist yet, and the live run has no reason to
+think the operator did not see one that does.
+
+That is the whole defect, and it is not an inbox defect. `--yes` was
+documented from the start as "for a run a person has already approved, not a
+way past a prompt", and a person approves a **list**. Over a directory, the
+two runs are separate processes reading mutable state, so the sentence has a
+gap in it that no amount of care at the prompt can close.
+
+### The guard
+
+A dry run over the inbox records, in `.mirror/inbox-plan.json`, each file's
+md5 and the decision `plan_one` reached for it. A later `--yes` over the inbox
+compares and skips, with the reason printed, anything that:
+
+- was not in the dry run — it appeared afterwards;
+- was in the dry run under the same name but holds different bytes;
+- holds the same bytes but would now be filed somewhere else, including a
+  file that would now be refused.
+
+With no record at all, `--yes` refuses the whole run before it reaches the
+network, rather than falling back to the old behavior: you cannot approve
+what you never saw. `--no-create` is stored too, because a dry run read under
+one setting does not describe a live run under the other.
+
+**Files named on the command line are exempt, and that is the point of the
+distinction.** `zotero_inbox.py --key X paper.pdf --yes` names its file;
+naming it IS approving it, and there is no gap between the naming and the
+doing. Only the directory sweep needs a record, and only the directory sweep
+keeps one.
+
+### Why the md5 rather than a size or an mtime
+
+The question is whether this is the same file. A re-download under the same
+name can carry the same size and a newer mtime and be a different paper; a
+copy can carry a different mtime and be identical. The md5 is already
+computed in this script for `already_attached`, so it costs nothing new.
+
+*`library` proposed exactly this guard in the same message that reported the
+orphan, which is the second time a defect report has arrived with its own
+fix attached.*
 
 ## 32. Two attempts to let the bib DERIVE an offset, both withdrawn
 

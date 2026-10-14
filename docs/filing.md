@@ -10,13 +10,23 @@
 
 It reuses the identification described on this page unchanged — that half was
 never Mendeley-specific. What differs is the other half: it **creates an
-attachment** on a record that already exists, and it will not create a *record*.
-A paper not already in `library.bib` is reported, not added.
+attachment** on a record that already exists, and since 0.29.0 **the record
+under it** when the paper has a DOI and nothing in Zotero holds it. A paper
+identified by title alone is reported, not added: a title match is enough to
+attach to a record a human already made, not to mint one. `--no-create`
+restores the older refusal.
 
 It refuses three further things, each because the alternative is a library that
 is wrong rather than one that is missing something: a file whose bytes are
 already attached to that record (checked by md5 before anything is created), a
 PDF with no readable text, and a record it had to guess at.
+
+Since 0.32.0, **`--yes` over the inbox files what the dry run listed and
+nothing else.** The dry run records each file's bytes and its decision; a file
+that appears in `inbox/` afterwards, or whose bytes or destination have
+changed, is reported and left alone, and `--yes` with no dry run behind it
+refuses outright. A file you name on the command line is exempt — naming it is
+approving it.
 
 The archive lags by one refresh for a newly filed paper: the bytes go to Zotero,
 and `<out>/pdf/` gets its copy when the next refresh fetches them back.

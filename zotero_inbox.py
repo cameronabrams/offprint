@@ -56,6 +56,15 @@ than a library that is missing something:
   record explicitly. A wrong guess files one paper's PDF under another's
   citation key, which is silent and very hard to find later.
 
+**`--yes` over the inbox files what the dry run listed, and nothing else.**
+The two runs are separate processes reading the same directory, so "do what I
+just read" has a gap in it: on 2026-10-14 a non-paper PDF landed in
+`<out>/inbox/` between a dry run and its `--yes`, was filed, and had to be
+deleted out of Zotero by hand. A dry run over the inbox now records each file's
+bytes and its decision in `.mirror/inbox-plan.json`, and a later `--yes`
+reports and skips anything new, changed, or now destined somewhere else. Files
+named on the command line are exempt: naming one IS approving it.
+
 A note on the archive: this uploads to Zotero and does **not** write to
 `<out>/pdf/`, because the stem an attachment will be archived under depends on
 its position in the record's attachment list and is not known until the next
@@ -77,7 +86,7 @@ import requests
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from mendeley_mirror import (DEFAULT_OUT, __version__, load_json,  # noqa: E402
-                             looks_like_pdf, mirror_state_dir)
+                             looks_like_pdf, mirror_state_dir, save_json)
 from inbox import existing_document, has_content, identify, title_of  # noqa: E402
 from mendeley_push import from_doi  # noqa: E402
 from zotero_attach import ZoteroWriter, storage_attachments  # noqa: E402
@@ -264,6 +273,62 @@ def plan_one(out: Path, path: Path, forced_key: str, forced_item: str,
     return {"create": doi}, label + " -- NEW record"
 
 
+def inbox_plan_path(out: Path) -> Path:
+    """Where a dry run records what it showed a human.
+
+    In `.mirror/` with the rest of the bookkeeping, because it describes the
+    inbox of this mirror and travels with it.
+    """
+    return mirror_state_dir(out) / "inbox-plan.json"
+
+
+def plan_record(path: Path, plan: dict) -> dict:
+    """One file's entry in that record: its bytes and its decision.
+
+    The md5 rather than a size or an mtime, because the question is whether
+    this is the same file, and a replaced download can be either of those and
+    not the same file.
+    """
+    return {"md5": hashlib.md5(path.read_bytes()).hexdigest(),
+            "plan": dict(plan)}
+
+
+def write_inbox_plan(out: Path, files: dict, no_create: bool) -> Path:
+    path = inbox_plan_path(out)
+    save_json(path, {"version": __version__, "no_create": no_create,
+                     "files": files})
+    return path
+
+
+def plan_departure(path: Path, plan: dict, approved: dict) -> str:
+    """Why this file is not what the dry run showed, or '' if it is.
+
+    `--yes` means "do what I just read", and over a directory that sentence has
+    a gap in it: the directory can change between the reading and the doing. On
+    2026-10-14 it did -- a non-paper PDF landed in `<out>/inbox/` between a dry
+    run and its `--yes`, was filed, and had to be deleted out of Zotero by hand,
+    leaving an orphaned extract behind. Nothing in the output of either run was
+    wrong; the two runs simply described different sets of files.
+
+    So the approval is for a LIST, never for a directory, and this is the
+    comparison that makes that true. A file that is new, whose bytes have
+    changed, or whose decision has changed since the human read it is reported
+    and left alone -- never filed on the strength of an approval given to
+    something else.
+    """
+    was = approved.get(path.name)
+    if was is None:
+        return "not in the dry run -- it appeared afterwards"
+    now = hashlib.md5(path.read_bytes()).hexdigest()
+    if was.get("md5") != now:
+        return "its bytes have changed since the dry run"
+    before, after = was.get("plan") or {}, dict(plan)
+    if before != after:
+        return (f"the dry run would have done {before or 'nothing'}, "
+                f"and now it would do {after or 'nothing'}")
+    return ""
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description="File a downloaded PDF into the Zotero record it belongs to.")
@@ -279,7 +344,9 @@ def main() -> int:
                     help="refuse a paper no record holds, instead of creating "
                          "the record for it")
     ap.add_argument("--yes", action="store_true",
-                    help="actually create and upload; without it this is a dry run")
+                    help="actually create and upload; without it this is a dry "
+                         "run. Over <out>/inbox/ it files only what the last "
+                         "dry run listed")
     ap.add_argument("--version", action="version", version=f"offprint {__version__}")
     args = ap.parse_args()
 
@@ -292,6 +359,23 @@ def main() -> int:
     if not files:
         print(f"Nothing in {args.out / 'inbox'}.")
         return 0
+
+    # Named files are their own approval; a directory is not. Only the sweep of
+    # <out>/inbox/ is checked against what a dry run showed, and only it records
+    # one -- see `plan_departure`.
+    sweep = not args.files
+    approved = {}
+    if args.yes and sweep:
+        saved = load_json(inbox_plan_path(args.out), {})
+        approved = saved.get("files") or {}
+        if not approved:
+            die(f"nothing approved: {inbox_plan_path(args.out)} holds no dry "
+                "run. Run without --yes, read what it would do, then re-run "
+                "with --yes.")
+        if bool(saved.get("no_create")) != bool(args.no_create):
+            die("--no-create differs from the dry run that was approved, so "
+                "the approval does not describe this run. Re-run the dry run "
+                "with the flags you mean.")
 
     api_key, user_id = load_zotero_credentials()
     z = Zotero(api_key, user_id)
@@ -307,9 +391,18 @@ def main() -> int:
         doi_index = zotero_doi_index(z)
 
     filed = skipped = created = 0
+    recorded = {}
     for path in files:
         plan, why = plan_one(args.out, path, args.key or "", args.item or "",
                              doi_index, not args.no_create)
+        if sweep and not args.yes:
+            recorded[path.name] = plan_record(path, plan)
+        if args.yes and sweep:
+            drift = plan_departure(path, plan, approved)
+            if drift:
+                print(f"  ! {path.name}: {drift}; not filed")
+                skipped += 1
+                continue
         if not plan:
             print(f"  ! {path.name}: {why}")
             skipped += 1
@@ -379,6 +472,12 @@ def main() -> int:
           f"skipped: {skipped}")
     if not args.yes:
         print("\nDry run. Nothing was created and nothing was uploaded.")
+        if sweep:
+            plan_file = write_inbox_plan(args.out, recorded, args.no_create)
+            print(f"The {len(recorded)} file(s) above are recorded in "
+                  f"{plan_file}. "
+                  "A later --yes files those and refuses anything that has "
+                  "appeared or changed since.")
         if created:
             print("Check the records above before re-running with --yes: once "
                   "created, removing one is zotero_delete.py and it has no undo.")
