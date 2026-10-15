@@ -4374,6 +4374,32 @@ def main():
     check(st3 == ["Hash2005Paper"] and ok3 == 0,
           f"and the hash catches a change the count agrees with ({st3})")
 
+    # A refusal about VERIFICATION is not a refusal about the data. The
+    # deposited list needs no checking; only the marker mapping does.
+    check("unverifiable" in cmap.LIST_ONLY and "no-signal" in cmap.LIST_ONLY,
+          "a paper whose mapping could not be CHECKED still gets its "
+          "reference list")
+    check("failed" not in cmap.LIST_ONLY and "offset" not in cmap.LIST_ONLY,
+          "but one whose mapping was checked and DISAGREED does not -- that is "
+          "evidence of disagreement, not absence of evidence, and the entry "
+          "numbering is the thing in dispute")
+    for _v in cmap.LIST_ONLY:
+        _o = cmap.render("L2001Paper", "10.1/z", refs_true, [],
+                         {"verdict": _v, "rates": {}, "why": "w"}, [], 1)
+        check("## No page map" in _o and "Markers by page" not in _o,
+              f"every list-only file says so in the body, so a reader can tell "
+              f"without reading the front matter ({_v})")
+    _num = cmap.render("N2001Paper", "10.1/z", refs_true, [],
+                       {"verdict": "unverifiable", "rates": {}, "why": "w"}, [], 1)
+    check("deposit order" in _num and "not as a lookup table" in _num,
+          "a NUMERIC paper's list warns that the order was never checked "
+          "against the paper's own numbering -- its text holds markers a "
+          "reader would otherwise resolve against it by hand")
+    _ay = cmap.render("A2001Paper", "10.1/z", refs_true, [],
+                      {"verdict": "not-applicable", "rates": {}, "why": "w"}, [], 1)
+    check("deposit order" not in _ay,
+          "and an author-year paper's does not, having no marker to resolve")
+
     pages = cmap.split_pages(extract)
     check([p for p, _t, _o in pages] == [1, 2],
           f"the extract's own page markers delimit the pages "

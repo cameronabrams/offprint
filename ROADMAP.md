@@ -3122,6 +3122,48 @@ bibliography.
 extracts have not changed, so `--stale` will not flag them — a tool change,
 not a source change.*
 
+### Reference lists for the refusals that are about evidence — 0.37.0
+
+Cameron asked why only 1,048 of 2,762 records got a file, and `library` made
+the argument back to me with my own words: **the refusal is about
+VERIFICATION, not data.** The deposited list needs no checking — it is the
+publisher's own, matched to `library.bib` by `refs.py`'s rules — and only the
+marker mapping does. That exemption already existed for author-year papers;
+the same sentence is true of a paper whose deposit simply names too few
+authors to test. 763 of the 782 `unverifiable` records fail for exactly that
+reason, 346 of them with **zero** names deposited.
+
+So `unverifiable` and `no-signal` now get a file carrying the reference list
+and no page map. Their measurement, on a 15-record sample: 844 references, 96
+already here, 11.4% — against 9.75% in the written set. Theirs, and flagged by
+them as a shape rather than a rate.
+
+**`failed` and `offset` are deliberately excluded.** Those verdicts are not an
+absence of evidence; they are evidence that the deposit and the printed list
+disagree, and the entry numbering is the thing in dispute. Report when you do
+not know, refuse when you know it is wrong.
+
+### The hazard their constraint exposed
+
+`library` asked that a reader be able to tell a list-only file from a verified
+one **without reading the front matter**, so that `citations/` holds two kinds
+of file and not three. Meeting that surfaced something I would otherwise have
+shipped: a list-only file for a **numerically**-citing paper renders entries
+numbered 1..N, and that paper's text is full of numbered markers — so a reader
+would reasonably resolve one against the other by hand. That correspondence is
+exactly what could not be checked.
+
+Those files now say the entries are in the publisher's **deposit order**,
+unchecked against the paper's own numbering, and are a list of works cited
+rather than a lookup table. Author-year files do not carry that caution,
+having no marker to resolve.
+
+The sentence "there is no page map here, which is a property of the paper and
+not a failure" survives **only** on author-year files. For the rest the
+absence is a refusal — we could not check — and keeping the sentence
+everywhere would dress a limit of the evidence as a property of the paper. A
+test caught that; the first draft had it on all three.
+
 ## 33. `--yes` approved a list and acted on a directory — FIXED 0.32.0
 
 On 2026-10-14 `library` dry-ran `zotero_inbox.py` over `<out>/inbox/`, read

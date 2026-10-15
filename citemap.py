@@ -118,6 +118,19 @@ NOT_A_MARKER = re.compile(
 
 STYLES = {"bracket": BRACKET, "paren": PAREN, "super": SUPER}
 
+# Verdicts that still earn a file, carrying the reference list and no page map.
+# The list needs no verification -- it is the publisher's own deposit, matched
+# to `library.bib` by `refs.py`'s rules -- and only the marker mapping does.
+# That argument was already built for author-year papers in 0.34.0; `library`
+# pointed out on 2026-10-15 that the same sentence is true of a paper whose
+# deposit simply names too few authors to test, and Cameron asked for them.
+#
+# `failed` and `offset` are deliberately NOT here. Those verdicts are not an
+# absence of evidence, they are evidence of disagreement between the deposit
+# and the printed list -- and the numbering of the entries is the thing in
+# dispute. Report when you do not know; refuse when you know it is wrong.
+LIST_ONLY = ("not-applicable", "unverifiable", "no-signal")
+
 # "(Rizzuto et al., 1998)". A paper citing this way has no marker N, so
 # "marker N means reference N" is not a claim that can hold or fail -- it does
 # not apply, and saying `failed` about it asserts something untrue.
@@ -463,7 +476,8 @@ def render(key: str, doi: str, refs: list, by_page: list, check: dict,
         "what either paper found. Re-read the extract before quoting.*",
         "",
     ]
-    if check["verdict"] != "not-applicable":
+    listed = check["verdict"] in LIST_ONLY
+    if not listed:
         # Untrue of an author-year file, which claims no mapping and so had
         # none to verify. A standing sentence that is false on some of the
         # files it is printed into is worse than no sentence.
@@ -475,17 +489,55 @@ def render(key: str, doi: str, refs: list, by_page: list, check: dict,
             "",
         ]
 
-    if check["verdict"] == "not-applicable":
+    if listed:
+        # One marker for every list-only file, whatever put it in that state.
+        # `library` asked for exactly this: a reader must be able to tell a
+        # list-only file from a verified one WITHOUT reading the front matter,
+        # and `citations/` should hold two kinds of file rather than three.
+        why_no_map = {
+            "not-applicable":
+                "This paper cites by author and year, so there is no numbered "
+                "marker to map and none is claimed.",
+            "unverifiable":
+                "This paper cites by number, but its deposited list names too "
+                "few authors to check those numbers against the printed one, "
+                "so no page map is given.",
+            "no-signal":
+                "This paper cites by number, but this extract's own reference "
+                "entries could not be located, so the numbers could not be "
+                "checked against the printed list and no page map is given.",
+        }[check["verdict"]]
         lines += [
-            "*This paper cites by author and year, so there is no numbered "
-            "marker to map and none is claimed. What follows is the "
-            "publisher's deposited reference list resolved to our citation "
-            "keys: a fact about the DOI and a match against `library.bib`, "
-            "with nothing inferred and so nothing to verify. There is no "
-            "page map here, which is a property of the paper and not a "
-            "failure.*",
+            f"## No page map\n",
+            f"*{why_no_map} What follows is the publisher's deposited "
+            "reference list resolved to our citation keys: a fact about the "
+            "DOI and a match against `library.bib`, with nothing inferred and "
+            "so nothing to verify.*",
             "",
         ]
+        if check["verdict"] == "not-applicable":
+            # True of this case and of no other: the paper simply has no
+            # marker. For the rest the absence IS a refusal -- we could not
+            # check -- and claiming otherwise would dress a limitation of the
+            # evidence as a property of the paper.
+            lines += [
+                "*There is no page map here, which is a property of the paper "
+                "and not a failure.*",
+                "",
+            ]
+        else:
+            # The entries below are numbered, and this paper's text contains
+            # numbered markers -- so a reader could reasonably try to resolve
+            # one by hand against this list. That correspondence is precisely
+            # what could not be checked, and saying so is the difference
+            # between a list and an unverified page map in disguise.
+            lines += [
+                "*The entries are in the publisher's deposit order. That order "
+                "has NOT been checked against the paper's own numbering, so a "
+                "marker in the text may not be the entry of that number here. "
+                "Use this as the list of works cited, not as a lookup table.*",
+                "",
+            ]
 
     if by_page:
         lines += ["## Markers by page", "",
@@ -568,7 +620,7 @@ def stale_report(out: Path) -> tuple[list, list, list, int]:
     is what reads it back. Report only: regenerating is `--only`, and deleting
     someone's file is a different claim on different evidence.
 
-    A `not-applicable` file carries no page map, so a changed extract leaves
+    A list-only file carries no page map, so a changed extract leaves
     nothing in it wrong except the stamp. Reported apart for that reason --
     they do not need regenerating, and saying they do would send a reader
     chasing 215 files that are fine.
@@ -600,7 +652,7 @@ def stale_report(out: Path) -> tuple[list, list, list, int]:
             matched = False
         if matched:
             ok += 1
-        elif verdict and verdict.group(1) == "not-applicable":
+        elif verdict and verdict.group(1) in LIST_ONLY:
             cosmetic.append(key.group(1))
         else:
             stale.append(key.group(1))
@@ -640,6 +692,13 @@ def plan_one(out: Path, key: str, doi: str, lib: list, cache: dict) -> dict:
                 "doi": doi, "why": check["why"]}
 
     check = verify_ordinal(body, refs)
+    if check["verdict"] in LIST_ONLY:
+        match_refs(refs, lib)
+        return {"key": key, "status": check["verdict"], "refs": refs,
+                "check": check, "by_page": [], "dropped": [], "style": "list",
+                "markers": 0, "held": sum(1 for r in refs if r.match),
+                "chars": extract_chars(raw), "sha": extract_sha(raw),
+                "doi": doi, "why": check["why"]}
     if check["verdict"] != "confirmed":
         return {"key": key, "status": check["verdict"], "why": check["why"],
                 "refs": len(refs), "check": check}
@@ -722,7 +781,7 @@ def main() -> int:
                   "--write --only " + " ".join(stale[:8])
                   + (" ..." if len(stale) > 8 else ""))
         if cosmetic:
-            print(f"\n  {len(cosmetic)} author-year file(s) whose extract "
+            print(f"\n  {len(cosmetic)} list-only file(s) whose extract "
                   "changed. These carry no page map, so nothing in them is "
                   "wrong; only the recorded character count is out of date.")
         if orphan:
@@ -749,7 +808,7 @@ def main() -> int:
             # them is wrong -- only the recorded hash. Rewriting 215 files to
             # correct a stamp would churn a directory that now syncs to
             # Cameron's laptops, for no change a reader could use.
-            print(f"  {len(cosmetic)} author-year file(s) also moved and are "
+            print(f"  {len(cosmetic)} list-only file(s) also moved and are "
                   f"SKIPPED: no page map, so nothing in them is wrong. "
                   f"Refresh the stamp with --only if you want it.")
         if orphan:
@@ -790,7 +849,7 @@ def main() -> int:
             # asked for -- which is exactly what happened while building this.
             if i and i % 50 == 0:
                 save_cache(cache)
-            if plan["status"] not in ("confirmed", "not-applicable"):
+            if plan["status"] not in ("confirmed",) + LIST_ONLY:
                 if args.only or plan["status"] in ("offset", "failed"):
                     print(f"  - {key}: {plan['status']}"
                           + (f" -- {plan['why']}" if plan.get("why") else ""),
@@ -821,12 +880,13 @@ def main() -> int:
                 encoding="utf-8")
             print(f"\nEvery record and verdict: {args.report}")
 
-    WRITES = ("confirmed", "not-applicable")
+    WRITES = ("confirmed",) + LIST_ONLY
     planned = sum(tally.get(s, 0) for s in WRITES)
+    lists = sum(tally.get(s, 0) for s in LIST_ONLY)
     print(f"\n{'written' if args.write else 'would write'}: "
           f"{written if args.write else planned}"
-          + (f"  ({tally.get('not-applicable', 0)} of them author-year, "
-             "reference list only)" if tally.get("not-applicable") else ""))
+          + (f"  ({lists} of them reference list only, no page map)"
+             if lists else ""))
     for status, n in sorted(tally.items(), key=lambda kv: -kv[1]):
         if status not in WRITES:
             print(f"  {status}: {n}")

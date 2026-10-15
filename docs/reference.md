@@ -81,9 +81,13 @@ paper before anything is written**, against that extract's own numbered entries,
 with shifted and random controls. A paper that does not pass gets no file. The
 presence of a `citations/` file is itself the check having passed.
 
-A paper that cites by **author and year** has no marker to map, so it gets a
-file with the resolved reference list and no page map, and the file says that
-is a property of the paper rather than a refusal.
+A paper whose marker mapping cannot be **verified** still gets its reference
+list: the deposit needs no checking, only the mapping does. That covers papers
+citing by author and year (no marker to map) and papers whose deposit names too
+few authors to test. Such files carry a `## No page map` section saying which
+it is, and a numerically-citing one adds that the entries are in deposit order
+and are not a lookup table. A mapping that was checked and **disagreed**
+(`failed`, `offset`) gets no file at all.
 
 A refresh never deletes `citations/` — it unlinks only its own targets and
 sweeps no directory it does not own. But it *does* rewrite `text/` on a
