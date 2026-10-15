@@ -91,7 +91,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from mendeley_mirror import DEFAULT_OUT, __version__  # noqa: E402
+from mendeley_mirror import DEFAULT_OUT, __version__, save_json  # noqa: E402
 from refs import Ref, crossref_refs, match_refs, read_library  # noqa: E402
 
 PAGE_MARK = re.compile(r"<!-- p\. (\d+) -->")
@@ -151,9 +151,20 @@ def load_cache() -> dict:
 
 
 def save_cache(cache: dict) -> None:
-    cache_path().parent.mkdir(parents=True, exist_ok=True)
-    cache_path().write_text(
-        json.dumps({"version": CACHE_VERSION, "refs": cache}), encoding="utf-8")
+    """Written through `save_json`, which replaces the file atomically.
+
+    A plain `write_text` truncates in place, so a second run writing the cache
+    while the first is mid-write leaves JSON that parses as nothing -- and
+    `load_cache` swallows the ValueError and returns an empty dict, so the
+    whole cache silently evaporates and every DOI is fetched again. That is
+    not hypothetical: `library` started two passes eight seconds apart on
+    2026-10-15 and both were saving here every 50 records.
+
+    Two runs can still lose each other's ENTRIES, last writer winning. That is
+    left alone, because the cost is re-fetching a DOI, not losing one -- a
+    recoverable waste rather than a wrong answer.
+    """
+    save_json(cache_path(), {"version": CACHE_VERSION, "refs": cache})
 
 
 def cached_refs(doi: str, cache: dict, pause: float = 0.25) -> tuple[list, str]:
