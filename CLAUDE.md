@@ -148,6 +148,22 @@ it repeatedly on 2026-10-02 before Cameron pointed out that the clone is local.
 The row above is about the Windows laptops, which do pull and which is why the
 sentence reads that way.
 
+**So check whether anything is running before you edit, not after.** Every
+entry point here carries `# /// script` and is invoked as a fresh process, one
+per use, which means each invocation compiles whatever is on disk at that
+instant. Read-once offers nothing: that protects a long sweep holding a module
+it imported hours ago, and this repo has no such thing. On 2026-10-15 four
+versions of `citemap.py` shipped while `library` was running it, and the
+process table was looked at exactly once — because Cameron asked what was
+running, not as a check. The check is one `ps` and it costs nothing:
+
+    ps -u "$USER" -o pid,etime,args | grep -v grep | grep offprint
+
+What made the 2026-10-13 case harmless was not structure. `finding.py` sat
+uncommitted for somewhere up to 158 hours, and **zero** findings files were
+written in that window — nobody ran it. Contingent, not structural, and the
+next window may not be.
+
 What follows is that **the version a run prints is the only record of which code
 it used** — not a convenience for labeling logs. And that a long run is on the
 code as it stood when Python read the file, so editing during one is safe for
