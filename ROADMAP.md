@@ -2866,6 +2866,126 @@ previous-article case.
 *What a real fix would need:* a positive test for "a human or a DOI-derived
 process chose this name", which nothing in the file can currently supply.
 
+## 34. Which claims are citation-supported — `citemap.py`, 0.33.0
+
+An extract preserves what a paper says. It does not distinguish the authors'
+own result from a restatement of someone else's, and a quotation pulled out of
+the second kind reads exactly like the first. `findings/` inherits the hazard:
+a record locates a verified quote, and if that quote were a restatement the
+record would look identical.
+
+Cameron asked whether the distillations retain enough about citation-supported
+claims, then whether structured markdown with real links to a reference list
+would improve matters. Both questions were answered by measurement rather than
+argument, and the measurement moved the design twice.
+
+### What the extracts actually retain
+
+Better than expected. Nothing truncates — `extract_pdf_text` keeps every
+character of every readable page — so reference lists survive whole
+(`Abrams2013Enhanced` carries all 244). Markers survive in all three styles,
+including superscripts, which land glued to the terminal period:
+`"in the bulk.1-4"`, `"network.2"`, `"properties.3–6"`.
+
+What degrades is older text layers: `Roefs1994Adsorption` has `F10ry` for
+Flory, `Jorgensen1984Optimized` renders CAS `110-54-3` as `11054-3`, and
+`Duering1994Structure-2` numbers its entries `5, 6, 1, s` where 7 and 8 belong.
+
+### The bottleneck was somewhere nobody was looking
+
+Not marker detection, and not resolution. **Locating the reference section.**
+On a 60-paper sample a detected run of numbered entries was really a reference
+list only about a third of the time; the rest were section numbering, table
+rows and figure captions. The checker for *that* was also wrong —
+`Sougrat2007Electron` scored zero on a list reading `1. Dalgleish AG, Beverley
+PC, ... Nature 312: 763–767.` because the pattern wanted `A. B.` and PLoS
+writes `AG`.
+
+Four detector bugs in one investigation, each of which moved the headline. No
+corpus coverage figure is recorded here, because every one I produced was a
+statement about my own regexes.
+
+### What made it buildable
+
+Crossref's publisher-deposited reference lists skip the question entirely.
+Of 40 DOIs sampled from `library.bib`: 39 had a deposited list, median ~52
+references, 90% of entries carrying a DOI, 14% resolving to a record the
+library already holds. And `refs.py` already fetched and matched them — the
+entry-to-citekey half was built, which is why `citemap.py` imports it rather
+than growing a second copy.
+
+### The assumption that had to be tested
+
+That marker *N* means deposited reference *N*. Over 400 DOIs, scored against
+each extract's own numbered entries:
+
+| mapping | mean agreement |
+|---|---|
+| **marker N -> reference N** | **0.858** |
+| control: N -> reference N+1 | 0.433 |
+| control: N -> reference N-1 | 0.115 |
+| control: N -> a random reference | 0.071 |
+
+It held at >=0.90 for 62 of the 78 papers that produced signal, and failed for
+10. `Letcher1972Thermodynamicsa` scored 0.20 against 1.00 shifted — a clean
+off-by-one where the deposit carries an entry the printed list does not.
+
+**So the verification runs per paper, before anything is written, and a paper
+that does not pass gets no file.** The presence of a `citations/` file is the
+check having passed.
+
+### Two bugs found before shipping, not after
+
+- **A deposited author is not shaped like a printed one.** Crossref gives
+  `Brader M. L.`; the extract reads `Brader, M. L.`. A substring test scores a
+  window plainly holding the right name as a miss — which is how the 400-paper
+  measurement understated itself, found only by reading one paper by hand
+  (`Huus2006Ligand`, "no signal" at 0.00, actually 0.96).
+- **A fixed-width window reaches into the next entry.** On a terse reference
+  list the shifted control then scores as well as the true mapping and a
+  correct paper is rejected. Bounding the window at the next entry number
+  removes the contamination; loosening `true > up` would have hidden it, and
+  the control exists in order not to be hidden.
+
+### What it does not do
+
+It never writes into `text/`. The extract is the durable artifact, the PDFs
+are gone since 10-02, and a derivation written into the verbatim body could
+never be checked against the paper again — besides breaking the 156 quotes in
+`findings/`, which verify by substring. Derived material lives beside the
+extract, as `annotations/` and `findings/` do.
+
+### What a first pass looks like
+
+Dry run over the first 500 records with a DOI, 2026-10-15:
+
+| verdict | n | |
+|---|---|---|
+| **confirmed — a file would be written** | **152** | 9,786 references, **877 already records in this library** |
+| unverifiable | 167 | the deposit names too few usable surnames, or too few entries could be compared |
+| no-signal | 92 | the extract's own entries could not be located at all |
+| failed | 44 | the mapping does not hold |
+| no deposited list | 39 | Crossref has none for that DOI |
+| offset | 1 | the deposit carries an entry the printed list does not |
+
+Two obvious recoveries were checked and are not there: only **2 of the 167**
+unverifiable have author names hiding in Crossref's `unstructured` text, and
+only **2 of the 92** no-signal extracts number their entries AIP-style
+(`5J. E. Mark`), which the entry pattern does not match. The rejections are
+real, not a detector that can be sharpened.
+
+**The threshold's cost is measured, not guessed.** Seven of the 44 failures
+scored >= 0.50 with both controls under a quarter of that —
+`Debnath1999Structure` at 0.74 against 0.11 and 0.06 — mappings that are
+almost certainly right and merely verified in part. That is 1.4% of the corpus
+withheld for strictness, kept deliberately: a withheld file costs a
+convenience, a wrong one misattributes a claim inside the tool built to stop
+that. The contrast-based alternative is written into `citemap.py` beside the
+constant rather than adopted, because 500 records is not enough to set a
+threshold on.
+
+*Not yet run against the whole library; `library` owns that.*
+
 ## 33. `--yes` approved a list and acted on a directory — FIXED 0.32.0
 
 On 2026-10-14 `library` dry-ran `zotero_inbox.py` over `<out>/inbox/`, read

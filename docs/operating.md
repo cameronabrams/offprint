@@ -86,6 +86,7 @@ Eight scripts break that on purpose, five of them live:
 | `zotero_push.py` | Zotero | **creates a record**, from a DOI or an arXiv id |
 | `zotero_delete.py` | Zotero | **removes** a record or a byte-less attachment |
 | `inbox.py`, `mendeley_push.py`, `mendeley_edit.py` | Mendeley | the same three jobs, retired with the account on 2026-10-02 |
+| `citemap.py` | none | asks Crossref, writes `citations/` into the mirror; touches no account |
 
 **Two deserve the most care, for opposite reasons.** `zotero_edit.py` is the
 only one that can *destroy correct metadata* rather than merely add wrong

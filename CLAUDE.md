@@ -418,6 +418,62 @@ Creator names are reported but never written into the repair file:
 `zotero_edit` replaces a creator list wholesale per type, and a generated edit
 to a name list is how an editor gets dropped.
 
+## A derivation is written only where it can be checked, one paper at a time
+
+`citemap.py` writes `citations/<citekey>.md` — the reference list, resolved to
+our own citation keys, and which markers sit on which page. All of it is
+derived, and the rule that makes it safe is that **every paper is verified
+individually before its file is written**, by a test whose evidence does not
+come from the thing being tested.
+
+The load-bearing assumption is that in-text marker *N* means deposited
+reference *N*. Measured over 400 DOIs against each extract's own numbered
+entries — evidence Crossref never saw — it holds at 0.858 mean against 0.433
+for the mapping shifted up one, 0.115 shifted down, and 0.071 for a reference
+drawn at random. It is also **false often enough to matter**:
+`Letcher1972Thermodynamicsa` scores 0.20 against 1.00 shifted, because the
+deposited list carries an entry the printed one does not.
+
+So a paper that does not pass gets no file, and the presence of a file is
+itself the check having passed. `offset` is reported separately from `failed`
+because it is a different thing and a human may want to look. `no-signal` —
+every arm silent, including the random one — is withheld too: **no evidence is
+not evidence**, and it is not evidence against either, which is why it is its
+own verdict rather than a failure.
+
+Three things learned building it, each of which had already cost a wrong number:
+
+- **The reference list does not come from the extract**, and that is not
+  laziness. Locating the reference section inside an extract is the hardest
+  part of the problem: a detected run of numbered entries was really a
+  reference list only about a third of the time, the rest being section
+  numbering, table rows and figure captions. Crossref's deposited list skips
+  the entire question, and `refs.py` already fetched and matched it.
+- **A deposited author is not shaped like a printed one.** Crossref gives
+  `Brader M. L.` where the extract reads `Brader, M. L.`, so a substring test
+  scores a page that plainly holds the right name as a miss. That silently
+  understated a 400-paper measurement until a single paper was read by hand.
+  `surname()` exists for this, and matches whole-word so `Li` does not match
+  `Ligand`.
+- **Bound the contamination; do not loosen the threshold.** A fixed-width
+  window after entry *N* reaches into entry *N+1* on a terse reference list,
+  so the shifted control scores as well as the true mapping and a correct
+  paper is rejected. The fix is to stop the window at the next entry number.
+  Relaxing `true > up` instead would have hidden the overlap rather than
+  removed it, and the control exists precisely to not be hidden.
+
+**It never writes into `text/`.** The extract is the durable artifact and the
+PDFs are gone — `<out>/pdf/` has held 0 files since 10-02 — so a derivation
+written into the verbatim body could never be checked against the paper again.
+It would also break the quotes stored in `findings/`, which verify by
+substring after whitespace normalization and know nothing of markdown. Derived
+material lives beside the extract, the way `annotations/` and `findings/` do.
+
+A `citations/` file records the extract's character count. A re-extraction
+changes it, which is how a stale file is spotted; nothing here repairs one,
+because regenerating is a whole-library claim and this flag makes a per-paper
+one.
+
 ## An approval is for a list, never for a directory
 
 `--yes` has always meant "do the run I just read". Over `<out>/inbox/` that

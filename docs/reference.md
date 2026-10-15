@@ -60,6 +60,27 @@ afterwards, whose bytes changed, or that would now be filed elsewhere, and
 refuses the whole run if no dry run is recorded. A file named on the command
 line is exempt: naming it is approving it.
 
+### `citemap.py` — which claims are citation-supported, and by what
+
+```
+--only CITEKEY [...]   just these records
+--write                write citations/; without it this is a dry run
+--limit N              stop after N records
+```
+
+Writes `citations/<citekey>.md`: the paper's reference list taken from
+Crossref's publisher-deposited data, resolved to our own citation keys where we
+hold the work, plus which markers appear on which page — so a claim on p. 7 can
+be traced to what supports it.
+
+**The mapping from in-text marker *N* to reference *N* is verified for every
+paper before anything is written**, against that extract's own numbered entries,
+with shifted and random controls. A paper that does not pass gets no file. The
+presence of a `citations/` file is itself the check having passed.
+
+It never writes into `text/`. The extract stays byte-identical, so the quotes
+stored in `findings/` keep verifying.
+
 ### `zotero_push.py` — add one reference
 
 ```

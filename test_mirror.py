@@ -4208,6 +4208,97 @@ def main():
           "and a failed run does NOT get to clear the frozen marker and declare "
           "the mirror live again")
 
+    print("\ncitemap: a mapping is verified per paper, or there is no file")
+    import citemap as cmap
+    from refs import Ref as _Ref
+
+    # Crossref deposits "Brader M. L."; the printed list reads "Brader, M. L.".
+    # Comparing the whole field scores a page holding the right name as a miss,
+    # which is what made a 400-paper measurement understate this on 2026-10-15.
+    check(cmap.surname("Brader M. L.") == "Brader",
+          "a deposited author with initials reduces to the family name")
+    check(cmap.surname("Goldman J.") == "Goldman", "one initial too")
+    check(cmap.surname("Blundell") == "Blundell",
+          "and a bare family name is left alone, since deposits carry both shapes")
+    check(cmap.surname("van der Waals") == "van der Waals",
+          "a multi-word surname is not truncated to its first token")
+    check(cmap.names_match("Brader", "Brader, M. L. (1997) Zinc coordination"),
+          "the surname is then found in the extract's own entry")
+    check(not cmap.names_match("Li", "Ligand binding in the insulin hexamer"),
+          "and a short surname does not match inside a longer word")
+
+    check(cmap.expand("1-4") == [1, 2, 3, 4], "a small range cites every work in it")
+    check(cmap.expand("5,7") == [5, 7], "a list cites exactly what it names")
+    check(cmap.expand("1-150") == [1, 150],
+          "a 150-wide 'range' is a page span or a residue span, never 150 "
+          "citations, so it is not expanded")
+
+    # The regression that cost a measurement: selecting the style with the loose
+    # superscript pattern let it win on papers that plainly use brackets.
+    bracket_prose = " ".join(f"claim [{i}] and more text here." for i in range(1, 30))
+    check(cmap.detect_style(bracket_prose) == "bracket",
+          "a bracket-style paper is detected as bracket, not superscript")
+    _got = sorted(cmap.markers_in(
+        "water12 and 50 nm3 and Figure 3 and shown.14", "super"))
+    check(_got == [12, 14],
+          f"a unit and a figure number are not citation markers ({_got})")
+
+    NAMES = ["Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf",
+             "Hotel", "India", "Juliet", "Kilo", "Lima", "Mike", "November"]
+    reflist = "\n".join(f"{i}. {n}, X. Y. A title. J. Testing 1990, 1, 1."
+                        for i, n in enumerate(NAMES, 1))
+    extract = ("<!-- p. 1 -->\n\nA claim [1] and another [2,3].\n\n"
+               "<!-- p. 2 -->\n\nMore [4] here.\n\nReferences\n\n" + reflist)
+    refs_true = [_Ref(label=str(i), author=f"{n} X. Y.") for i, n in enumerate(NAMES, 1)]
+
+    v = cmap.verify_ordinal(extract, refs_true)
+    check(v["verdict"] == "confirmed",
+          f"marker N meaning reference N is confirmed when it does ({v['verdict']}, "
+          f"true={v['rates']['true']:.2f})")
+
+    # An extra leading entry in the deposit: marker N then means reference N+1.
+    # Letcher1972Thermodynamicsa is the real one -- true 0.20 against 1.00.
+    refs_off = [_Ref(label="0", author="Zulu X. Y.")] + refs_true
+    v_off = cmap.verify_ordinal(extract, refs_off)
+    check(v_off["verdict"] == "offset",
+          f"a deposit carrying one extra entry is called an OFFSET, not a "
+          f"failure, because a human may want to look ({v_off['verdict']})")
+    check("N+1" in v_off["why"], f"and the report says which way ({v_off['why'][:60]})")
+
+    # Names that are nowhere near the numbers: every arm silent.
+    refs_wrong = [_Ref(label=str(i), author=f"Nonesuch{i}berg Q.")
+                  for i in range(1, 15)]
+    v_no = cmap.verify_ordinal(extract, refs_wrong)
+    check(v_no["verdict"] in ("no-signal", "failed"),
+          f"a mapping with nothing behind it is not confirmed ({v_no['verdict']})")
+
+    # No evidence is not evidence: an extract with no numbered entries at all
+    # must not be written, however plausible the deposit looks.
+    bare = "<!-- p. 1 -->\n\nA claim [1] and another [2].\n\nNo reference list here."
+    v_bare = cmap.verify_ordinal(bare, refs_true)
+    check(v_bare["verdict"] != "confirmed",
+          f"an extract whose entries cannot be located is never confirmed "
+          f"({v_bare['verdict']})")
+
+    check(cmap.verify_ordinal(extract, refs_true[:3])["verdict"] == "unverifiable",
+          "too few deposited surnames to compare is its own verdict")
+
+    pages = cmap.split_pages(extract)
+    check([p for p, _ in pages] == [1, 2],
+          f"the extract's own page markers delimit the pages ({pages and [p for p,_ in pages]})")
+
+    out = cmap.render("Test2001Paper", "10.1/x", refs_true,
+                      [(1, [1, 2]), (2, [4])], v, [99], 12345)
+    check('<a id="ref-1">' in out and "](#ref-1)" in out,
+          "the written file anchors each reference and links markers to it")
+    check("Derived, not extracted" in out,
+          "and says on its face that it is not a source to quote")
+    check("99" in out and "resolve to nothing" in out,
+          "a marker above the deposited list is reported, never mapped to the "
+          "nearest entry")
+    check(f"verified: {v['verdict']}" in out and "controls:" in out,
+          "and the verdict and its controls travel with the file")
+
     print("\ndoixref: three-way, because the citation key is frozen")
     import doixref as dx
 
