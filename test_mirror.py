@@ -4311,6 +4311,34 @@ def main():
           "while still resolving the reference list, which is a fact about the "
           "DOI rather than an inference")
 
+    # A refresh never deletes citations/, but it DOES rewrite text/ on a
+    # re-extraction, which can move the page markers the file points at.
+    sdir = tmp / "stalemirror"
+    (sdir / "text").mkdir(parents=True, exist_ok=True)
+    (sdir / "citations").mkdir(parents=True, exist_ok=True)
+    def _pair(key, recorded, actual, verdict="confirmed"):
+        (sdir / "citations" / f"{key}.md").write_text(
+            f"---\ncitekey: {key}\nverified: {verdict} -- x\n"
+            f"extract-characters: {recorded}\n---\n", encoding="utf-8")
+        (sdir / "text" / f"{key}.md").write_text(
+            f"---\ncitekey: {key}\ncharacters: {actual}\n---\n\nbody",
+            encoding="utf-8")
+    _pair("Same2001Paper", 500, 500)
+    _pair("Moved2002Paper", 500, 777)
+    _pair("Named2003Paper", 500, 777, verdict="not-applicable")
+    (sdir / "citations" / "Gone2004Paper.md").write_text(
+        "---\ncitekey: Gone2004Paper\nverified: confirmed -- x\n"
+        "extract-characters: 500\n---\n", encoding="utf-8")
+    st, orph, cos, okn = cmap.stale_report(sdir)
+    check(okn == 1 and st == ["Moved2002Paper"],
+          f"a page map built on a different extract is reported stale "
+          f"({okn} ok, {st})")
+    check(cos == ["Named2003Paper"],
+          f"an author-year file is reported APART: it carries no page map, so "
+          f"a changed extract leaves nothing in it wrong ({cos})")
+    check(orph == ["Gone2004Paper"],
+          f"and a file whose extract is gone is named, not deleted ({orph})")
+
     pages = cmap.split_pages(extract)
     check([p for p, _ in pages] == [1, 2],
           f"the extract's own page markers delimit the pages ({pages and [p for p,_ in pages]})")

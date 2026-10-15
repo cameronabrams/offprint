@@ -3019,6 +3019,40 @@ untrue on some of the files it is printed into is worse than no sentence.
 `library` asked for it because the console names only the refusals that might
 be mistakes, so 143 of 250 records could not be audited without a re-run.
 
+### The full corpus, and the check the scorer cannot make
+
+`library` ran all 2,325 records on 0.34.0: **833 confirmed + 215
+not-applicable = 1,048 files, 60,386 references, 5,889 already records here.**
+Refused: 782 unverifiable, 209 with no deposited list, 131 failed, 117
+no-signal, 28 with no extract, 9 offset, 1 too short. TSV:
+`~/.local/state/library/citemap-full-20261015.tsv`.
+
+**And they made the check this tool structurally cannot.** The scorer tests
+surnames against the printed list; `library` read the citing SENTENCE against
+the reference the mapping lands on — nine markers across ACS superscript and
+Elsevier bracketed styles, all nine correct. `"equation.29"` landing on
+Pascault's Tg equation, `"polybenzoxazines ... as has been observed.30,31"`
+landing on Ishida. They flagged it as corroboration rather than a rate, small
+n and papers chosen for familiarity, which is the right reading.
+
+That is the in-range false positive the range test cannot see, and it is the
+second time a measurement this repo could not make came from the session that
+runs the tool.
+
+### `--stale`, 0.35.0
+
+A refresh never deletes `citations/`: it unlinks only its own targets and
+sweeps no directory it does not own. But it rewrites `text/` on a
+re-extraction, which can move the page markers the file points at. Each file
+already recorded the character count of the extract it read and **nothing
+read it back** — an incomplete feature, not a new one. `--stale` reads it,
+reports, and deletes nothing: regenerating is `--only`, and removing someone's
+file is a different claim on different evidence.
+
+Author-year files are reported apart. They carry no page map, so a changed
+extract leaves nothing in them wrong except the stamp, and saying otherwise
+would send a reader chasing 215 files that are fine.
+
 *Still not run with `--write`; that is Cameron's call, and `library` owns it.*
 
 ## 33. `--yes` approved a list and acted on a directory — FIXED 0.32.0

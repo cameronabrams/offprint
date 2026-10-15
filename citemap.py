@@ -496,6 +496,47 @@ def extract_chars(body: str) -> int:
     return int(m.group(1)) if m else 0
 
 
+def stale_report(out: Path) -> tuple[list, list, list, int]:
+    """Which `citations/` files no longer describe the extract beneath them.
+
+    A refresh never deletes this directory -- it unlinks only its own targets
+    and sweeps no directory it does not own -- so a citations file outlives the
+    extract it was built from. What it does NOT outlive is correctness: a
+    re-extraction (a changed attachment, `--ocr`, `--reassess`) rewrites
+    `text/<key>.md` and can move the page markers, which is exactly what the
+    "Markers by page" section points at.
+
+    So each file records the character count of the extract it read, and this
+    is what reads it back. Report only: regenerating is `--only`, and deleting
+    someone's file is a different claim on different evidence.
+
+    A `not-applicable` file carries no page map, so a changed extract leaves
+    nothing in it wrong except the stamp. Reported apart for that reason --
+    they do not need regenerating, and saying they do would send a reader
+    chasing 215 files that are fine.
+    """
+    stale, orphan, cosmetic, ok = [], [], [], 0
+    for path in sorted((out / "citations").glob("*.md")):
+        head = path.read_text(encoding="utf-8", errors="replace")[:1200]
+        key = re.search(r"^citekey:\s*(\S+)", head, re.M)
+        was = re.search(r"^extract-characters:\s*(\d+)", head, re.M)
+        verdict = re.search(r"^verified:\s*(\S+)", head, re.M)
+        if not key:
+            continue
+        extract = out / "text" / f"{key.group(1)}.md"
+        if not extract.exists():
+            orphan.append(key.group(1))
+            continue
+        now = extract_chars(extract.read_text(encoding="utf-8", errors="replace"))
+        if was and int(was.group(1)) == now:
+            ok += 1
+        elif verdict and verdict.group(1) == "not-applicable":
+            cosmetic.append(key.group(1))
+        else:
+            stale.append(key.group(1))
+    return stale, orphan, cosmetic, ok
+
+
 def plan_one(out: Path, key: str, doi: str, lib: list, cache: dict) -> dict:
     """Everything decided for one paper, without writing anything."""
     path = out / "text" / f"{key}.md"
@@ -560,6 +601,9 @@ def main() -> int:
                     help="write citations/; without it this is a dry run")
     ap.add_argument("--limit", type=int, default=0,
                     help="stop after this many records (for a first look)")
+    ap.add_argument("--stale", action="store_true",
+                    help="report which citations/ files no longer match the "
+                         "extract beneath them, and stop")
     ap.add_argument("--report", type=Path, metavar="PATH",
                     help="write a TSV naming EVERY record and its verdict. "
                          "Without it the console names only the refusals that "
@@ -568,6 +612,30 @@ def main() -> int:
     ap.add_argument("--version", action="version",
                     version=f"offprint {__version__}")
     args = ap.parse_args()
+
+    if args.stale:
+        stale, orphan, cosmetic, ok = stale_report(args.out)
+        print(f"offprint {__version__} citemap --stale\n")
+        print(f"  {ok} file(s) still describe their extract")
+        if stale:
+            print(f"\n  {len(stale)} with a page map built on a DIFFERENT "
+                  f"extract -- the markers may point at the wrong pages:")
+            for k in stale:
+                print(f"    {k}")
+            print("\n  Regenerate with:\n    uv run --script citemap.py "
+                  "--write --only " + " ".join(stale[:8])
+                  + (" ..." if len(stale) > 8 else ""))
+        if cosmetic:
+            print(f"\n  {len(cosmetic)} author-year file(s) whose extract "
+                  "changed. These carry no page map, so nothing in them is "
+                  "wrong; only the recorded character count is out of date.")
+        if orphan:
+            print(f"\n  {len(orphan)} file(s) whose extract is gone: "
+                  + ", ".join(orphan))
+            print("  Nothing here removes them -- that is a different claim.")
+        if not (stale or orphan or cosmetic):
+            print("\n  Nothing is stale.")
+        return 0
 
     lib = read_library(args.out)
     if not lib:

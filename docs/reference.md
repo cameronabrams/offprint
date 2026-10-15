@@ -67,6 +67,7 @@ line is exempt: naming it is approving it.
 --write                write citations/; without it this is a dry run
 --limit N              stop after N records
 --report PATH          TSV naming every record and its verdict
+--stale                report files that no longer match their extract
 ```
 
 Writes `citations/<citekey>.md`: the paper's reference list taken from
@@ -82,6 +83,13 @@ presence of a `citations/` file is itself the check having passed.
 A paper that cites by **author and year** has no marker to map, so it gets a
 file with the resolved reference list and no page map, and the file says that
 is a property of the paper rather than a refusal.
+
+A refresh never deletes `citations/` — it unlinks only its own targets and
+sweeps no directory it does not own. But it *does* rewrite `text/` on a
+re-extraction, which can move the page markers a file points at, so each file
+records the character count of the extract it read and `--stale` reads it
+back. Author-year files are reported apart: they carry no page map, so a
+changed extract leaves nothing in them wrong.
 
 It never writes into `text/`. The extract stays byte-identical, so the quotes
 stored in `findings/` keep verifying.
