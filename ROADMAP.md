@@ -3053,7 +3053,74 @@ Author-year files are reported apart. They carry no page map, so a changed
 extract leaves nothing in them wrong except the stamp, and saying otherwise
 would send a reader chasing 215 files that are fine.
 
-*Still not run with `--write`; that is Cameron's call, and `library` owns it.*
+### Written, and two things found by the output — 0.36.0
+
+Cameron settled both open questions: `citations/` stays under `~/Sync/library`
+and syncs, and a file regenerates when its extract changes. `library` ran
+`--write`: **1,048 files, 14.7 MB**, and `--stale` reported all 1,048 in step.
+
+**The record is a hash now, not a character count.** `library` asked for this
+and was right: a count collides. An OCR correction that swaps characters
+without changing the length moves the page markers and leaves the count
+identical — a faithful index over changed source, invisible to
+cross-checking, which is the exact failure the check exists to catch. Verified
+rather than argued: a 40,452-character extract edited to 40,452 characters is
+invisible to the count and caught by the hash. The hash covers the **body
+only**, because a frontmatter-only rewrite moves no page marker and marking
+1,048 files stale for one would teach the reader to ignore the report. Files
+written before the hash stay checkable by their count — weakly, but a weak
+check that names the file beats none — and each becomes hash-backed when it is
+next regenerated.
+
+`--refresh-stale` rewrites only the files whose extract moved. Author-year
+files whose extract moved are **named and skipped**: they carry no page map,
+so nothing in them is wrong but the stamp, and rewriting 215 files to correct
+a stamp would churn a directory that now syncs to Cameron's laptops.
+
+### The page map was reading bibliographies as citations
+
+`library` audited the written output and found `Demir2021Automated` mapping
+`p. 8 — [1]...[54]`, where extract page 8 *is* its reference list. **332 of
+the 801 numbered files showed it; 18% of all mapped markers.** Verification
+and reference resolution were unaffected — only "Markers by page", whose whole
+job is to say where a citation-supported claim sits. A bibliography page
+carries no claims, so listing it says a paper's last pages are its most
+densely cited, which is backwards.
+
+Their suggested fix was the reference-section boundary "you already locate".
+**This tool does not locate one, on purpose** — item 34 records that a
+detected run of numbered entries is really a reference list only about a third
+of the time, which is why `verify_ordinal` searches the whole body instead.
+
+So the cut comes from the **verification's own confirmed entry positions**.
+Every offset where the true mapping matched a surname is a reference entry
+established by evidence, and markers at or after the first such offset *on
+that page* are bibliography. Per page, not one global cut: Nature puts Methods
+after the references, so `Shaik2019Structural` has entries on extract pages 5,
+6 and 8 with prose on 7, and a single cut point would have thrown page 7 away.
+It keeps its markers.
+
+One artifact had to be fixed on top: `verify_ordinal` loops from n=2, because
+`"1."` is the commonest token in a paper and scoring it would import that
+noise. Entry 1 therefore had no recorded position and sat on the prose side of
+the cut — `Demir` still mapped `p. 8 — [1]`. Entry 1 is now **located but
+never scored**, same evidence standard, no effect on any measurement.
+
+Measured against the files `library` had already written:
+
+| record | mapped markers before | after | removed |
+|---|---|---|---|
+| `Demir2021Automated` | 111 | 57 | 54 — its whole reference list |
+| `Abraham2015Gromacs` | 97 | 50 | 47 — likewise |
+| `Shaik2019Structural` | 59 | 57 | 2 |
+
+Those removals equal each paper's reference count exactly, which is what
+`library` predicted. A run now reports how many numbers it left out as
+bibliography.
+
+*The 1,048 written files carry the old page maps and need regenerating. Their
+extracts have not changed, so `--stale` will not flag them — a tool change,
+not a source change.*
 
 ## 33. `--yes` approved a list and acted on a directory — FIXED 0.32.0
 

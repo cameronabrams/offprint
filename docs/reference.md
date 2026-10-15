@@ -68,6 +68,7 @@ line is exempt: naming it is approving it.
 --limit N              stop after N records
 --report PATH          TSV naming every record and its verdict
 --stale                report files that no longer match their extract
+--refresh-stale        rewrite only the files whose extract moved
 ```
 
 Writes `citations/<citekey>.md`: the paper's reference list taken from

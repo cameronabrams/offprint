@@ -81,6 +81,7 @@ unauthenticated; responses are cached in `~/.cache/offprint/`.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import random
 import re
@@ -203,14 +204,19 @@ def cached_refs(doi: str, cache: dict, pause: float = 0.25) -> tuple[list, str]:
     return refs, note
 
 
-def split_pages(body: str) -> list[tuple[int, str]]:
-    """The extract's text, page by page, using its own `<!-- p. N -->` markers."""
+def split_pages(body: str) -> list[tuple[int, str, int]]:
+    """The extract's text page by page, with each page's offset in the body.
+
+    The offset is what lets a bibliography be cut out of the page map: a page
+    is not wholly text or wholly references, and a reference list can start
+    halfway down one.
+    """
     marks = [(m.start(), m.end(), int(m.group(1)))
              for m in PAGE_MARK.finditer(body)]
     out = []
     for i, (_s, e, n) in enumerate(marks):
         end = marks[i + 1][0] if i + 1 < len(marks) else len(body)
-        out.append((n, body[e:end]))
+        out.append((n, body[e:end], e))
     return out
 
 
@@ -248,15 +254,21 @@ def detect_style(prose: str) -> str:
 
 
 def markers_in(text: str, style: str) -> list[int]:
-    found: list[int] = []
+    return [n for _pos, n in markers_with_pos(text, style)]
+
+
+def markers_with_pos(text: str, style: str) -> list[tuple[int, int]]:
+    """`(offset, number)` for each marker, because WHERE one sits decides
+    whether it is a citation or the bibliography numbering itself."""
+    found: list[tuple[int, int]] = []
     for m in STYLES[style].finditer(text):
-        found.extend(expand(m.group(1)))
+        found.extend((m.start(), n) for n in expand(m.group(1)))
     if style == "super":
         for m in SUPER_LOOSE.finditer(text):
             word = text[max(0, m.start()):m.start(1)].rstrip(".,;:) ").lower()
             if NOT_A_MARKER.search(word):
                 continue
-            found.extend(expand(m.group(1)))
+            found.extend((m.start(), n) for n in expand(m.group(1)))
     return found
 
 
@@ -292,7 +304,7 @@ def names_match(sur: str, window: str) -> bool:
 NEXT_ENTRY = re.compile(r"(?:^|[\s\[(])\(?\[?\d{1,3}[.)\]]")
 
 
-def entry_windows(body: str, n: int, width: int = 150) -> list[str]:
+def entry_windows(body: str, n: int, width: int = 150) -> list[tuple[int, str]]:
     """Text just after each place the EXTRACT numbers an entry `n`, and no
     further than where it numbers the next one.
 
@@ -311,7 +323,7 @@ def entry_windows(body: str, n: int, width: int = 150) -> list[str]:
     for m in re.finditer(rf"(?:^|[\s\[(])\(?\[?{n}[.)\]]", body):
         win = body[m.end():m.end() + width]
         nxt = NEXT_ENTRY.search(win, 10)
-        out.append(win[:nxt.start()] if nxt else win)
+        out.append((m.start(), win[:nxt.start()] if nxt else win))
     return out
 
 
@@ -328,6 +340,11 @@ def verify_ordinal(body: str, refs: list) -> dict:
     this extract and the comparison says nothing.
     """
     arms = {k: [0, 0] for k in ("true", "down", "up", "rand")}
+    # Offsets where the TRUE mapping matched a surname. Each one is a reference
+    # entry confirmed by evidence, which is the only trustworthy way this tool
+    # has of knowing where the bibliography sits -- pattern-matching a
+    # "References" heading finds a real list about a third of the time.
+    entry_at: list[int] = []
     pool = [s for r in refs if len(s := surname(r.author)) >= 4]
     if len(pool) < 10:
         return {"verdict": "unverifiable",
@@ -349,16 +366,34 @@ def verify_ordinal(body: str, refs: list) -> dict:
             if len(who) < 4:
                 continue
             arms[name][1] += 1
-            if any(names_match(who, w) for w in wins):
-                arms[name][0] += 1
+            for pos, w in wins:
+                if names_match(who, w):
+                    arms[name][0] += 1
+                    if name == "true":
+                        entry_at.append(pos)
+                    break
         arms["rand"][1] += 1
         decoy = rng.choice(pool)
-        if any(names_match(decoy, w) for w in wins):
+        if any(names_match(decoy, w) for _pos, w in wins):
             arms["rand"][0] += 1
+
+    # Entry 1 is located but never SCORED. The loop starts at 2 because "1."
+    # is the commonest token in a paper -- page numbers, list items, equation
+    # labels -- and scoring it would import that noise into the rates. But not
+    # locating it leaves the bibliography's first entry on the prose side of
+    # the cut, which is why `Demir2021Automated` still mapped "p. 8 -- [1]"
+    # after the reference list was otherwise excluded. Same evidence standard,
+    # no effect on the measurement.
+    if entry_at and refs:
+        first = surname(refs[0].author)
+        if len(first) >= 4:
+            for pos, w in entry_windows(body, 1):
+                if pos < min(entry_at) and names_match(first, w):
+                    entry_at.append(pos)
 
     rate = {k: (v[0] / v[1] if v[1] else 0.0) for k, v in arms.items()}
     tested = arms["true"][1]
-    out = {"rates": rate, "tested": tested}
+    out = {"rates": rate, "tested": tested, "entry_at": sorted(entry_at)}
     if tested < MIN_TESTED:
         out.update(verdict="unverifiable",
                    why=f"only {tested} entries could be compared")
@@ -388,7 +423,7 @@ def verify_ordinal(body: str, refs: list) -> dict:
 
 
 def render(key: str, doi: str, refs: list, by_page: list, check: dict,
-           dropped: list, chars: int) -> str:
+           dropped: list, chars: int, sha: str = "") -> str:
     """`citations/<key>.md`.
 
     The header says what this file is NOT, for the same reason `findings/` does:
@@ -412,6 +447,10 @@ def render(key: str, doi: str, refs: list, by_page: list, check: dict,
          f"{rates.get('up', 0):.2f} / shifted-down {rates.get('down', 0):.2f} "
          f"/ random {rates.get('rand', 0):.2f}" if rates
          else "controls: not scored -- no mapping was claimed"),
+        f"extract-sha: {sha}",
+        # Kept beside the hash because 1,048 files were written with only this
+        # before the hash existed, and a reader comparing two files should not
+        # have to know which version produced which.
         f"extract-characters: {chars}",
         f"written-by: offprint {__version__}",
         "---",
@@ -496,6 +535,25 @@ def extract_chars(body: str) -> int:
     return int(m.group(1)) if m else 0
 
 
+def extract_sha(raw: str) -> str:
+    """A hash of the extract's BODY, which is what a page map depends on.
+
+    `library` asked for this in place of the character count, and was right: a
+    count collides. An OCR correction that swaps characters without changing
+    the length moves the page markers and leaves the count identical, so the
+    stale check would pass on a file whose page map had shifted -- a faithful
+    index over changed source, invisible to cross-checking, which is the exact
+    failure this is supposed to catch.
+
+    The BODY and not the whole file: a frontmatter-only rewrite (a title
+    corrected in Zotero, say) changes the file without moving a single page
+    marker, and marking 1,048 files stale for that would train the reader to
+    ignore the report.
+    """
+    body = raw.split("---", 2)[-1] if raw.startswith("---") else raw
+    return hashlib.sha256(body.encode("utf-8", "replace")).hexdigest()[:16]
+
+
 def stale_report(out: Path) -> tuple[list, list, list, int]:
     """Which `citations/` files no longer describe the extract beneath them.
 
@@ -519,6 +577,7 @@ def stale_report(out: Path) -> tuple[list, list, list, int]:
     for path in sorted((out / "citations").glob("*.md")):
         head = path.read_text(encoding="utf-8", errors="replace")[:1200]
         key = re.search(r"^citekey:\s*(\S+)", head, re.M)
+        sha = re.search(r"^extract-sha:\s*([0-9a-f]+)", head, re.M)
         was = re.search(r"^extract-characters:\s*(\d+)", head, re.M)
         verdict = re.search(r"^verified:\s*(\S+)", head, re.M)
         if not key:
@@ -527,8 +586,19 @@ def stale_report(out: Path) -> tuple[list, list, list, int]:
         if not extract.exists():
             orphan.append(key.group(1))
             continue
-        now = extract_chars(extract.read_text(encoding="utf-8", errors="replace"))
-        if was and int(was.group(1)) == now:
+        raw = extract.read_text(encoding="utf-8", errors="replace")
+        # The hash when the file carries one; the character count when it was
+        # written before the hash existed. 1,048 files were written that way on
+        # 2026-10-15 and they stay checkable -- weakly, since a count collides,
+        # but a weak check that names the file beats no check at all. Each
+        # becomes hash-backed the first time it is regenerated.
+        if sha:
+            matched = sha.group(1) == extract_sha(raw)
+        elif was:
+            matched = int(was.group(1)) == extract_chars(raw)
+        else:
+            matched = False
+        if matched:
             ok += 1
         elif verdict and verdict.group(1) == "not-applicable":
             cosmetic.append(key.group(1))
@@ -566,8 +636,8 @@ def plan_one(out: Path, key: str, doi: str, lib: list, cache: dict) -> dict:
         return {"key": key, "status": "not-applicable", "refs": refs,
                 "check": check, "by_page": [], "dropped": [], "style": "name",
                 "markers": 0, "held": sum(1 for r in refs if r.match),
-                "chars": extract_chars(raw), "doi": doi,
-                "why": check["why"]}
+                "chars": extract_chars(raw), "sha": extract_sha(raw),
+                "doi": doi, "why": check["why"]}
 
     check = verify_ordinal(body, refs)
     if check["verdict"] != "confirmed":
@@ -576,9 +646,31 @@ def plan_one(out: Path, key: str, doi: str, lib: list, cache: dict) -> dict:
 
     match_refs(refs, lib)
     style = detect_style(prose)
-    by_page, dropped, seen = [], [], 0
-    for page, text in split_pages(body):
-        nums = sorted({n for n in markers_in(text, style)})
+    # Where the bibliography begins, page by page, taken from the entry
+    # positions the verification CONFIRMED rather than from a heading pattern.
+    # `library` found on 2026-10-15 that the map was reading a reference
+    # list's own numbering back as citations -- `Demir2021Automated` mapped
+    # "p. 8 -- [1]...[54]" where page 8 is its reference list, and 18% of all
+    # mapped markers sat on such pages. A bibliography page carries no claims,
+    # so listing it says a paper's last pages are its most densely cited,
+    # which is backwards.
+    #
+    # Per page and not one global cut: Nature puts Methods AFTER the
+    # references, so `Shaik2019Structural` has entries on extract pages 5, 6
+    # and 8 with prose on 7. A single cut point would throw page 7 away.
+    entry_at = check.get("entry_at", [])
+    by_page, dropped, seen, hidden = [], [], 0, 0
+    for page, text, start in split_pages(body):
+        here = [o - start for o in entry_at if start <= o < start + len(text)]
+        cut = min(here) if here else len(text)
+        nums, late = set(), 0
+        for pos, n in markers_with_pos(text, style):
+            if pos >= cut:
+                late += 1
+                continue
+            nums.add(n)
+        hidden += late
+        nums = sorted(nums)
         good = [n for n in nums if 1 <= n <= len(refs)]
         dropped.extend(n for n in nums if n > len(refs))
         if good:
@@ -587,7 +679,8 @@ def plan_one(out: Path, key: str, doi: str, lib: list, cache: dict) -> dict:
     return {"key": key, "status": "confirmed", "refs": refs, "check": check,
             "by_page": by_page, "dropped": dropped, "style": style,
             "markers": seen, "held": sum(1 for r in refs if r.match),
-            "chars": extract_chars(raw), "doi": doi}
+            "bib_skipped": hidden,
+            "chars": extract_chars(raw), "sha": extract_sha(raw), "doi": doi}
 
 
 def main() -> int:
@@ -601,6 +694,9 @@ def main() -> int:
                     help="write citations/; without it this is a dry run")
     ap.add_argument("--limit", type=int, default=0,
                     help="stop after this many records (for a first look)")
+    ap.add_argument("--refresh-stale", action="store_true",
+                    help="rewrite only the files whose extract moved under "
+                         "them. Dry like everything else: add --write to act")
     ap.add_argument("--stale", action="store_true",
                     help="report which citations/ files no longer match the "
                          "extract beneath them, and stop")
@@ -641,6 +737,29 @@ def main() -> int:
     if not lib:
         sys.exit(f"error: no library.bib under {args.out}")
     wanted = {e.key: e.doi for e in lib if e.doi}
+    if args.refresh_stale:
+        if args.only:
+            ap.error("--refresh-stale chooses the records itself; "
+                     "--only names them. Give one.")
+        stale, orphan, cosmetic, ok = stale_report(args.out)
+        print(f"offprint {__version__} citemap --refresh-stale: "
+              f"{ok} file(s) still match their extract")
+        if cosmetic:
+            # Their extract moved, but they carry no page map, so nothing in
+            # them is wrong -- only the recorded hash. Rewriting 215 files to
+            # correct a stamp would churn a directory that now syncs to
+            # Cameron's laptops, for no change a reader could use.
+            print(f"  {len(cosmetic)} author-year file(s) also moved and are "
+                  f"SKIPPED: no page map, so nothing in them is wrong. "
+                  f"Refresh the stamp with --only if you want it.")
+        if orphan:
+            print(f"  {len(orphan)} file(s) whose extract is gone, left alone: "
+                  + ", ".join(orphan[:6]) + ("..." if len(orphan) > 6 else ""))
+        if not stale:
+            print("\n  Nothing to rewrite.")
+            return 0
+        print(f"  {len(stale)} file(s) to rewrite\n")
+        wanted = {k: wanted[k] for k in stale if k in wanted}
     if args.only:
         unknown = [k for k in args.only if k not in wanted]
         if unknown:
@@ -654,7 +773,7 @@ def main() -> int:
     cache = load_cache()
     tally: dict[str, int] = {}
     rows: list[tuple] = []
-    written = refs_seen = held_seen = 0
+    written = refs_seen = held_seen = bib_seen = 0
     try:
         for i, (key, doi) in enumerate(sorted(wanted.items())):
             if args.limit and i >= args.limit:
@@ -679,8 +798,10 @@ def main() -> int:
                 continue
             refs_seen += len(plan["refs"])
             held_seen += plan["held"]
+            bib_seen += plan.get("bib_skipped", 0)
             text = render(key, doi, plan["refs"], plan["by_page"],
-                          plan["check"], plan["dropped"], plan["chars"])
+                          plan["check"], plan["dropped"], plan["chars"],
+                          plan.get("sha", ""))
             print(f"  {'+' if args.write else 'would write'} citations/{key}.md"
                   f"  {len(plan['refs'])} refs, {plan['held']} in the library, "
                   f"{plan['markers']} markers on {len(plan['by_page'])} pages "
@@ -712,6 +833,9 @@ def main() -> int:
     if planned:
         print(f"\n{refs_seen:,} references across them, {held_seen:,} already "
               f"records in this library.")
+        if bib_seen:
+            print(f"{bib_seen:,} number(s) left out of the page maps as "
+                  f"bibliography rather than citation.")
     if not args.write:
         print("\nDry run. Nothing was written. A paper listed above as anything "
               "other than a write is one whose mapping could not be confirmed, "

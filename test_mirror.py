@@ -4329,6 +4329,20 @@ def main():
     (sdir / "citations" / "Gone2004Paper.md").write_text(
         "---\ncitekey: Gone2004Paper\nverified: confirmed -- x\n"
         "extract-characters: 500\n---\n", encoding="utf-8")
+    # A character count collides. An OCR correction that swaps characters
+    # without changing the length moves the page markers and leaves the count
+    # identical -- a faithful index over changed source, which is the exact
+    # failure the check exists to catch.
+    _a = "---\ncitekey: X\ncharacters: 9\n---\n\nthe body here"
+    _b = "---\ncitekey: X\ncharacters: 9\n---\n\nteh body here"
+    check(len(_a) == len(_b) and cmap.extract_sha(_a) != cmap.extract_sha(_b),
+          "a same-length edit changes the hash, where a count could not see it")
+    _c = "---\ncitekey: X\ntitle: corrected\ncharacters: 9\n---\n\nthe body here"
+    check(cmap.extract_sha(_a) == cmap.extract_sha(_c),
+          "but a frontmatter-only rewrite does not, since no page marker moved "
+          "and marking 1,048 files stale for that teaches the reader to ignore "
+          "the report")
+
     st, orph, cos, okn = cmap.stale_report(sdir)
     check(okn == 1 and st == ["Moved2002Paper"],
           f"a page map built on a different extract is reported stale "
@@ -4339,9 +4353,57 @@ def main():
     check(orph == ["Gone2004Paper"],
           f"and a file whose extract is gone is named, not deleted ({orph})")
 
+    # Files written before the hash existed stay checkable by their count --
+    # weakly, but a weak check that names the file beats no check at all.
+    hdir = tmp / "hashmirror"
+    (hdir / "text").mkdir(parents=True, exist_ok=True)
+    (hdir / "citations").mkdir(parents=True, exist_ok=True)
+    _body = "\n\nbody text that will move"
+    _ext = f"---\ncitekey: Hash2005Paper\ncharacters: 9\n---{_body}"
+    (hdir / "text" / "Hash2005Paper.md").write_text(_ext, encoding="utf-8")
+    (hdir / "citations" / "Hash2005Paper.md").write_text(
+        f"---\ncitekey: Hash2005Paper\nverified: confirmed -- x\n"
+        f"extract-sha: {cmap.extract_sha(_ext)}\nextract-characters: 9\n---\n",
+        encoding="utf-8")
+    st2, _, _, ok2 = cmap.stale_report(hdir)
+    check(ok2 == 1 and not st2,
+          f"a hash that still matches reads as in step ({ok2}, {st2})")
+    (hdir / "text" / "Hash2005Paper.md").write_text(
+        _ext.replace("body text", "bodr text"), encoding="utf-8")
+    st3, _, _, ok3 = cmap.stale_report(hdir)
+    check(st3 == ["Hash2005Paper"] and ok3 == 0,
+          f"and the hash catches a change the count agrees with ({st3})")
+
     pages = cmap.split_pages(extract)
-    check([p for p, _ in pages] == [1, 2],
-          f"the extract's own page markers delimit the pages ({pages and [p for p,_ in pages]})")
+    check([p for p, _t, _o in pages] == [1, 2],
+          f"the extract's own page markers delimit the pages "
+          f"({[p for p, _t, _o in pages]})")
+    check(all(extract[o:o + 8] == tx[:8] for _p, tx, o in pages if tx[:8]),
+          "and each page carries its offset in the body, which is what lets a "
+          "bibliography be cut out of a page it shares with prose")
+
+    # The bibliography's own numbering is not a set of citations. A reference
+    # page carries no claims, so mapping it says a paper's last pages are its
+    # most densely cited, which is backwards.
+    bib_extract = (
+        "<!-- p. 1 -->\n\nA claim [1] and another [2].\n\n"
+        "<!-- p. 2 -->\n\nMore prose citing [3].\n\nReferences\n\n"
+        + "\n".join(f"{i}. {n}, X. Y. A title. J. Testing 1990, 1, 1."
+                     for i, n in enumerate(NAMES, 1)))
+    vb = cmap.verify_ordinal(bib_extract, refs_true)
+    check(vb["verdict"] == "confirmed" and vb["entry_at"],
+          f"verification records WHERE each entry it confirmed sits ({vb['verdict']}, "
+          f"{len(vb.get('entry_at') or [])} offsets)")
+    first_entry = min(vb["entry_at"])
+    page2_start = bib_extract.index("More prose")
+    check(first_entry > page2_start,
+          "and those offsets land in the reference list, not the prose")
+    marks_p2 = [n for pos, n in cmap.markers_with_pos(
+        bib_extract[page2_start:], "bracket")
+        if pos < first_entry - page2_start]
+    check(marks_p2 == [3],
+          f"so a page holding prose AND the start of the bibliography keeps "
+          f"only the prose markers ({marks_p2})")
 
     out = cmap.render("Test2001Paper", "10.1/x", refs_true,
                       [(1, [1, 2]), (2, [4])], v, [99], 12345)
