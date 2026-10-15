@@ -117,6 +117,26 @@ NOT_A_MARKER = re.compile(
 
 STYLES = {"bracket": BRACKET, "paren": PAREN, "super": SUPER}
 
+# "(Rizzuto et al., 1998)". A paper citing this way has no marker N, so
+# "marker N means reference N" is not a claim that can hold or fail -- it does
+# not apply, and saying `failed` about it asserts something untrue.
+AUTHOR_YEAR = re.compile(
+    r"\([^()]{0,80}?[A-Za-z]{3,}[^()]{0,40}?(?:19|20)\d{2}[a-z]?\)")
+
+
+def cites_by_name(prose: str) -> bool:
+    """Does this paper cite by author and year rather than by number?
+
+    Decided from the extract BEFORE any scoring, because the scorer cannot
+    tell "the mapping is wrong" from "there is no mapping". `library` found
+    three Cell Press papers of one citation style drawing three different
+    verdicts on 2026-10-15 -- two `failed`, one `no-signal` -- none of which
+    was true of any of them.
+    """
+    named = len(AUTHOR_YEAR.findall(prose))
+    numeric = max(len(rx.findall(prose)) for rx in STYLES.values())
+    return named >= 8 and named > numeric
+
 CACHE_VERSION = 1
 MIN_TESTED = 5            # fewer comparisons than this cannot distinguish anything
 CONFIRM_AT = 0.80         # agreement required of the true mapping
@@ -240,18 +260,28 @@ def markers_in(text: str, style: str) -> list[int]:
     return found
 
 
-def surname(author: str) -> str:
-    """The family name out of Crossref's `author`, which is not a fixed shape.
+NAME_WORD = re.compile(r"[A-Z][A-Za-z'\u2019-]*[a-z]{3}[A-Za-z'\u2019-]*")
 
-    Crossref deposits "Brader M. L." where the printed list reads
-    "Brader, M. L.", so comparing the whole field never matches and scores a
-    page that plainly holds the right name as a miss. That cost a measurement
-    on 2026-10-15 before this was found: papers whose deposit carries initials
-    were counted as "no signal" when the evidence was sitting in the window.
-    Some deposits carry a bare family name, so both shapes have to work.
+
+def surname(author: str) -> str:
+    """A name word out of Crossref's `author`, which has no fixed shape.
+
+    Three shapes turned up in one day, each costing a measurement before it was
+    found: "Brader M. L." (trailing initials) where the extract reads
+    "Brader, M. L."; "Blundell" bare; and Nature's "CD Rizzuto", with the
+    initials in FRONT. The first version stripped trailing initials only, so
+    every Nature deposit scored zero against entries that were sitting right
+    there -- `Shaik2019Structural`, 78 well-formed entries, reported no-signal.
+
+    Stripping initials by position is what kept being wrong, because position
+    is the thing that varies. So this does not strip at all: it picks the
+    longest token that LOOKS like a name word -- a capital followed by real
+    lowercase letters -- which is shape-independent and gets all three right.
+    "van der Waals" yields "Waals" rather than the whole name, and that is
+    fine: this feeds a whole-word search, not a bibliography.
     """
-    s = re.sub(r"\s+(?:[A-Z]\.?\s*)+$", "", (author or "").strip())
-    return s.strip(" ,.")
+    words = NAME_WORD.findall(author or "")
+    return max(words, key=len) if words else ""
 
 
 def names_match(sur: str, window: str) -> bool:
@@ -375,9 +405,13 @@ def render(key: str, doi: str, refs: list, by_page: list, check: dict,
         f"references: {len(refs)}",
         f"in-library: {len(held)}",
         f"verified: {check['verdict']} -- {check['why']}",
-        f"controls: true {rates.get('true', 0):.2f} / shifted-up "
-        f"{rates.get('up', 0):.2f} / shifted-down {rates.get('down', 0):.2f} / "
-        f"random {rates.get('rand', 0):.2f}",
+        # Only where a score was actually taken. Printing "controls: 0.00"
+        # for a paper nothing was scored on states a result that does not
+        # exist, which is the failure this whole file is built to avoid.
+        (f"controls: true {rates.get('true', 0):.2f} / shifted-up "
+         f"{rates.get('up', 0):.2f} / shifted-down {rates.get('down', 0):.2f} "
+         f"/ random {rates.get('rand', 0):.2f}" if rates
+         else "controls: not scored -- no mapping was claimed"),
         f"extract-characters: {chars}",
         f"written-by: offprint {__version__}",
         "---",
@@ -389,12 +423,30 @@ def render(key: str, doi: str, refs: list, by_page: list, check: dict,
         "claims rest on a citation and what the citation is; it does not say "
         "what either paper found. Re-read the extract before quoting.*",
         "",
-        "*The marker-to-reference mapping was verified against this extract's "
-        "own numbered entries before the file was written. A paper whose "
-        "mapping could not be confirmed has no file at all, so the presence of "
-        "this one is itself the check having passed.*",
-        "",
     ]
+    if check["verdict"] != "not-applicable":
+        # Untrue of an author-year file, which claims no mapping and so had
+        # none to verify. A standing sentence that is false on some of the
+        # files it is printed into is worse than no sentence.
+        lines += [
+            "*The marker-to-reference mapping was verified against this "
+            "extract's own numbered entries before the file was written. A "
+            "paper whose mapping could not be confirmed has no file at all, "
+            "so the presence of this one is itself the check having passed.*",
+            "",
+        ]
+
+    if check["verdict"] == "not-applicable":
+        lines += [
+            "*This paper cites by author and year, so there is no numbered "
+            "marker to map and none is claimed. What follows is the "
+            "publisher's deposited reference list resolved to our citation "
+            "keys: a fact about the DOI and a match against `library.bib`, "
+            "with nothing inferred and so nothing to verify. There is no "
+            "page map here, which is a property of the paper and not a "
+            "failure.*",
+            "",
+        ]
 
     if by_page:
         lines += ["## Markers by page", "",
@@ -460,13 +512,29 @@ def plan_one(out: Path, key: str, doi: str, lib: list, cache: dict) -> dict:
         return {"key": key, "status": "no-deposited-list",
                 "why": note or "crossref holds no reference list for this DOI"}
 
+    prose = PAGE_MARK.sub(" ", body)
+    if cites_by_name(prose):
+        # Nothing is inferred for these: the deposited list is a fact about the
+        # DOI and the citekeys come from `refs.py`'s matching. There is no
+        # marker mapping, so there is nothing for a verification to check, and
+        # the file says so rather than implying a map it does not carry.
+        match_refs(refs, lib)
+        check = {"verdict": "not-applicable", "rates": {},
+                 "why": "cites by author and year, so there is no marker N to "
+                        "map and none is claimed"}
+        return {"key": key, "status": "not-applicable", "refs": refs,
+                "check": check, "by_page": [], "dropped": [], "style": "name",
+                "markers": 0, "held": sum(1 for r in refs if r.match),
+                "chars": extract_chars(raw), "doi": doi,
+                "why": check["why"]}
+
     check = verify_ordinal(body, refs)
     if check["verdict"] != "confirmed":
         return {"key": key, "status": check["verdict"], "why": check["why"],
                 "refs": len(refs), "check": check}
 
     match_refs(refs, lib)
-    style = detect_style(PAGE_MARK.sub(" ", body))
+    style = detect_style(prose)
     by_page, dropped, seen = [], [], 0
     for page, text in split_pages(body):
         nums = sorted({n for n in markers_in(text, style)})
@@ -492,6 +560,11 @@ def main() -> int:
                     help="write citations/; without it this is a dry run")
     ap.add_argument("--limit", type=int, default=0,
                     help="stop after this many records (for a first look)")
+    ap.add_argument("--report", type=Path, metavar="PATH",
+                    help="write a TSV naming EVERY record and its verdict. "
+                         "Without it the console names only the refusals that "
+                         "might be mistakes, so most of a pass cannot be "
+                         "audited without running it again")
     ap.add_argument("--version", action="version",
                     version=f"offprint {__version__}")
     args = ap.parse_args()
@@ -512,6 +585,7 @@ def main() -> int:
 
     cache = load_cache()
     tally: dict[str, int] = {}
+    rows: list[tuple] = []
     written = refs_seen = held_seen = 0
     try:
         for i, (key, doi) in enumerate(sorted(wanted.items())):
@@ -519,12 +593,17 @@ def main() -> int:
                 break
             plan = plan_one(args.out, key, doi, lib, cache)
             tally[plan["status"]] = tally.get(plan["status"], 0) + 1
+            got = plan.get("refs")
+            rows.append((key, plan["status"],
+                         len(got) if isinstance(got, list) else (got or 0),
+                         plan.get("held", 0), plan.get("markers", 0),
+                         plan.get("why", "")))
             # Saved as we go. A corpus pass is thousands of requests and the
             # one that gets interrupted should not throw away what it already
             # asked for -- which is exactly what happened while building this.
             if i and i % 50 == 0:
                 save_cache(cache)
-            if plan["status"] != "confirmed":
+            if plan["status"] not in ("confirmed", "not-applicable"):
                 if args.only or plan["status"] in ("offset", "failed"):
                     print(f"  - {key}: {plan['status']}"
                           + (f" -- {plan['why']}" if plan.get("why") else ""),
@@ -545,13 +624,24 @@ def main() -> int:
                 written += 1
     finally:
         save_cache(cache)
+        if args.report:
+            args.report.parent.mkdir(parents=True, exist_ok=True)
+            args.report.write_text(
+                "citekey\tverdict\treferences\tin_library\tmarkers\twhy\n"
+                + "".join("\t".join(str(c) for c in r) + "\n" for r in rows),
+                encoding="utf-8")
+            print(f"\nEvery record and verdict: {args.report}")
 
+    WRITES = ("confirmed", "not-applicable")
+    planned = sum(tally.get(s, 0) for s in WRITES)
     print(f"\n{'written' if args.write else 'would write'}: "
-          f"{written if args.write else tally.get('confirmed', 0)}")
+          f"{written if args.write else planned}"
+          + (f"  ({tally.get('not-applicable', 0)} of them author-year, "
+             "reference list only)" if tally.get("not-applicable") else ""))
     for status, n in sorted(tally.items(), key=lambda kv: -kv[1]):
-        if status != "confirmed":
+        if status not in WRITES:
             print(f"  {status}: {n}")
-    if tally.get("confirmed"):
+    if planned:
         print(f"\n{refs_seen:,} references across them, {held_seen:,} already "
               f"records in this library.")
     if not args.write:

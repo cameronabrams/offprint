@@ -4220,8 +4220,16 @@ def main():
     check(cmap.surname("Goldman J.") == "Goldman", "one initial too")
     check(cmap.surname("Blundell") == "Blundell",
           "and a bare family name is left alone, since deposits carry both shapes")
-    check(cmap.surname("van der Waals") == "van der Waals",
-          "a multi-word surname is not truncated to its first token")
+    check(cmap.surname("CD Rizzuto") == "Rizzuto",
+          "Nature puts the initials IN FRONT, and that shape must work too -- "
+          "stripping by position is what kept being wrong")
+    check(cmap.surname("SC Harrison") == "Harrison", "whatever the spacing")
+    check(cmap.surname("van der Waals") == "Waals",
+          "a multi-word name yields its longest name word, which is enough for "
+          "a whole-word search and is not a bibliography entry")
+    check(cmap.surname("Li") == "",
+          "and a name too short to be evidence yields nothing, so it is never "
+          "matched against a window")
     check(cmap.names_match("Brader", "Brader, M. L. (1997) Zinc coordination"),
           "the surname is then found in the extract's own entry")
     check(not cmap.names_match("Li", "Ligand binding in the insulin hexamer"),
@@ -4282,6 +4290,26 @@ def main():
 
     check(cmap.verify_ordinal(extract, refs_true[:3])["verdict"] == "unverifiable",
           "too few deposited surnames to compare is its own verdict")
+
+    # Three Cell Press papers of one citation style drew three different
+    # verdicts, none of which was true of any of them. "failed" asserts the
+    # mapping does not hold; for these there is no mapping to hold.
+    named = " ".join(f"as shown previously (Rizzuto et al., {1990+i}) and "
+                     f"again (Smith and Jones, {1995+i})." for i in range(8))
+    check(cmap.cites_by_name(named),
+          "a paper citing by author and year is recognized before any scoring")
+    check(not cmap.cites_by_name(bracket_prose),
+          "and a numbered paper is not")
+    na = {"verdict": "not-applicable", "rates": {},
+          "why": "cites by author and year"}
+    out_na = cmap.render("Name2001Year", "10.1/y", refs_true, [], na, [], 999)
+    check("Markers by page" not in out_na,
+          "an author-year paper's file carries no page map")
+    check("not a failure" in out_na and "nothing inferred" in out_na,
+          "and says the absence is a property of the paper, not a refusal")
+    check('<a id="ref-1">' in out_na,
+          "while still resolving the reference list, which is a fact about the "
+          "DOI rather than an inference")
 
     pages = cmap.split_pages(extract)
     check([p for p, _ in pages] == [1, 2],

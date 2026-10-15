@@ -66,6 +66,7 @@ line is exempt: naming it is approving it.
 --only CITEKEY [...]   just these records
 --write                write citations/; without it this is a dry run
 --limit N              stop after N records
+--report PATH          TSV naming every record and its verdict
 ```
 
 Writes `citations/<citekey>.md`: the paper's reference list taken from
@@ -77,6 +78,10 @@ be traced to what supports it.
 paper before anything is written**, against that extract's own numbered entries,
 with shifted and random controls. A paper that does not pass gets no file. The
 presence of a `citations/` file is itself the check having passed.
+
+A paper that cites by **author and year** has no marker to map, so it gets a
+file with the resolved reference list and no page map, and the file says that
+is a property of the paper rather than a refusal.
 
 It never writes into `text/`. The extract stays byte-identical, so the quotes
 stored in `findings/` keep verifying.

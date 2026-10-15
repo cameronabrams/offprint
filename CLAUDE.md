@@ -449,12 +449,16 @@ Three things learned building it, each of which had already cost a wrong number:
   reference list only about a third of the time, the rest being section
   numbering, table rows and figure captions. Crossref's deposited list skips
   the entire question, and `refs.py` already fetched and matched it.
-- **A deposited author is not shaped like a printed one.** Crossref gives
-  `Brader M. L.` where the extract reads `Brader, M. L.`, so a substring test
-  scores a page that plainly holds the right name as a miss. That silently
-  understated a 400-paper measurement until a single paper was read by hand.
-  `surname()` exists for this, and matches whole-word so `Li` does not match
-  `Ligand`.
+- **A deposited author is not shaped like a printed one, and the shape
+  varies by publisher.** Crossref gives `Brader M. L.` where the extract reads
+  `Brader, M. L.`; Nature gives `CD Rizzuto`, initials in front. The first fix
+  stripped *trailing* initials, which is stripping by position, and position
+  is the thing that varies — so every Nature deposit still scored zero and
+  `Shaik2019Structural` was reported `no-signal` with 78 well-formed entries
+  on the page. `surname()` now picks the longest token that looks like a name
+  word, which is shape-independent, and matches whole-word so `Li` does not
+  match `Ligand`. **Two measurements were understated by this before it was
+  found, both times by reading one paper by hand.**
 - **Bound the contamination; do not loosen the threshold.** A fixed-width
   window after entry *N* reaches into entry *N+1* on a terse reference list,
   so the shifted control scores as well as the true mapping and a correct
@@ -468,6 +472,18 @@ written into the verbatim body could never be checked against the paper again.
 It would also break the quotes stored in `findings/`, which verify by
 substring after whitespace normalization and know nothing of markdown. Derived
 material lives beside the extract, the way `annotations/` and `findings/` do.
+
+**A verdict must not assert something untrue of the paper.** A paper that
+cites by author and year has no marker *N*, so `marker N -> reference N` is
+not a claim that can hold or fail — it does not apply, and reporting `failed`
+says the mapping was tested and found wrong. `cites_by_name()` decides this
+from the extract *before* any scoring, and those papers get a file with the
+resolved reference list and no page map, because nothing in it is inferred
+and so nothing needed verifying. The file says that in place of the standing
+"this was verified" paragraph, which would otherwise be false on every one of
+them — a sentence that is untrue on some of the files it is printed into is
+worse than no sentence. `library` found three Cell Press papers of one
+citation style drawing three different verdicts, none of them true.
 
 A `citations/` file records the extract's character count. A re-extraction
 changes it, which is how a stale file is spotted; nothing here repairs one,

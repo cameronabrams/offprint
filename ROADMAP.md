@@ -2984,7 +2984,42 @@ that. The contrast-based alternative is written into `citemap.py` beside the
 constant rather than adopted, because 500 records is not enough to set a
 threshold on.
 
-*Not yet run against the whole library; `library` owns that.*
+### What `library` found on first use — FIXED 0.34.0
+
+A clean 250-record pass on 0.33.1 (79 write / 79 unverifiable / 41 no-signal /
+27 failed / 21 no-list / 2 no-extract / 1 offset), with two misclassifications.
+Report: `~/.local/state/fleet/drops/library-citemap-0331-report-20261015.md`.
+
+**`Shaik2019Structural`: `no-signal` with 78 well-formed entries on the page.**
+Their guess was the reference list being split across non-adjacent extract
+pages. It was not — it was `surname()` a third time. Nature deposits
+`CD Rizzuto`, initials in FRONT, and the fix shipped that morning stripped
+*trailing* initials. Stripping by position is what kept being wrong, because
+position is what varies between publishers. `surname()` now takes the longest
+token that looks like a name word, which is shape-independent. The paper now
+confirms at **0.98 on 48 entries**. Two separate measurements in this file
+were understated by this bug, each found by reading one paper by hand.
+
+**Author-year papers reported `failed`, which asserts something untrue.**
+`failed` means the mapping was tested and does not hold. A Cell Press paper
+has no marker *N* at all, so the mapping does not *apply* — and `library`
+found three papers of one journal family and one citation style drawing three
+different verdicts, none true of any of them. `cites_by_name()` now decides
+this from the extract before any scoring, and those papers get a file holding
+the resolved reference list with no page map: nothing in it is inferred, so
+nothing needed verifying. Of the five structural-virology papers `library`
+knows best, all five refused on 0.33.1 and all five produce a file now.
+
+Writing that file exposed two sentences of my own that were false on it — the
+standing "the mapping was verified" paragraph, and a `controls: 0.00` line
+reporting a score never taken. Both are now conditional. A sentence that is
+untrue on some of the files it is printed into is worse than no sentence.
+
+**`--report PATH`** writes a TSV naming every record and its verdict.
+`library` asked for it because the console names only the refusals that might
+be mistakes, so 143 of 250 records could not be audited without a re-run.
+
+*Still not run with `--write`; that is Cameron's call, and `library` owns it.*
 
 ## 33. `--yes` approved a list and acted on a directory — FIXED 0.32.0
 
