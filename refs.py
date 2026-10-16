@@ -218,6 +218,49 @@ def reference_head(lines: list[str], floor: int) -> int | None:
 AUTHOR_YEAR = re.compile(r"^[A-Z][\w'’\-]+(?:,| et al\.| and )")
 
 
+# A parse can find a numbered run that is not a reference list at all. Measured
+# 2026-10-16 by `library` against the papers: 4 of 20 parses invented a list
+# where the paper had none -- `Levine1997System` read PAGE NUMBERS with body
+# text attached (699, 700, 702), `Nicholson2001Diffusion` claimed 859 entries,
+# `Jaynes1957Information` cites in footnotes and has no list, and
+# `Abrams2016Compositions` is a patent whose "entries" are numbered paragraphs.
+#
+# The discriminator is the BOTTOM of the length distribution, not the middle:
+# a real list has short entries in it, a run of body paragraphs does not. The
+# median alone rejects `Rubin1965Random`, which is a sound partial recovery
+# whose six entries include one discursive footnote that Physical Review of
+# 1965 really did number among its references.
+#
+#   p25 entry length   sound 47-397   false 524-5619
+#   highest label / n  sound 1.0-3.0  false 3.2-144
+#
+# Thresholds sit in those gaps. They are tuned on ten graded cases, four of
+# them bad, which is a small n -- so `list_quality` returns its numbers and the
+# caller reports them rather than only acting on them.
+MAX_Q1_LEN = 450        # above this the "entries" are paragraphs
+MAX_LABEL_RATIO = 8.0   # highest entry number against how many were recovered
+
+
+def list_quality(refs: list[Ref]) -> tuple[bool, str]:
+    """Does this parse look like a reference list? `(ok, why_not)`."""
+    if not refs:
+        return False, "nothing parsed"
+    lens = sorted(len(r.raw) for r in refs)
+    q1 = lens[len(lens) // 4]
+    labels = [int(r.label) for r in refs if r.label.isdigit()]
+    top = max(labels) if labels else 0
+    ratio = top / len(refs) if refs else 0.0
+    if q1 > MAX_Q1_LEN:
+        return False, (f"the entries read as body paragraphs, not references "
+                       f"(shortest quarter runs to {q1} characters; a real "
+                       f"list's is under {MAX_Q1_LEN})")
+    if ratio > MAX_LABEL_RATIO:
+        return False, (f"the numbering is not a reference list's: highest "
+                       f"entry number {top} against {len(refs)} recovered, so "
+                       f"these are most likely page or paragraph numbers")
+    return True, f"q1 {q1} chars, highest label {top} of {len(refs)}"
+
+
 def span(nums: list[int]) -> str:
     """Render [1,2,3,7] as "1-3, 7"."""
     out, start, prev = [], nums[0], nums[0]
@@ -287,6 +330,14 @@ def text_refs(out: Path, key: str) -> tuple[list[Ref], str]:
             stop = starts[n + 1] if n + 1 < len(starts) else len(lines)
             m = pat.match(lines[start])
             body = " ".join((m.group(2) + " " + " ".join(lines[start + 1:stop])).split())
+            # Line-joining puts the NEXT entry's number on the end of this one
+            # ("... Nat. Struct. Biol. 2, 1083-1094. 17."). Stripped only when
+            # it is exactly the label we are about to use, so a real trailing
+            # page number survives.
+            if n + 1 < len(starts):
+                nxt = pat.match(lines[starts[n + 1]])
+                if nxt:
+                    body = re.sub(rf"[\s.]*\b{nxt.group(1)}\.?$", "", body).strip()
             if len(body) < 12:
                 # A bare number with no text: the two-column reference list came
                 # apart in extraction, numbers in one column and text in another.

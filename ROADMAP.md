@@ -3217,6 +3217,49 @@ turned out false on one kind of file the directory holds — after the
 "mapping was verified" paragraph and the `controls: 0.00` line. A sentence
 printed on every file has to be true of every file.
 
+### The parse could invent a list outright — FIXED 0.39.0
+
+`library` graded 20 parses against the papers: 16 sound, **4 inventing a
+reference list where the paper has none.** `Levine1997System` read PAGE
+NUMBERS with body text attached (699, 700, 702); `Nicholson2001Diffusion`
+claimed 859 entries; `Jaynes1957Information` cites in footnotes and has no
+list; `Abrams2016Compositions` is a patent whose entries are numbered
+paragraphs.
+
+**The worst part was a feature I had added for honesty.** "20 entries did not
+survive extraction (1-17, 25, 47-48)" makes a fabrication read as *more*
+rigorous than a plain list — it asserts a 44-entry bibliography that never
+existed, in the one sentence a reader would most trust. This is the only
+failure in the tool that is invisible from inside the file: it looks like a
+reference list and accounts for its own gaps. So it is **rejected, not
+labeled** — a label cannot help a reader who has no way to see the thing is
+wrong.
+
+**The discriminator is the bottom of the length distribution, not the
+middle.** A real list has short entries in it; a run of body paragraphs does
+not. The median rejects `Rubin1965Random`, which `library` named in advance as
+a sound partial recovery — six entries, one a discursive footnote that
+Physical Review of 1965 really did number among its references.
+
+| | sound (6) | false (4) |
+|---|---|---|
+| p25 entry length | 47–397 | 524–5619 |
+| highest label ÷ entries recovered | 1.0–3.0 | 3.2–144 |
+
+`list_quality` refuses above 450 characters at the first quartile, or a
+highest entry number more than 8× the count. Each threshold sits in a gap, and
+each decides cases the other cannot: p25 catches the patent and the footnotes,
+the ratio catches page numbering outright. All ten graded cases now sort
+correctly, including both that `library` warned against over-rejecting.
+
+**Tuned on ten cases, four of them bad, which is a small n.** `list_quality`
+returns its measurements and the refusal prints them, so a wrong rejection is
+visible and auditable rather than silent.
+
+Also fixed: entries carried the next entry's number glued to the end
+(`... Nat. Struct. Biol. 2, 1083-1094. 17.`). Stripped only when it is exactly
+the label about to be used, so a real trailing page number survives.
+
 ## 33. `--yes` approved a list and acted on a directory — FIXED 0.32.0
 
 On 2026-10-14 `library` dry-ran `zotero_inbox.py` over `<out>/inbox/`, read

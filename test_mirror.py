@@ -4424,6 +4424,57 @@ def main():
           and "derived, not publisher" not in _dep,
           "while a deposited list still says it is one")
 
+    # A numbered run in the body is not a reference list. This is the one
+    # failure in citemap that is INVISIBLE from inside the file -- it looks
+    # like a reference list and reports how many entries it lost, so the
+    # "did not survive extraction" line makes a fabrication read as the more
+    # rigorous of the two. Rejected, not labeled.
+    import refs as _R
+    def _mk(bodies):
+        return [_R.Ref(label=str(i), raw=b) for i, b in enumerate(bodies, 1)]
+    real = _mk(["Alper, H. E., and T. R. Stouch. 1995. Orientation and "
+                "diffusion of a drug analogue in biomembranes. J Phys Chem "
+                "99:5724-5731." for _ in range(12)])
+    ok_, why_ = _R.list_quality(real)
+    check(ok_, f"a list of reference-shaped entries passes ({why_})")
+
+    para = _mk(["It is understood that the amount of compound dosed per day "
+                "may be administered in any suitable manner. " * 12
+                for _ in range(11)])
+    ok_p, why_p = _R.list_quality(para)
+    check(not ok_p and "body paragraphs" in why_p,
+          f"numbered PARAGRAPHS are refused -- a patent is not a bibliography "
+          f"({why_p[:50]})")
+
+    # Rubin1965Random: six entries, one a discursive footnote that Physical
+    # Review of 1965 really did number among its references. The median says
+    # paragraph; the bottom quarter says list. Over-rejecting this one was the
+    # specific risk `library` named.
+    mixed = _mk(["Whittaker and Watson, Modern Analysis (1927), p. 133.",
+                 "Feller, Probability Theory (1950), p. 254.",
+                 "E. T. Jaynes, Phys. Rev. 106, 620 (1957).",
+                 "A discursive footnote of the kind this journal numbers. " * 60,
+                 "A second long discursive footnote, equally numbered. " * 60,
+                 "M. Rubin, J. Math. Phys. 6, 1055 (1965)."])
+    ok_m, why_m = _R.list_quality(mixed)
+    check(ok_m, f"a real list is kept even when half its entries are long, "
+                f"because a real list has short ones in it ({why_m})")
+
+    pages_run = _mk([f"HOWARD A. LEVINE AND BRIAN D. SLEEMAN where p is again "
+                     f"the mean value of the quantity under study. " * 10
+                     for _ in range(27)])
+    for i, r in enumerate(pages_run):
+        r.label = str(699 + i)
+    ok_l, why_l = _R.list_quality(pages_run)
+    check(not ok_l, f"and page numbers with prose attached are refused ({why_l[:46]})")
+    short_but_numbered = _mk(["A. Author, J. Testing 1, 1 (1990)." for _ in range(6)])
+    for i, r in enumerate(short_but_numbered):
+        r.label = str(100 + i * 150)
+    ok_n, why_n = _R.list_quality(short_but_numbered)
+    check(not ok_n and "numbering is not a reference list" in why_n,
+          f"an implausible highest entry number is refused on its own, even "
+          f"when the entries are short ({why_n[:48]})")
+
     pages = cmap.split_pages(extract)
     check([p for p, _t, _o in pages] == [1, 2],
           f"the extract's own page markers delimit the pages "

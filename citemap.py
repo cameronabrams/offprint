@@ -93,8 +93,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from mendeley_mirror import DEFAULT_OUT, __version__, save_json  # noqa: E402
-from refs import (Ref, crossref_refs, match_refs, read_library,  # noqa: E402
-                  text_refs)
+from refs import (Ref, crossref_refs, list_quality, match_refs,  # noqa: E402
+                  read_library, text_refs)
 
 PAGE_MARK = re.compile(r"<!-- p\. (\d+) -->")
 
@@ -716,6 +716,21 @@ def plan_one(out: Path, key: str, doi: str, lib: list, cache: dict) -> dict:
         # than Alper, and nothing in the file would have said so.
         refs, note = text_refs(out, key)
         source = "extract"
+        # A parse that found a numbered run which is not a reference list is
+        # the one failure in this tool that is INVISIBLE from inside the file:
+        # it looks like a reference list and even reports how many entries it
+        # lost, so the "did not survive extraction" line makes a fabrication
+        # read as more rigorous than a plain one. `library` graded 20 parses
+        # against the papers and found 4 of them inventing a list outright.
+        # Rejected here rather than labeled, because a label cannot help a
+        # reader who has no way to see the thing is wrong.
+        if refs:
+            good, quality = list_quality(refs)
+            if not good:
+                return {"key": key, "status": "not-a-list",
+                        "why": f"parsed {len(refs)} numbered items but "
+                               f"{quality}", "refs": len(refs)}
+            note = f"{note}; {quality}"
     if not refs:
         return {"key": key, "status": "no-list-anywhere",
                 "why": note or ("crossref holds no reference list for this DOI "
@@ -913,7 +928,8 @@ def main() -> int:
             if i and i % 50 == 0:
                 save_cache(cache)
             if plan["status"] not in ("confirmed",) + LIST_ONLY:
-                if args.only or plan["status"] in ("offset", "failed"):
+                if args.only or plan["status"] in ("offset", "failed",
+                                                   "not-a-list"):
                     print(f"  - {key}: {plan['status']}"
                           + (f" -- {plan['why']}" if plan.get("why") else ""),
                           flush=True)
