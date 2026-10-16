@@ -37,7 +37,7 @@ Usage:
 
 from __future__ import annotations
 
-__version__ = "0.45.0"
+__version__ = "0.45.1"
 """The tool's version, and the only place it is written down.
 
 It exists so a mirror can say what produced it. Extraction behavior has changed
@@ -54,6 +54,7 @@ Bump it in the same commit as the behavior it describes; nothing generates it.
 import argparse
 import base64
 import json
+from collections import Counter
 import os
 import re
 import socket
@@ -1191,32 +1192,71 @@ def alnum_share(text: str) -> float:
 # The rotation requirement is what makes this safe for a corpus that is not
 # all English: a German or French page scores low on these words too, but does
 # not turn into English under any shift.
-COMMON_WORDS = (" the ", " and ", " of ", " that ", " with ", " for ",
-                " this ", " are ", " was ", " from ", " have ", " which ")
+# Space-delimited words were the wrong test. The first version counted " the "
+# with its spaces, which works on a CLEANED page and not on the raw pdftotext
+# output this has to judge -- and the 2,809-extract sweep that "confirmed" it
+# read `text/*.md`, which is the already-repaired text. A page-level detector
+# validated against post-repair output cannot fail, which is the shape of
+# nearly every silent success in this repo.
+#
+# Substrings instead, and the verdict is a RATIO against the unrotated text
+# rather than an absolute rate, so it does not care about spacing at all.
+COMMON_BITS = ("the", "and", "tion", "ing", "of", "that", "with", "for",
+               "are", "was", "this", "ment", "ally")
 SHIFT_MIN_CHARS = 600
-SHIFT_RATE = 4.0        # common words per 1000 characters
+SHIFT_RATIO = 4.0       # best rotation must beat the text as it stands
+SHIFT_FLOOR = 12        # ... and clear this many hits outright
+# Measured on the live library: a DNA page runs 0.696, and every prose page
+# tried runs 0.37 -- including Morel's rotated one, since a rotation moves
+# which letters are common without changing how concentrated they are.
+SEQUENCE_TOP4 = 0.55
 
 
-def common_word_rate(text: str) -> float:
-    flat = " " + " ".join(text.lower().split()) + " "
-    if len(flat) < SHIFT_MIN_CHARS:
-        return SHIFT_RATE      # too short to judge; treat as fine
-    return sum(flat.count(w) for w in COMMON_WORDS) * 1000.0 / len(flat)
+def _bits(s: str) -> int:
+    low = s.lower()
+    return sum(low.count(w) for w in COMMON_BITS)
+
+
+def _rotate(s: str, k: int) -> str:
+    return "".join(
+        chr((ord(c) - 97 - k) % 26 + 97) if "a" <= c <= "z" else
+        chr((ord(c) - 65 - k) % 26 + 65) if "A" <= c <= "Z" else c for c in s)
 
 
 def shift_encoded(text: str) -> bool:
-    """True when the page is ordinary prose with every letter rotated."""
-    if len(text) < SHIFT_MIN_CHARS or common_word_rate(text) >= SHIFT_RATE:
+    """True when the page is ordinary prose with every letter rotated.
+
+    `text/Morel2001Proliferation.md` carries "HOLXP-RXUQDORI7KHRUHWLFDO" for
+    "...Journal of Theoretical" -- a broken embedded font encoding. The page is
+    all letters, correctly spaced and the right length, so every test built on
+    character classes passes it.
+
+    The rotation requirement is what keeps a non-English corpus safe: a German
+    or French page scores low on these fragments too, and does not improve
+    under any shift.
+    """
+    if len(text) < SHIFT_MIN_CHARS:
         return False
     sample = text[:8000]
-    for k in range(1, 26):
-        rolled = "".join(
-            chr((ord(c) - 97 - k) % 26 + 97) if "a" <= c <= "z" else
-            chr((ord(c) - 65 - k) % 26 + 65) if "A" <= c <= "Z" else c
-            for c in sample)
-        if common_word_rate(rolled) >= SHIFT_RATE:
-            return True
-    return False
+    # Sequence data is not prose and must never be rotated into "prose".
+    # `Tournier2020Engineered-3` is a page of DNA -- GCCAACCCCTACGAGCGCGGC --
+    # and a four-letter alphabet rotates into English fragments by chance.
+    # English's six commonest letters carry about half its text; a nucleotide
+    # or peptide run is carried almost entirely by a handful.
+    letters = [c.lower() for c in sample if c.isalpha()]
+    if letters:
+        counts = sorted(Counter(letters).values(), reverse=True)
+        # Top FOUR, not six: `Tournier2020Engineered-3` is a plasmid page whose
+        # DNA carries 85% of its letters while prose carries the rest, so a
+        # six-letter test at 90% let it through and a rotation of ACGT scored
+        # 239 English fragments against the text's own 42. The test is
+        # rotation-invariant by construction -- English's four commonest
+        # letters carry about a third of it, shifted or not.
+        if sum(counts[:4]) >= SEQUENCE_TOP4 * len(letters):
+            return False
+    base = _bits(sample)
+    best = max(_bits(_rotate(sample, k)) for k in range(1, 26))
+    return best >= SHIFT_FLOOR and best >= SHIFT_RATIO * max(base, 1)
 
 
 def page_is_garbled(text: str) -> bool:

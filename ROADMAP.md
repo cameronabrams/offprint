@@ -3510,7 +3510,33 @@ and an attachment that yields no text is exactly what `--ocr` exists to
 re-read. The stronger reader gets reached by the rule already written down,
 rather than by a flag asserting the same thing.
 
-Swept over all 2,809 live extracts it fires on **exactly one**, the right one.
+**0.45.0 did not work, and the sweep that said it did could not have failed.**
+`library` called the functions on both paths: pymupdf's text was already
+caught by the control-character test, pdftotext returned shifted letters,
+`page_is_garbled` said False on *those*, so the page was REPAIRED rather than
+dropped and `--ocr` never met an empty attachment. The 2,809-extract sweep
+read `text/*.md` — the output of the repair step the detector controls. A
+page-level test validated against post-repair output is the same shape as
+grepping `library.bib` for `&amp;`.
+
+Three wrong guesses followed, each made without measuring. The word test
+counted `" the "` **with its spaces**, which works on a cleaned page and not
+on the raw text being judged. The sequence guard used the top six letters at
+90%; the DNA page sits at 77%. Then top four at 70%, estimated from a
+truncated letter count — the real figure is **0.696**, just under, so the
+guard silently never fired.
+
+Measured, the separation is clean: a DNA page runs **0.696**, every prose page
+tried runs **0.37**, Morel's rotated one included — a rotation changes which
+letters are common without changing how concentrated they are. The threshold
+sits at 0.55, the word test counts substrings, and the verdict is a ratio
+against the unrotated text so spacing cannot matter.
+
+Swept again it fires on **exactly one**, the right one, and
+`Tournier2020Engineered-3` — a plasmid page whose DNA rotates into 239
+English fragments against its own 42 — is excluded. *That sweep still proves
+only the absence of false positives. The end-to-end confirmation is
+`library`'s run, because the raw pdftotext output is not on disk here.*
 The rotation requirement is what makes that safe: a German or French page
 scores low on English common words too, and does not turn into English under
 any shift.

@@ -4583,16 +4583,41 @@ def main():
     # character classes: all letters, properly spaced, the right length.
     _plain = ("the structure of the protein was determined and the data were "
               "refined with the same method that was used for the other "
-              "proteins in this family which are known to bind ") * 4
+              "proteins in this family which are known to bind ") * 6
+    _rot = mm._rotate(_plain, -3)
     check(not mm.shift_encoded(_plain), "ordinary prose is not shift-encoded")
-    _rot = "".join(chr((ord(c) - 97 + 3) % 26 + 97) if "a" <= c <= "z" else c
-                   for c in _plain)
     check(mm.shift_encoded(_rot),
           "the same prose rotated by three is -- which no alnum-share test can "
           "see, since it is still all letters")
+    # The first version counted " the " WITH its spaces, which works on a
+    # cleaned page and not on the raw pdftotext output the repair step has to
+    # judge. `library` found the page being repaired rather than dropped, so
+    # --ocr never saw an empty attachment.
+    _nospace = _plain.replace(" ", "")
+    check(not mm.shift_encoded(_nospace)
+          and mm.shift_encoded(_rot.replace(" ", "")),
+          "and the verdict does not depend on spacing, which the raw text "
+          "being judged may not have")
     check(not mm.shift_encoded("".join(chr(33 + (i % 60)) for i in range(2000))),
-          "and punctuation noise is left to the alnum-share test, not claimed "
+          "punctuation noise is left to the alnum-share test, not claimed "
           "as a rotation")
+    check(not mm.shift_encoded("Der Aufbau des Proteins wurde bestimmt und "
+                               "die Daten wurden mit derselben Methode "
+                               "verfeinert welche " * 8),
+          "a German page scores low on English fragments too, and is saved by "
+          "the requirement that some ROTATION do better")
+    # Sequence data is not prose and must never be rotated into "prose". A
+    # four-letter alphabet produces English fragments under some shift by
+    # chance -- measured at 239 against the page's own 42.
+    _dna = "GCCAACCCCTACGAGCGCGGCCCCAACCCGACCGACGCCCTGCTCGAAGCCAGCAGCGGC" * 20
+    check(not mm.shift_encoded(_dna),
+          "a page of DNA is never called shift-encoded, however well it "
+          "rotates")
+    check(not mm.shift_encoded(_dna + _plain),
+          "nor is one where sequence carries most of the letters and prose "
+          "the rest, which is the real shape -- a plasmid map with a caption")
+    check(mm.shift_encoded(_rot + "ACGT" * 5),
+          "while a rotated page with a little sequence in it is still caught")
 
     # An entry's TEXT can be wrong, not only absent. Two-column extraction
     # interleaves the columns, so one parsed entry carries the end of one
