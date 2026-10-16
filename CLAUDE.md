@@ -356,7 +356,15 @@ Two implementation notes that exist because of real failures:
   rotations and asks whether the page becomes English; the rotation
   requirement is what keeps a German or French paper safe, since neither turns
   into English under any shift. Swept over the live library it fires on
-  exactly one extract in 2,809. **The PDF renders correctly**, so no fresh
+  exactly one extract in 2,809 — **and that sweep proves only the absence of
+  false positives.** `text/*.md` is the output of the repair step this
+  detector controls, so validating a page-level test against it cannot fail:
+  0.45.0 passed that sweep while leaving the record unfixed. The input that
+  decides the case is raw `pdftotext` output, which is not on disk here. For
+  the same reason the test must not depend on spacing — a cleaned page has it
+  and the raw text may not — and it excludes sequence data, since a
+  four-letter alphabet rotates into English fragments by chance.
+  **The PDF renders correctly**, so no fresh
   download fixes it and only rasterising and reading the pixels does — which
   is why it has to reach `--ocr`, and it does, because a page that stays
   garbled after the pdftotext retry is dropped and an attachment with no text
