@@ -4545,6 +4545,29 @@ def main():
     check(any(n == "@N#" for n, _ in _R.NUMBER_STYLES),
           "Physical Review's [21] OCR'd as @21# is a known numbering style")
 
+    # An entry's TEXT can be wrong, not only absent. Two-column extraction
+    # interleaves the columns, so one parsed entry carries the end of one
+    # reference and the start of another. No parser recovers that -- but the
+    # file can say which entries look that way.
+    check(_R.looks_glued("Anderson, J. Chem. Phys. 58 (1973) 4684. "
+                         "[ 3lC.H. Bennett, in: Algorithms for chemical computation"),
+          "an entry carrying another entry's label is flagged as glued")
+    check(not _R.looks_glued("Adams, P. R. (1981). Acetylcholine receptor "
+                             "kinetics. Journal of Membrane Biology 58, 161-174."),
+          "and an ordinary reference is not")
+    check(not _R.looks_glued("Kyle, B. G."),
+          "nor is a short fragment, which is a different defect")
+    _g = cmap.render("G2001Paper", "", refs_true, [],
+                     {"verdict": "parsed", "rates": {}, "why": "w"}, [], 1, "",
+                     "note", 3)
+    check("Two references run together is the extraction" in _g and "3 of these" in _g,
+          "a parsed file says how many of its entries look run together")
+    _g0 = cmap.render("G2001Paper", "", refs_true, [],
+                      {"verdict": "parsed", "rates": {}, "why": "w"}, [], 1, "",
+                      "note", 0)
+    check("a check, not a guarantee" in _g0,
+          "and when none do, says that is a check rather than a promise")
+
     pages = cmap.split_pages(extract)
     check([p for p, _t, _o in pages] == [1, 2],
           f"the extract's own page markers delimit the pages "

@@ -3424,6 +3424,50 @@ it with pdftotext; a shift-encoded one reads as ordinary letters and passes.
 `library` swept the library and it is the only one. Recorded here as an
 extraction defect, not fixed, because re-extraction is theirs to run.*
 
+### Where the parse stands, and why the rounds stop — 0.43.0
+
+`library`'s fifth sample, 60 unseen records: **86% sound, 12% real but with
+contaminated entry text, 1.8% fabricated.** Across five samples the
+fabrication rate ran **20% → 16% → 8% → 5.6% → 1.8%**.
+
+**They recommended stopping, and the reason is not fatigue.** The remaining
+12% is not a parser defect at all: the extract interleaves two columns, so
+the entry text is wrong before any of this code sees it.
+`Carter1989Constrained` parses
+`Anderson, J. Chem. Phys. 58 (1973) 4684. [ 3lC.H. Bennett, in: Algorithms
+for chemical computation` — the end of one reference and the start of
+another, in one entry. No parser recovers that. It needs column-aware
+re-extraction from the PDFs, which is a different and much larger project.
+Their clean-sample pool is also nearly exhausted (297 records left unsampled),
+and six rounds of their labels going stale inside a version is its own cost.
+
+### The change they asked for, and why it is counted rather than asserted
+
+The file warned about **incompleteness** — an entry that did not survive
+leaves no trace — and said nothing about an entry whose **text is wrong**. A
+reader meeting two references run together needs to know that is the
+extraction, not a strange reference.
+
+`looks_glued` finds the shape: another entry's label sitting inside this one,
+or two distinct years with two volume-page spans. The file then says *how
+many* of its entries look that way, and when none do, says that is **a check,
+not a guarantee**. A standing sentence everyone learns to skip is worth less
+than a number that changes per file — which is the same lesson as the
+"N entries did not survive" line, where a general reassurance made a
+fabrication read as rigorous.
+
+### Two known-remaining cases, not chased
+
+- `Letcher1972Thermodynamics` is refused at 62% outward. `library` read the
+  cause as OCR rendering `Soc.` as `Sot.`; the deeper cause is that its parse
+  fragments (`Kyle, B. G.` alone as an entry), so adding vocabulary does not
+  fix it. `Soc\.?` was a genuine gap in VENUE and is added anyway.
+- `Dellago1999Calculation` is the sample's one fabrication and clears every
+  guard at 89% naming an author.
+
+Both are left. One wrong rejection and one fabrication in sixty is the floor
+this approach reaches, and the next improvement is in extraction, not here.
+
 ## 33. `--yes` approved a list and acted on a directory — FIXED 0.32.0
 
 On 2026-10-14 `library` dry-ran `zotero_inbox.py` over `<out>/inbox/`, read

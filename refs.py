@@ -367,7 +367,7 @@ MAX_LABEL_RATIO = 8.0   # highest entry number against how many were recovered
 VENUE = re.compile(
     r"\b(?:"
     r"Journal|Jnl|Proc\.?|Proceedings|Rev\.?|Review|Trans\.?|Bull\.?|Ann\.?|"
-    r"Acta|Arch\.?|Chem|Phys|Biol|Biochem|Biophys|Med\.|Sci\.?|Nature|"
+    r"Acta|Arch\.?|Chem|Phys|Biol|Biochem|Biophys|Med\.|Sci\.?|Soc\.?|Nature|"
     r"Science|Cell|Lancet|Polym|Macromol|Mater|Eng|Lett|Commun|Res\.|"
     r"Press|Wiley|Springer|Elsevier|Academic|Pergamon|Plenum|Dekker|McGraw|"
     r"Blackwell|Oxford|Cambridge|Prentice|Publisher|Publishing|"
@@ -397,6 +397,25 @@ AUTHORISH = re.compile(
     r"|[A-Z]{3,},\s*[A-Z]\."                               # CRESTFIELD, A.
     r"|(?:[A-Z]\.\s*){1,3}[A-Z][a-z]{2,}")                 # M. S. Cohen
 MIN_AUTHORISH = 0.55
+
+
+def looks_glued(raw: str) -> bool:
+    """Does this entry hold more than one reference, run together?
+
+    Two-column extraction interleaves the columns, so a single parsed entry
+    can carry the tail of one reference and the head of another:
+    `Anderson, J. Chem. Phys. 58 (1973) 4684. [ 3lC.H. Bennett, in: ...`.
+    Nothing the parser does recovers that -- the text was wrong before it was
+    read -- but a file CAN say which of its entries look that way, so a reader
+    meeting one knows it is the extraction and not a strange reference.
+    """
+    if len(raw) < 80:
+        return False
+    years = len(set(re.findall(r"\b(?:1[89]\d{2}|20\d{2})\b", raw)))
+    spans = len(VOLPAGE.findall(raw))
+    # Another entry's label, sitting inside this one.
+    inner = re.search(r"\S\s*[\[(]\s*\d{1,3}\s*[\])l]\s*[A-Z]", raw[20:])
+    return bool(inner) or years >= 2 and spans >= 2
 
 
 def points_outward(raw: str) -> bool:

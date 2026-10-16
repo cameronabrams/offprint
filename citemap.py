@@ -93,8 +93,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from mendeley_mirror import DEFAULT_OUT, __version__, save_json  # noqa: E402
-from refs import (Ref, crossref_refs, list_quality, match_refs,  # noqa: E402
-                  read_library, text_refs)
+from refs import (Ref, crossref_refs, list_quality, looks_glued,  # noqa: E402
+                  match_refs, read_library, text_refs)
 
 PAGE_MARK = re.compile(r"<!-- p\. (\d+) -->")
 
@@ -437,7 +437,8 @@ def verify_ordinal(body: str, refs: list) -> dict:
 
 
 def render(key: str, doi: str, refs: list, by_page: list, check: dict,
-           dropped: list, chars: int, sha: str = "", parse_note: str = "") -> str:
+           dropped: list, chars: int, sha: str = "", parse_note: str = "",
+           glued: int = 0) -> str:
     """`citations/<key>.md`.
 
     The header says what this file is NOT, for the same reason `findings/` does:
@@ -541,6 +542,18 @@ def render(key: str, doi: str, refs: list, by_page: list, check: dict,
                 "entry that did not survive extraction leaves no trace here** "
                 "-- a short list and a short bibliography look identical. "
                 "Check it against the paper before relying on an absence.*",
+                "",
+                "*Its entry TEXT can also be wrong, not only absent. Where a "
+                "paper printed two columns, extraction interleaves them, so a "
+                "single entry below may carry the end of one reference and the "
+                "start of another. **Two references run together is the "
+                "extraction, not a strange reference.** No parser recovers "
+                "that -- the text was wrong before it was read.*",
+                "",
+                (f"*{glued} of these {len(refs)} entries look that way.*"
+                 if glued else
+                 "*No entry here shows that pattern, which is a check, not a "
+                 "guarantee.*"),
                 "",
                 f"*Parse: {parse_note}.*" if parse_note else "",
                 "",
@@ -766,7 +779,9 @@ def plan_one(out: Path, key: str, doi: str, lib: list, cache: dict) -> dict:
         return {"key": key, "status": "parsed", "refs": refs, "check": check,
                 "by_page": [], "dropped": [], "style": "list", "markers": 0,
                 "held": sum(1 for r in refs if r.match), "source": source,
-                "parse_note": note, "chars": extract_chars(raw),
+                "parse_note": note,
+                "glued": sum(1 for r in refs if looks_glued(r.raw)),
+                "chars": extract_chars(raw),
                 "sha": extract_sha(raw), "doi": doi, "why": check["why"]}
     if cites_by_name(prose):
         # Nothing is inferred for these: the deposited list is a fact about the
@@ -961,11 +976,14 @@ def main() -> int:
             bib_seen += plan.get("bib_skipped", 0)
             text = render(key, doi, plan["refs"], plan["by_page"],
                           plan["check"], plan["dropped"], plan["chars"],
-                          plan.get("sha", ""), plan.get("parse_note", ""))
+                          plan.get("sha", ""), plan.get("parse_note", ""),
+                          plan.get("glued", 0))
             print(f"  {'+' if args.write else 'would write'} citations/{key}.md"
                   f"  {len(plan['refs'])} refs, {plan['held']} in the library, "
-                  f"{plan['markers']} markers on {len(plan['by_page'])} pages "
-                  f"[{plan['check']['why']}]", flush=True)
+                  f"{plan['markers']} markers on {len(plan['by_page'])} pages"
+                  + (f", {plan['glued']} entries glued by extraction"
+                     if plan.get("glued") else "")
+                  + f"  [{plan['check']['why']}]", flush=True)
             if args.write:
                 dest = args.out / "citations" / f"{key}.md"
                 dest.parent.mkdir(parents=True, exist_ok=True)
