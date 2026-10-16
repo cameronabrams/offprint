@@ -4571,6 +4571,28 @@ def main():
 
     check(any(n == "@N#" for n, _ in _R.NUMBER_STYLES),
           "Physical Review's [21] OCR'd as @21# is a known numbering style")
+    # AIP/APS footnote numbering: the number runs into the initials and there
+    # is no heading anywhere in the paper.
+    _nin = dict(_R.NUMBER_STYLES)["NInit"]
+    check(_nin.match("9D. S. McKenzie, J. Phys. A 6, 338 (1973)."),
+          "a reference numbered straight into its initials is recognized")
+    check(not _nin.match("1996 Transporting therapeutics across the barrier"),
+          "while a bare year followed by prose is not")
+
+    # A page whose letters are uniformly rotated passes every test built on
+    # character classes: all letters, properly spaced, the right length.
+    _plain = ("the structure of the protein was determined and the data were "
+              "refined with the same method that was used for the other "
+              "proteins in this family which are known to bind ") * 4
+    check(not mm.shift_encoded(_plain), "ordinary prose is not shift-encoded")
+    _rot = "".join(chr((ord(c) - 97 + 3) % 26 + 97) if "a" <= c <= "z" else c
+                   for c in _plain)
+    check(mm.shift_encoded(_rot),
+          "the same prose rotated by three is -- which no alnum-share test can "
+          "see, since it is still all letters")
+    check(not mm.shift_encoded("".join(chr(33 + (i % 60)) for i in range(2000))),
+          "and punctuation noise is left to the alnum-share test, not claimed "
+          "as a rotation")
 
     # An entry's TEXT can be wrong, not only absent. Two-column extraction
     # interleaves the columns, so one parsed entry carries the end of one

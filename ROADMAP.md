@@ -3493,6 +3493,46 @@ someone files, and excluding them to be rid of datasets would cost more than
 it saves. The search now skips datasets, components, peer reviews and the
 container types, and takes the first surviving result of five.
 
+### A text layer that is present, complete, and rotated — 0.45.0
+
+`library` filed Cameron's fresh publisher PDF for `Morel2001Proliferation` and
+it has the same defect as the old one: **the file renders perfectly and its
+text layer is letter-shifted by three.** A broken embedded font encoding, so
+no download fixes it and only rasterising the pixels does. Their build
+request was a way to force OCR on a record whose text layer is present but
+broken, since `--ocr` skips anything that already has one.
+
+**No new flag was needed; the detector was the gap.** `page_is_garbled` tests
+the share of letters and digits, and a rotated page is *all* letters. Once
+`shift_encoded` catches it, the existing path does the rest: the page is
+retried with pdftotext, which returns the same rotation, so it is dropped —
+and an attachment that yields no text is exactly what `--ocr` exists to
+re-read. The stronger reader gets reached by the rule already written down,
+rather than by a flag asserting the same thing.
+
+Swept over all 2,809 live extracts it fires on **exactly one**, the right one.
+The rotation requirement is what makes that safe: a German or French page
+scores low on English common words too, and does not turn into English under
+any shift.
+
+### Footnote numbering with no heading anywhere
+
+`Descloizeaux1974Lagrangian` and four siblings number references as footnotes
+running straight into the initials — `9D. S. McKenzie, J. Phys. A 6, 338
+(1973).` — with no reference heading in the paper at all. One pattern recovers
+`Gay1981Modification`, `Hoover1985Canonical` and `Wall1975Macromolecular`.
+
+`Descloizeaux1974Lagrangian` and `Gillespie1925Equilibrium` still refuse, and
+for `Descloizeaux` the reason is visible: its current extract is the OCR scan
+being replaced, whose digits became letters — `TL.` for `7L.`, `SJ.` for
+`8J.` — interleaved with running heads. It should resolve when the refresh
+re-extracts the native-text PDF, which is a prediction rather than a fix.
+
+*`library` also notes there is no `--replace` for an attachment: they file the
+new PDF and then delete the old one by key, which worked cleanly on all
+three. Recorded as a gap, not built — two commands that each already refuse
+correctly are safer than one that does both.*
+
 ## 33. `--yes` approved a list and acted on a directory — FIXED 0.32.0
 
 On 2026-10-14 `library` dry-ran `zotero_inbox.py` over `<out>/inbox/`, read

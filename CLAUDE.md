@@ -347,6 +347,20 @@ Two implementation notes that exist because of real failures:
   `ocr: true`**, and the guard reads the file rather than the state. Same family
   as the 0.11.0 archive erosion — a run destroying an artifact it did not
   create, on the assumption that its own result is authoritative.
+- **An extract can exist and say WRONG things, in letters.** A broken embedded
+  font encoding can rotate every letter: `text/Morel2001Proliferation.md`
+  carried `HOLXP-RXUQDORI7KHRUHWLFDO%LRORJ\` for `...Journal of Theoretical
+  Biology`. It passes every test built on character classes — all letters,
+  properly spaced, the right length — so `alnum_share` cannot see it and the
+  extract was written with `ocr: false`. `shift_encoded` tries all 25
+  rotations and asks whether the page becomes English; the rotation
+  requirement is what keeps a German or French paper safe, since neither turns
+  into English under any shift. Swept over the live library it fires on
+  exactly one extract in 2,809. **The PDF renders correctly**, so no fresh
+  download fixes it and only rasterising and reading the pixels does — which
+  is why it has to reach `--ocr`, and it does, because a page that stays
+  garbled after the pdftotext retry is dropped and an attachment with no text
+  is exactly what `--ocr` exists to re-read.
 - **An extract can exist and say nothing.** Some attachments are image-only scans
   whose only text is a stamp (`Reproduced with permission of the copyright owner`)
   repeated on every page. `content_chars()` discards lines that repeat across most

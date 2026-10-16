@@ -37,7 +37,7 @@ Usage:
 
 from __future__ import annotations
 
-__version__ = "0.44.0"
+__version__ = "0.45.0"
 """The tool's version, and the only place it is written down.
 
 It exists so a mirror can say what produced it. Extraction behavior has changed
@@ -1180,6 +1180,45 @@ def alnum_share(text: str) -> float:
     return sum(c.isalnum() for c in ns) / len(ns) if ns else 1.0
 
 
+# A page whose letters are uniformly rotated reads as nonsense and passes
+# every test built on character classes: it is all letters, properly spaced,
+# the right length. `text/Morel2001Proliferation.md` carries
+# "HOLXP-RXUQDORI7KHRUHWLFDO%LRORJ\" for "...Journal of Theoretical Biology"
+# -- a broken embedded font encoding, extracted faithfully as gibberish, with
+# `ocr: false` so nothing flagged it. The PDF RENDERS correctly, so no fresh
+# download fixes it and only rasterising and reading the pixels does.
+#
+# The rotation requirement is what makes this safe for a corpus that is not
+# all English: a German or French page scores low on these words too, but does
+# not turn into English under any shift.
+COMMON_WORDS = (" the ", " and ", " of ", " that ", " with ", " for ",
+                " this ", " are ", " was ", " from ", " have ", " which ")
+SHIFT_MIN_CHARS = 600
+SHIFT_RATE = 4.0        # common words per 1000 characters
+
+
+def common_word_rate(text: str) -> float:
+    flat = " " + " ".join(text.lower().split()) + " "
+    if len(flat) < SHIFT_MIN_CHARS:
+        return SHIFT_RATE      # too short to judge; treat as fine
+    return sum(flat.count(w) for w in COMMON_WORDS) * 1000.0 / len(flat)
+
+
+def shift_encoded(text: str) -> bool:
+    """True when the page is ordinary prose with every letter rotated."""
+    if len(text) < SHIFT_MIN_CHARS or common_word_rate(text) >= SHIFT_RATE:
+        return False
+    sample = text[:8000]
+    for k in range(1, 26):
+        rolled = "".join(
+            chr((ord(c) - 97 - k) % 26 + 97) if "a" <= c <= "z" else
+            chr((ord(c) - 65 - k) % 26 + 65) if "A" <= c <= "Z" else c
+            for c in sample)
+        if common_word_rate(rolled) >= SHIFT_RATE:
+            return True
+    return False
+
+
 def page_is_garbled(text: str) -> bool:
     """True for a substantial page whose characters are mostly not text.
 
@@ -1190,7 +1229,9 @@ def page_is_garbled(text: str) -> bool:
     Japanese or French paper is not mistaken for noise.
     """
     ns = sum(1 for c in text if not c.isspace())
-    return ns >= GARBLE_MIN_CHARS and alnum_share(text) < GARBLED_ALNUM_SHARE
+    if ns >= GARBLE_MIN_CHARS and alnum_share(text) < GARBLED_ALNUM_SHARE:
+        return True
+    return shift_encoded(text)
 
 
 def pdftotext_pages(data: bytes) -> list[str] | None:

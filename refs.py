@@ -190,6 +190,9 @@ NUMBER_STYLES = [
     ("N",   re.compile(r"^\s*(\d{1,3})\s+([A-Z]\S.*)$")),
     # Physical Review's [21] OCR'd as @21# (and its parens as ~...!).
     ("@N#", re.compile(r"^\s*@(\d{1,3})#\s*(\S.*)$")),
+    # AIP/APS footnote numbering: the number runs straight into the initials,
+    # with no heading anywhere -- "9D. S. McKenzie, J. Phys. A 6, 338 (1973)."
+    ("NInit", re.compile(r"^\s*(\d{1,3})([A-Z]\.\s*[A-Z]?\S.*)$")),
 ]
 HEADING = re.compile(
     r"^\s*#*\s*(?:\d+\.?\s*)?(references?(?:\s+and\s+notes)?|bibliography"
@@ -271,6 +274,7 @@ INLINE_NUMBERED = [
     ("(N)", re.compile(r"\((\d{1,3})\)\s+(?=[A-Z\"“])")),
     ("[N]", re.compile(r"\[(\d{1,3})\]\s*(?=[A-Z\"“])")),
     ("@N#", re.compile(r"@(\d{1,3})#\s*(?=[A-Z\"“])")),
+    ("NInit", re.compile(r"(?:(?<=[.\]\)])|^)\s*(\d{1,3})(?=[A-Z]\.\s?[A-Z])")),
     ("N.", re.compile(r"(?:(?<=[.\]\)])|^)\s*(\d{1,3})\.\s*(?=[A-Z\"“])")),
 ]
 # A surname opening an entry just after the previous one ended.
