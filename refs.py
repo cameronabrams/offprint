@@ -184,7 +184,7 @@ def crossref_refs(doi: str) -> tuple[list[Ref], str]:
 
 
 NUMBER_STYLES = [
-    ("N.",  re.compile(r"^\s*(\d{1,3})\.\s+(\S.*)$")),
+    ("N.",  re.compile(r"^\s*(\d{1,3})\.\s*(\S.*)$")),
     ("[N]", re.compile(r"^\s*\[(\d{1,3})\]\s*(\S.*)$")),
     ("(N)", re.compile(r"^\s*\((\d{1,3})\)\s*(\S.*)$")),
     ("N",   re.compile(r"^\s*(\d{1,3})\s+([A-Z]\S.*)$")),
@@ -203,18 +203,55 @@ HEADING_GLUED = re.compile(
     r"|literature\s+cited|works\s+cited)\b[\s:.]+(?=\S)", re.I)
 
 
-def reference_head(lines: list[str], floor: int) -> int | None:
-    """The last line that opens the reference section, or None.
+# "...to fund this work. REFERENCES Ames, B. N. (1966) ..." -- the heading
+# runs on from the acknowledgements, so it starts no line at all.
+# Deliberately NOT case-insensitive, and anchored to a sentence end: "and
+# references therein" is ordinary prose, and matching it put a parse of the
+# wrong region ahead of the real list. A heading that ran on from the
+# acknowledgements is capitalised as a heading still.
+HEADING_MIDLINE = re.compile(
+    r"(?:(?<=[.;:])|^)\s*(REFERENCES?|References?|BIBLIOGRAPHY|Bibliography|"
+    r"LITERATURE CITED|Literature Cited|WORKS CITED|Works Cited)\b[\s:.]+(?=[A-Z])")
 
-    Anchored heading first, then the glued form. Taken from the LAST match
-    rather than the first, because a paper's own text says "references" in
-    prose and its running head may repeat it.
+
+def reference_head(lines: list[str], floor: int) -> int | None:
+    """The last line that opens the reference section, or None."""
+    heads = reference_heads(lines, floor)
+    return heads[0][0] if heads else None
+
+
+def reference_heads(lines: list[str], floor: int) -> list[tuple[int, list[str]]]:
+    """Every plausible start of the reference section, likeliest first.
+
+    More than one, because a single guess is wrong often enough to matter and
+    the caller can TELL whether a guess was right: `list_quality` scores the
+    parse. `library` found on 2026-10-16 that three records refused as
+    "not a list" each had a clean list elsewhere in the paper -- the guard was
+    right and the locator had stopped at the wrong region. A guess that can be
+    checked should be retried, not reported.
+
+    Each candidate comes with `lines` rewritten so the list starts at that
+    index: a heading glued to its first entry, or buried mid-line after the
+    acknowledgements, is cut away so the entry behind it is visible.
     """
-    for pat in (HEADING, HEADING_GLUED):
-        hits = [i for i, l in enumerate(lines) if i >= floor and pat.match(l)]
-        if hits:
-            return hits[-1]
-    return None
+    out: list[tuple[int, list[str]]] = []
+    seen: set[int] = set()
+    # Collected across patterns, then sorted LATEST FIRST below: a reference
+    # list sits at the end of a paper, and an earlier candidate that passes is
+    # usually body text that happens to split.
+    for pat, cut in ((HEADING, False), (HEADING_GLUED, True),
+                     (HEADING_MIDLINE, True)):
+        for i in range(len(lines) - 1, floor - 1, -1):
+            m = pat.search(lines[i]) if pat is HEADING_MIDLINE else pat.match(lines[i])
+            if not m or i in seen:
+                continue
+            seen.add(i)
+            if cut:
+                rest = lines[i][m.end():].strip()
+                out.append((i, lines[:i] + ([rest] if rest else []) + lines[i + 1:]))
+            else:
+                out.append((i, list(lines)))
+    return sorted(out, key=lambda c: -c[0])
 # "Andersen," and "CRESTFIELD," matched from the start; "Graham CH," and
 # "Arakawa T," did not, because the pattern assumed initials are punctuated and
 # follow a comma. Same assumption, third outing: it cost the Sougrat reading in
@@ -231,11 +268,24 @@ AUTHOR_YEAR = re.compile(
 INLINE_NUMBERED = [
     ("(N)", re.compile(r"\((\d{1,3})\)\s+(?=[A-Z\"“])")),
     ("[N]", re.compile(r"\[(\d{1,3})\]\s*(?=[A-Z\"“])")),
-    ("N.", re.compile(r"(?:(?<=[.\]\)])|^)\s*(\d{1,3})\.\s+(?=[A-Z\"“])")),
+    ("N.", re.compile(r"(?:(?<=[.\]\)])|^)\s*(\d{1,3})\.\s*(?=[A-Z\"“])")),
 ]
 # A surname opening an entry just after the previous one ended.
+# The lookbehind allows a DIGIT: an entry ending "J. Biol. Chem. 257,
+# 15162-15166" has no period before the next author begins.
+# The stopword guard matters more than it looks. Without it "The RTI method
+# and ..." splits as an entry, because "The" reads as a surname and "RTI" as
+# initials -- which is how a review article's PROSE parsed as a 266-entry
+# bibliography at 79% "points outward": a physics review's sentences are full
+# of journal names.
+NOT_A_SURNAME = (r"The|This|These|Those|That|There|Then|Thus|Here|When|Where|"
+                 r"While|With|Within|Since|Although|However|Because|Both|All|"
+                 r"Each|One|Two|Three|For|From|In|It|Its|We|Our|An|And|As|At|"
+                 r"If|Is|Was|Were|Have|Has|Had|Figure|Table|Note|See|Such|"
+                 r"After|Before|During|Using|Based|Given|Let|Thesis")
 INLINE_AUTHOR = re.compile(
-    r"(?<=[.)])\s+(?=[A-Z][A-Za-z'’\-]{2,},?\s+(?:[A-Z]\.|[A-Z]{1,3}[,\s]))")
+    rf"(?<=[.)\d])\s+(?!(?:{NOT_A_SURNAME})\b)"
+    r"(?=[A-Z][A-Za-z'’\-]{2,},?\s+(?:[A-Z]\.|[A-Z]{1,3}[,\s]))")
 
 
 def _ascending(hits: list[tuple[int, int]]) -> list[tuple[int, int]]:
@@ -318,11 +368,16 @@ VENUE = re.compile(
     r"Science|Cell|Lancet|Polym|Macromol|Mater|Eng|Lett|Commun|Res\.|"
     r"Press|Wiley|Springer|Elsevier|Academic|Pergamon|Plenum|Dekker|McGraw|"
     r"Blackwell|Oxford|Cambridge|Prentice|Publisher|Publishing|"
-    r"eds?\.|editors?|Vol\.|pp\.|Thesis|Dissertation|University|Univ\."
+    r"eds?\.|editors?|Vol\.|pp?\.|Thesis|Dissertation|University|Univ\."
     r")", re.I)
 # "29, 7363-7366" / "70: 867-874" / "2, 1083-1094"
 VOLPAGE = re.compile(r"\b\d{1,4}\s*[:,]\s*\d{1,5}\s*[-\u2013]\s*\d{1,5}\b")
-MIN_OUTWARD = 0.45      # of entries must point somewhere
+# Raised from 0.45 to 0.65 on 2026-10-16. Searching several candidate regions
+# finds more real lists AND more plausible-looking wrong ones, so the bar has
+# to rise with the search. The gap it sits in: weakest list graded sound by
+# `library` is 71% (`Priola2003View`); the weak passes this search introduced
+# are 47%, 53% and 55%.
+MIN_OUTWARD = 0.65
 
 
 def points_outward(raw: str) -> bool:
@@ -402,12 +457,42 @@ def longest_run(hits: list[tuple[int, int]]) -> list[tuple[int, int]]:
 
 
 def text_refs(out: Path, key: str) -> tuple[list[Ref], str]:
-    """Parse the reference list out of the extracted text."""
+    """Parse the reference list out of the extracted text.
+
+    Each candidate start is tried and SCORED, and the first parse that reads
+    like a reference list wins. Stopping at the first candidate refused three
+    papers whose lists were sitting further down the same extract.
+    """
     md = out / "text" / f"{key}.md"
     if not md.exists():
         return [], f"no extracted text at text/{key}.md (see extraction-report.md)"
-    lines = body_lines(md)
-    floor = int(len(lines) * 0.35)          # references never start in the first third
+    whole = body_lines(md)
+    floor = int(len(whole) * 0.35)
+    fallback: tuple[list[Ref], str] = ([], "")
+    best: tuple[list[Ref], str] = ([], "")
+    for _i, candidate in (reference_heads(whole, floor) or [(0, whole)]):
+        got, note = _parse_from(candidate, floor, _i)
+        if not got:
+            continue
+        if list_quality(got)[0]:
+            # The LATEST passing candidate, since they arrive latest-first.
+            # Preferring the longest instead read a review's body as a
+            # 262-entry bibliography: `Nicholson2001Diffusion` cites
+            # author-year inline throughout its prose, so an early candidate
+            # split further than the real list ever could.
+            best = (got, note)
+            break
+        elif not fallback[0]:
+            fallback = (got, note)      # kept so the refusal can say what it saw
+    if best[0]:
+        return best
+    if fallback[0]:
+        return fallback
+    return _parse_from(whole, floor, None)
+
+
+def _parse_from(lines: list[str], floor: int,
+                head_hint: int | None = None) -> tuple[list[Ref], str]:
 
     best_style, best_run = "", []
     for name, pat in NUMBER_STYLES:
@@ -445,13 +530,20 @@ def text_refs(out: Path, key: str) -> tuple[list[Ref], str]:
             missing = sorted(set(range(1, max(got) + 1)) - got)
             if missing:
                 note += f"; {len(missing)} entries did not survive extraction ({span(missing)})"
-        return refs, note
+        # Only if it reads as a list. A line scan finding five numbered lines
+        # in a reflowed bibliography of eighteen would otherwise win over the
+        # inline split that recovers all of them.
+        if list_quality(refs)[0]:
+            return refs, note
+        numbered_try = (refs, note)
+    else:
+        numbered_try = ([], "")
 
     # No numbering. Look for a dense block of lines that each open like an
     # author-year entry -- "Surname, A.B., ... 1998." A heading is a bonus, not
     # a requirement: plenty of extractions lose it.
-    head = reference_head(lines, floor)
-    if head is not None:
+    head = head_hint if head_hint is not None else reference_head(lines, floor)
+    if head is not None and head < len(lines):
         # The glued heading is carrying the FIRST entry on its own line, so
         # leaving it in place drops that entry -- and a dropped first entry is
         # invisible once the file is written, which is exactly what makes a
@@ -497,6 +589,8 @@ def text_refs(out: Path, key: str) -> tuple[list[Ref], str]:
         if inline:
             return ([Ref(label=lab, raw=body) for lab, body in inline],
                     f"{how} (weaker parse)")
+    if numbered_try[0]:
+        return numbered_try
     return [], ("could not find a reference list in the extracted text -- a reflowed "
                 "two-column list often comes out as one unsplittable blob")
 

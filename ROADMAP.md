@@ -3315,6 +3315,64 @@ journals.
 and the venue list is hand-made and English-language — the refusal prints its
 measurements so a wrong one stays auditable.
 
+### The third sample: the guard was right and the LOCATOR was wrong — 0.41.0
+
+`library`'s third fresh sample (35 unseen records) found the write side clean
+— no fabrications in 24 — and the rejection side still losing 7 of 11. Their
+decisive observation: all three `not-a-list` refusals had a clean reference
+list **elsewhere in the same paper**. The guard was correct; the locator had
+stopped at the wrong region and then given up.
+
+**So a guess that can be checked is retried, not reported.** `reference_heads`
+returns every plausible start, each tried and scored, and the first that reads
+like a reference list wins. `list_quality` stops being a gate and becomes a
+selector.
+
+Two selection rules were wrong before they were right:
+
+- *First passing candidate* kept a five-entry parse of an eighteen-entry list,
+  because a line scan found five numbered lines before the inline splitter ran.
+  The numbered branch now has to pass `list_quality` before it short-circuits.
+- *Longest passing candidate* then read `Nicholson2001Diffusion`'s body as a
+  262-entry bibliography — it is a review that cites author-year inline
+  throughout its prose, so an early candidate splits further than the real
+  list ever could. **Latest** passing candidate is the right rule: a
+  reference list sits at the end of a paper.
+
+Three heading causes, where 0.40.0 had one: on its own line, glued to its
+first entry, and run on mid-line from the acknowledgements
+(`...to fund this work. REFERENCES Ames, B. N. (1966)`). The mid-line pattern
+is deliberately case-sensitive — "and references therein" is prose, and
+matching it put a parse of the wrong region ahead of the real list.
+
+Two splitter bugs: an entry ending in a page range has no period before the
+next author (`J. Biol. Chem. 257, 15162-15166 Blackshear...`), and a number
+need not be followed by a space (`1.Ebina,Y.,Ellis,L.,`).
+
+`MIN_OUTWARD` rose from 0.45 to 0.65, because searching more regions finds
+more real lists **and** more plausible wrong ones — the bar has to rise with
+the search. Weakest list graded sound is 71%; the weak passes this search
+introduced were 47%, 53% and 55%.
+
+A stopword guard belongs on the author splitter: without it `The RTI method
+and ...` splits as an entry, "The" reading as a surname and "RTI" as initials.
+
+### A reference that resolves to its own paper
+
+Corpus-wide, 13 of 10,273 resolved matches pointed at their own record. Three
+were honest — the entry really is the paper's own DOI in a "see supplementary
+material at ..." pointer — and ten were fuzzy title matches to a different
+paper by the same author. A self-match tells a reader nothing they do not
+already have, and in ten cases it was simply wrong. Cleared, with the entry
+left in place.
+
+*`library`'s labels grade PARSES, not papers, so they go stale whenever the
+parser changes region. After this change `Nicholson`, `Schmid1998Self` and
+`Maconochie1998Channel` all parse a different region whose entries read as
+genuine references — `Abbott N J and Romero I A 1996 ... Mol. Med`,
+alphabetical from A. That is my reading of the output, not a grading; it needs
+theirs.*
+
 ## 33. `--yes` approved a list and acted on a directory — FIXED 0.32.0
 
 On 2026-10-14 `library` dry-ran `zotero_inbox.py` over `<out>/inbox/`, read

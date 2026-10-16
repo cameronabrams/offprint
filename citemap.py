@@ -689,6 +689,24 @@ def stale_report(out: Path) -> tuple[list, list, list, int]:
     return stale, orphan, cosmetic, ok
 
 
+def drop_self_matches(key: str, refs: list) -> int:
+    """A reference resolving to the paper it sits in is never useful.
+
+    Corpus-wide on 2026-10-16, 13 of 10,273 resolved matches pointed at their
+    own record. Three were honest -- the entry really is the paper's own DOI,
+    in a "see supplementary material at ..." pointer -- and ten were fuzzy
+    title matches to a different paper by the same author. Either way the
+    link tells a reader nothing they do not already have, and in the ten cases
+    it is simply wrong. Cleared rather than hidden, so the entry still shows.
+    """
+    cleared = 0
+    for r in refs:
+        if r.match == key:
+            r.match, r.how = "", ""
+            cleared += 1
+    return cleared
+
+
 def plan_one(out: Path, key: str, doi: str, lib: list, cache: dict) -> dict:
     """Everything decided for one paper, without writing anything."""
     path = out / "text" / f"{key}.md"
@@ -742,6 +760,7 @@ def plan_one(out: Path, key: str, doi: str, lib: list, cache: dict) -> dict:
         # entries. When the entries ARE the deposit, that check is circular and
         # proves nothing, so a parsed list never carries a page map.
         match_refs(refs, lib)
+        drop_self_matches(key, refs)
         check = {"verdict": "parsed", "rates": {},
                  "why": f"no deposited list; parsed from the extract -- {note}"}
         return {"key": key, "status": "parsed", "refs": refs, "check": check,
@@ -755,6 +774,7 @@ def plan_one(out: Path, key: str, doi: str, lib: list, cache: dict) -> dict:
         # marker mapping, so there is nothing for a verification to check, and
         # the file says so rather than implying a map it does not carry.
         match_refs(refs, lib)
+        drop_self_matches(key, refs)
         check = {"verdict": "not-applicable", "rates": {},
                  "why": "cites by author and year, so there is no marker N to "
                         "map and none is claimed"}
@@ -767,6 +787,7 @@ def plan_one(out: Path, key: str, doi: str, lib: list, cache: dict) -> dict:
     check = verify_ordinal(body, refs)
     if check["verdict"] in LIST_ONLY:
         match_refs(refs, lib)
+        drop_self_matches(key, refs)
         return {"key": key, "status": check["verdict"], "refs": refs,
                 "check": check, "by_page": [], "dropped": [], "style": "list",
                 "markers": 0, "held": sum(1 for r in refs if r.match),
@@ -777,6 +798,7 @@ def plan_one(out: Path, key: str, doi: str, lib: list, cache: dict) -> dict:
                 "refs": len(refs), "check": check}
 
     match_refs(refs, lib)
+    drop_self_matches(key, refs)
     style = detect_style(prose)
     # Where the bibliography begins, page by page, taken from the entry
     # positions the verification CONFIRMED rather than from a heading pattern.

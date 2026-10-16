@@ -4449,8 +4449,9 @@ def main():
     # Review of 1965 really did number among its references. The median says
     # paragraph; the bottom quarter says list. Over-rejecting this one was the
     # specific risk `library` named.
-    mixed = _mk(["Whittaker and Watson, Modern Analysis (1927), p. 133.",
-                 "Feller, Probability Theory (1950), p. 254.",
+    mixed = _mk(["Whittaker and Watson, Modern Analysis, Cambridge "
+                 "University Press (1927), p. 133.",
+                 "Feller, Probability Theory, Wiley (1950), p. 254.",
                  "E. T. Jaynes, Phys. Rev. 106, 620 (1957).",
                  "A discursive footnote of the kind this journal numbers. " * 60,
                  "A second long discursive footnote, equally numbered. " * 60,
