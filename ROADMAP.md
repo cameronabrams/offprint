@@ -3164,6 +3164,59 @@ absence is a refusal — we could not check — and keeping the sentence
 everywhere would dress a limit of the evidence as a property of the paper. A
 test caught that; the first draft had it on all three.
 
+### The printed list, when there is no deposit — 0.38.0
+
+Cameron asked why coverage was not complete, pointing out that he can read any
+paper's reference list himself. For most refused records it is sitting in the
+extract in clean text, so `refs.py`'s `text_refs` is now the fallback where
+Crossref has no deposit — and records with **no DOI at all** are assessed for
+the first time, since a record with no DOI can have no deposit but its paper
+still printed a list.
+
+**The parser was the problem, not the text.** `Belohorcova1997Structure`
+recovered 13 of its entries, starting at Brooks rather than Alper. Two bugs,
+the first caused by our own extraction:
+
+- `clean_page_text` turns a single newline inside a paragraph into a space, so
+  `REFERENCES` on its own line becomes `REFERENCES Alper, H. E., and T. R.
+  Stouch. 1995. ...` and the anchored `HEADING` pattern never fires. That
+  record found **zero** headings and fell through to a block scan.
+- That block scan tolerates a 3-line gap between entries, which silently
+  truncates a list whose entries wrap. With a heading found, everything after
+  it that opens like an entry belongs to the list, and the scan is only for
+  extractions that lost the heading.
+
+Stripping the glued heading exposes the entry behind it, which is the
+difference between 49 and 50 — and between starting at Bassolino-Klimas and
+starting at Alper. **13 → 50.**
+
+### Why this is labeled rather than refused, and what the label has to carry
+
+A deposit is the publisher's own record. A parse is derived from text that can
+be garbled, reflowed, or missing a page, and its characteristic failure is a
+SHORT parse — which looks exactly like a short bibliography once the file is
+written. There is no internal evidence of what was dropped. So:
+`source: extract (PARSED from the printed list — derived, not publisher
+data)`, a body warning that an entry which did not survive extraction leaves
+no trace, and the parse's own account of its losses — `Bagley1997Structural`
+says `20 entries did not survive extraction (1-17, 25, 47-48)`.
+
+**A parsed list never earns a page map.** Verification compares deposited
+surnames against the extract's own entries; when the entries ARE the parse,
+that check is circular and proves nothing.
+
+`library` argued for a third provenance value rather than a third kind of
+file, and was right: `citations/` still holds two kinds, with or without a
+page map.
+
+**The shared provenance sentence had to be split.** "What follows is the
+publisher's deposited reference list … with nothing inferred" is true of three
+verdicts and false of `parsed`, where it contradicted the warning printed
+directly beneath it. That is the third time a standing sentence in this file
+turned out false on one kind of file the directory holds — after the
+"mapping was verified" paragraph and the `controls: 0.00` line. A sentence
+printed on every file has to be true of every file.
+
 ## 33. `--yes` approved a list and acted on a directory — FIXED 0.32.0
 
 On 2026-10-14 `library` dry-ran `zotero_inbox.py` over `<out>/inbox/`, read

@@ -4400,6 +4400,30 @@ def main():
     check("deposit order" not in _ay,
           "and an author-year paper's does not, having no marker to resolve")
 
+    # A list read out of the extract is the weakest thing citations/ holds,
+    # and the file has to say so rather than inherit the deposit's wording.
+    _pz = cmap.render("P2001Paper", "", refs_true, [],
+                      {"verdict": "parsed", "rates": {}, "why": "w"}, [], 1, "",
+                      'numbered "N." style; 20 entries did not survive extraction')
+    check("PARSED from the printed list" in _pz and "derived, not publisher" in _pz,
+          "a parsed file names its provenance in the front matter")
+    check("publisher's deposited reference list" not in _pz,
+          "and does NOT inherit the deposit's wording, which would contradict "
+          "the warning directly beneath it")
+    check("may be incomplete" in _pz and "leaves no trace here" in _pz,
+          "it warns that a dropped entry is invisible -- a short parse and a "
+          "short bibliography look identical once written")
+    check("20 entries did not survive extraction" in _pz,
+          "and carries the parse's own account of what it lost")
+    check("## No page map" in _pz and "Markers by page" not in _pz,
+          "a parsed list never earns a page map: the numbers and the text come "
+          "from the same place, so checking one against the other is circular")
+    _dep = cmap.render("D2001Paper", "10.1/z", refs_true, [],
+                       {"verdict": "unverifiable", "rates": {}, "why": "w"}, [], 1)
+    check("publisher's deposited reference list" in _dep
+          and "derived, not publisher" not in _dep,
+          "while a deposited list still says it is one")
+
     pages = cmap.split_pages(extract)
     check([p for p, _t, _o in pages] == [1, 2],
           f"the extract's own page markers delimit the pages "

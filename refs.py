@@ -192,6 +192,29 @@ NUMBER_STYLES = [
 HEADING = re.compile(
     r"^\s*#*\s*(?:\d+\.?\s*)?(references?(?:\s+and\s+notes)?|bibliography"
     r"|literature\s+cited|works\s+cited)\s*:?\s*$", re.I)
+# The same heading when extraction GLUED the first entry to it. `clean_page_text`
+# turns a single newline inside a paragraph into a space, so "REFERENCES" on its
+# own line becomes "REFERENCES Alper, H. E., and T. R. Stouch. 1995. ..." and the
+# anchored pattern above never fires. Measured 2026-10-16 on the live library:
+# `Belohorcova1997Structure` found ZERO headings and fell back to a block scan
+# that recovered 13 of its 49 entries, starting at Brooks rather than Alper.
+HEADING_GLUED = re.compile(
+    r"^\s*#*\s*(?:\d+\.?\s*)?(references?(?:\s+and\s+notes)?|bibliography"
+    r"|literature\s+cited|works\s+cited)\b[\s:.]+(?=\S)", re.I)
+
+
+def reference_head(lines: list[str], floor: int) -> int | None:
+    """The last line that opens the reference section, or None.
+
+    Anchored heading first, then the glued form. Taken from the LAST match
+    rather than the first, because a paper's own text says "references" in
+    prose and its running head may repeat it.
+    """
+    for pat in (HEADING, HEADING_GLUED):
+        hits = [i for i, l in enumerate(lines) if i >= floor and pat.match(l)]
+        if hits:
+            return hits[-1]
+    return None
 AUTHOR_YEAR = re.compile(r"^[A-Z][\w'’\-]+(?:,| et al\.| and )")
 
 
@@ -281,26 +304,45 @@ def text_refs(out: Path, key: str) -> tuple[list[Ref], str]:
     # No numbering. Look for a dense block of lines that each open like an
     # author-year entry -- "Surname, A.B., ... 1998." A heading is a bonus, not
     # a requirement: plenty of extractions lose it.
-    head = max((i for i, l in enumerate(lines) if i >= floor and HEADING.match(l)), default=None)
+    head = reference_head(lines, floor)
+    if head is not None:
+        # The glued heading is carrying the FIRST entry on its own line, so
+        # leaving it in place drops that entry -- and a dropped first entry is
+        # invisible once the file is written, which is exactly what makes a
+        # parsed list weaker evidence than a deposit. Strip the heading and the
+        # entry behind it becomes an ordinary opener.
+        bare = HEADING_GLUED.sub("", lines[head])
+        if bare != lines[head] and bare.strip():
+            lines = lines[:head] + [bare] + lines[head + 1:]
     opens = [i for i, l in enumerate(lines)
              if i >= (head if head is not None else floor)
              and AUTHOR_YEAR.match(l.strip()) and re.search(r"\b(1[89]\d{2}|20\d{2})\b", l)]
-    block: list[int] = []
-    best: list[int] = []
-    for i in opens:
-        if block and i - block[-1] <= 3:
-            block.append(i)
-        else:
-            block = [i]
-        if len(block) > len(best):
-            best = list(block)
+    if head is not None:
+        # A heading is hard evidence of where the list starts, so everything
+        # after it that opens like an entry belongs to it. The block scan below
+        # exists for extractions that lost the heading, and its 3-line gap
+        # tolerance silently truncates a list whose entries wrap -- which is
+        # how 49 entries became 13.
+        best = opens
+    else:
+        block: list[int] = []
+        best = []
+        for i in opens:
+            if block and i - block[-1] <= 3:
+                block.append(i)
+            else:
+                block = [i]
+            if len(block) > len(best):
+                best = list(block)
     if len(best) >= 8:
         refs = []
         for n, start in enumerate(best):
             stop = best[n + 1] if n + 1 < len(best) else len(lines)
             body = " ".join(" ".join(lines[start:stop]).split())
             refs.append(Ref(label=str(n + 1), raw=body))
-        return refs, "author-year list, one entry per line (weaker parse; entries are not numbered in the paper)"
+        how = "after its REFERENCES heading" if head is not None else "by a block scan, no heading found"
+        return refs, (f"author-year list, one entry per line, {how} (weaker parse; "
+                      "entries are not numbered in the paper)")
 
     return [], ("could not find a reference list in the extracted text -- a reflowed "
                 "two-column list often comes out as one unsplittable blob")

@@ -93,7 +93,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from mendeley_mirror import DEFAULT_OUT, __version__, save_json  # noqa: E402
-from refs import Ref, crossref_refs, match_refs, read_library  # noqa: E402
+from refs import (Ref, crossref_refs, match_refs, read_library,  # noqa: E402
+                  text_refs)
 
 PAGE_MARK = re.compile(r"<!-- p\. (\d+) -->")
 
@@ -129,7 +130,7 @@ STYLES = {"bracket": BRACKET, "paren": PAREN, "super": SUPER}
 # absence of evidence, they are evidence of disagreement between the deposit
 # and the printed list -- and the numbering of the entries is the thing in
 # dispute. Report when you do not know; refuse when you know it is wrong.
-LIST_ONLY = ("not-applicable", "unverifiable", "no-signal")
+LIST_ONLY = ("not-applicable", "unverifiable", "no-signal", "parsed")
 
 # "(Rizzuto et al., 1998)". A paper citing this way has no marker N, so
 # "marker N means reference N" is not a claim that can hold or fail -- it does
@@ -436,7 +437,7 @@ def verify_ordinal(body: str, refs: list) -> dict:
 
 
 def render(key: str, doi: str, refs: list, by_page: list, check: dict,
-           dropped: list, chars: int, sha: str = "") -> str:
+           dropped: list, chars: int, sha: str = "", parse_note: str = "") -> str:
     """`citations/<key>.md`.
 
     The header says what this file is NOT, for the same reason `findings/` does:
@@ -448,8 +449,10 @@ def render(key: str, doi: str, refs: list, by_page: list, check: dict,
     lines = [
         "---",
         f"citekey: {key}",
-        f"doi: {doi}",
-        "source: crossref (publisher-deposited reference list)",
+        f"doi: {doi or '(none)'}",
+        ("source: extract (PARSED from the printed list -- derived, not "
+         "publisher data)" if check["verdict"] == "parsed"
+         else "source: crossref (publisher-deposited reference list)"),
         f"references: {len(refs)}",
         f"in-library: {len(held)}",
         f"verified: {check['verdict']} -- {check['why']}",
@@ -506,16 +509,43 @@ def render(key: str, doi: str, refs: list, by_page: list, check: dict,
                 "This paper cites by number, but this extract's own reference "
                 "entries could not be located, so the numbers could not be "
                 "checked against the printed list and no page map is given.",
+            "parsed":
+                "No publisher-deposited reference list exists for this record, "
+                "so the list below was READ OUT OF THE EXTRACT.",
         }[check["verdict"]]
-        lines += [
-            f"## No page map\n",
-            f"*{why_no_map} What follows is the publisher's deposited "
-            "reference list resolved to our citation keys: a fact about the "
-            "DOI and a match against `library.bib`, with nothing inferred and "
-            "so nothing to verify.*",
-            "",
-        ]
-        if check["verdict"] == "not-applicable":
+        # The provenance sentence is NOT shared: "the publisher's own deposit,
+        # nothing inferred" is true of three of these verdicts and false of
+        # `parsed`, where it would contradict the warning directly beneath it.
+        # Third time a standing sentence has turned out false on one kind of
+        # file this directory holds.
+        provenance = (
+            " The entries are resolved to our citation keys by matching "
+            "`library.bib`, which is the only part of this file that is not "
+            "read straight off the page."
+            if check["verdict"] == "parsed" else
+            " What follows is the publisher's deposited reference list "
+            "resolved to our citation keys: a fact about the DOI and a match "
+            "against `library.bib`, with nothing inferred and so nothing to "
+            "verify.")
+        lines += [f"## No page map\n", f"*{why_no_map}{provenance}*", ""]
+        if check["verdict"] == "parsed":
+            # The weakest thing in citations/, and the file has to say so. Its
+            # characteristic failure is a SHORT parse, and a short parse looks
+            # exactly like a short paper once the file is written -- there is
+            # no internal evidence of what was missed.
+            lines += [
+                "*This list is **derived**, not publisher data. Every other "
+                "file here carries the publisher's own deposit; this one was "
+                "parsed out of extracted text, which can be garbled, "
+                "reflowed, or missing a page. **It may be incomplete, and an "
+                "entry that did not survive extraction leaves no trace here** "
+                "-- a short list and a short bibliography look identical. "
+                "Check it against the paper before relying on an absence.*",
+                "",
+                f"*Parse: {parse_note}.*" if parse_note else "",
+                "",
+            ]
+        elif check["verdict"] == "not-applicable":
             # True of this case and of no other: the paper simply has no
             # marker. For the rest the absence IS a refusal -- we could not
             # check -- and claiming otherwise would dress a limitation of the
@@ -670,12 +700,40 @@ def plan_one(out: Path, key: str, doi: str, lib: list, cache: dict) -> dict:
     if len(body) < 2000:
         return {"key": key, "status": "extract-too-short"}
 
-    refs, note = cached_refs(doi, cache)
+    refs, note, source = [], "", "crossref"
+    if doi:
+        refs, note = cached_refs(doi, cache)
     if not refs:
-        return {"key": key, "status": "no-deposited-list",
-                "why": note or "crossref holds no reference list for this DOI"}
+        # No deposit, so fall back to the list PRINTED in the paper. Cameron
+        # asked for this on 2026-10-16, having pointed out that he can read any
+        # paper's reference list himself and so can the extract.
+        #
+        # It is weaker evidence than anything else here and is labeled as such.
+        # A deposit is the publisher's own record; a parse is derived from text
+        # that may be garbled, and its characteristic failure -- a dropped
+        # entry -- is invisible once written. `Belohorcova1997Structure`
+        # recovered 13 of 50 before the heading fix, starting at Brooks rather
+        # than Alper, and nothing in the file would have said so.
+        refs, note = text_refs(out, key)
+        source = "extract"
+    if not refs:
+        return {"key": key, "status": "no-list-anywhere",
+                "why": note or ("crossref holds no reference list for this DOI "
+                                "and none could be parsed from the extract")}
 
     prose = PAGE_MARK.sub(" ", body)
+    if source == "extract":
+        # Verification compares deposited surnames against the extract's own
+        # entries. When the entries ARE the deposit, that check is circular and
+        # proves nothing, so a parsed list never carries a page map.
+        match_refs(refs, lib)
+        check = {"verdict": "parsed", "rates": {},
+                 "why": f"no deposited list; parsed from the extract -- {note}"}
+        return {"key": key, "status": "parsed", "refs": refs, "check": check,
+                "by_page": [], "dropped": [], "style": "list", "markers": 0,
+                "held": sum(1 for r in refs if r.match), "source": source,
+                "parse_note": note, "chars": extract_chars(raw),
+                "sha": extract_sha(raw), "doi": doi, "why": check["why"]}
     if cites_by_name(prose):
         # Nothing is inferred for these: the deposited list is a fact about the
         # DOI and the citekeys come from `refs.py`'s matching. There is no
@@ -795,7 +853,10 @@ def main() -> int:
     lib = read_library(args.out)
     if not lib:
         sys.exit(f"error: no library.bib under {args.out}")
-    wanted = {e.key: e.doi for e in lib if e.doi}
+    # Every record, not only those with a DOI. A record with no DOI can have
+    # no deposit by definition, but its paper still printed a reference list,
+    # and that is the whole point of the fallback.
+    wanted = {e.key: e.doi for e in lib}
     if args.refresh_stale:
         if args.only:
             ap.error("--refresh-stale chooses the records itself; "
@@ -822,12 +883,14 @@ def main() -> int:
     if args.only:
         unknown = [k for k in args.only if k not in wanted]
         if unknown:
-            sys.exit("error: no record with a DOI for: " + ", ".join(unknown))
+            sys.exit("error: no such record in library.bib: " + ", ".join(unknown))
         wanted = {k: wanted[k] for k in args.only}
 
     print(f"offprint {__version__} citemap: "
           f"{'writing' if args.write else 'DRY RUN -- nothing is written'}")
-    print(f"  {len(wanted)} record(s) with a DOI, of {len(lib)} in library.bib\n")
+    with_doi = sum(1 for d in wanted.values() if d)
+    print(f"  {len(wanted)} record(s), {with_doi} with a DOI (the rest can "
+          f"only use their printed list)\n")
 
     cache = load_cache()
     tally: dict[str, int] = {}
@@ -860,7 +923,7 @@ def main() -> int:
             bib_seen += plan.get("bib_skipped", 0)
             text = render(key, doi, plan["refs"], plan["by_page"],
                           plan["check"], plan["dropped"], plan["chars"],
-                          plan.get("sha", ""))
+                          plan.get("sha", ""), plan.get("parse_note", ""))
             print(f"  {'+' if args.write else 'would write'} citations/{key}.md"
                   f"  {len(plan['refs'])} refs, {plan['held']} in the library, "
                   f"{plan['markers']} markers on {len(plan['by_page'])} pages "

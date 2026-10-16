@@ -89,6 +89,9 @@ it is, and a numerically-citing one adds that the entries are in deposit order
 and are not a lookup table. A mapping that was checked and **disagreed**
 (`failed`, `offset`) gets no file at all.
 
+Where Crossref holds no deposit, the list is **parsed out of the extract** instead, including for records with no DOI. Those files say so in
+`source:` and warn that a parse can be short in ways it cannot show.
+
 A refresh never deletes `citations/` — it unlinks only its own targets and
 sweeps no directory it does not own. But it *does* rewrite `text/` on a
 re-extraction, which can move the page markers a file points at, so each file
