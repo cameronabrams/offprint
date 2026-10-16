@@ -188,6 +188,8 @@ NUMBER_STYLES = [
     ("[N]", re.compile(r"^\s*\[(\d{1,3})\]\s*(\S.*)$")),
     ("(N)", re.compile(r"^\s*\((\d{1,3})\)\s*(\S.*)$")),
     ("N",   re.compile(r"^\s*(\d{1,3})\s+([A-Z]\S.*)$")),
+    # Physical Review's [21] OCR'd as @21# (and its parens as ~...!).
+    ("@N#", re.compile(r"^\s*@(\d{1,3})#\s*(\S.*)$")),
 ]
 HEADING = re.compile(
     r"^\s*#*\s*(?:\d+\.?\s*)?(references?(?:\s+and\s+notes)?|bibliography"
@@ -268,6 +270,7 @@ AUTHOR_YEAR = re.compile(
 INLINE_NUMBERED = [
     ("(N)", re.compile(r"\((\d{1,3})\)\s+(?=[A-Z\"“])")),
     ("[N]", re.compile(r"\[(\d{1,3})\]\s*(?=[A-Z\"“])")),
+    ("@N#", re.compile(r"@(\d{1,3})#\s*(?=[A-Z\"“])")),
     ("N.", re.compile(r"(?:(?<=[.\]\)])|^)\s*(\d{1,3})\.\s*(?=[A-Z\"“])")),
 ]
 # A surname opening an entry just after the previous one ended.
@@ -378,6 +381,22 @@ VOLPAGE = re.compile(r"\b\d{1,4}\s*[:,]\s*\d{1,5}\s*[-\u2013]\s*\d{1,5}\b")
 # `library` is 71% (`Priola2003View`); the weak passes this search introduced
 # are 47%, 53% and 55%.
 MIN_OUTWARD = 0.65
+# A reference names a PERSON. "Points outward" alone passed two fabrications
+# on 2026-10-16 whose prose happens to name journals and places:
+# `Lallemand2000Theory` is the paper's own section outline ("Section II gives
+# a brief introduction to ...") and `Kumar1988Off` is the masthead ("Yoon IBM
+# Almaden Research Center, San Jose, California"). Neither names an author in
+# the shape a bibliography does.
+#
+# The comma is what separates "Graham CH," from "Yoon IBM": joined initials in
+# a reference are followed by punctuation, a company acronym is not.
+AUTHORISH = re.compile(
+    r"[A-Z][a-z]{2,}(?:,\s*|\s+)(?:[A-Z]\.\s*){1,4}"      # Adams, P. R. / Freed K. F.
+    r"|[A-Z][a-z]{2,}\s+[A-Z](?:\s+[A-Z])*\b(?![A-Z])"     # Abbott N J
+    r"|[A-Z][a-z]{2,}\s+[A-Z]{1,3},"                       # Graham CH,
+    r"|[A-Z]{3,},\s*[A-Z]\."                               # CRESTFIELD, A.
+    r"|(?:[A-Z]\.\s*){1,3}[A-Z][a-z]{2,}")                 # M. S. Cohen
+MIN_AUTHORISH = 0.55
 
 
 def points_outward(raw: str) -> bool:
@@ -388,7 +407,28 @@ def list_quality(refs: list[Ref]) -> tuple[bool, str]:
     """Does this parse look like a reference list? `(ok, why_not)`."""
     if not refs:
         return False, "nothing parsed"
+    trimmed = 0
+    # Trim junk at the HEAD before scoring. The locator can start a line or two
+    # early -- on a masthead, a figure caption, a stray "Ohno et al. 1996.
+    # ------" -- and `library` found six real lists in one sample carrying
+    # one or two such entries. An entry numbered 0 goes the same way: a table
+    # row or figure label, never a reference.
+    while (len(refs) > 8 and trimmed < 3
+           and (refs[0].label == "0"
+                or not (points_outward(refs[0].raw)
+                        and AUTHORISH.search(refs[0].raw[:60])))):
+        refs.pop(0)
+        trimmed += 1
     outward = sum(1 for r in refs if points_outward(r.raw)) / len(refs)
+    # Scored on the HEAD of the entry, not anywhere in it. A reference names
+    # its authors first; a paragraph of body prose long enough will contain an
+    # author-like string somewhere by chance, which is how `Kumar1988Off`
+    # scored 100% on masthead and results text.
+    named = sum(1 for r in refs if AUTHORISH.search(r.raw[:60])) / len(refs)
+    if named < MIN_AUTHORISH:
+        return False, (f"only {named:.0%} of the entries name an author, so "
+                       f"these are not references -- a section outline and a "
+                       f"masthead can both name journals and places")
     if outward < MIN_OUTWARD:
         return False, (f"only {outward:.0%} of the entries name a journal, "
                        f"publisher, place or page range, so these are not "
@@ -408,7 +448,9 @@ def list_quality(refs: list[Ref]) -> tuple[bool, str]:
                        f"entry number {top} against {len(refs)} recovered, so "
                        f"these are most likely page or paragraph numbers")
     return True, (f"q1 {q1} chars, highest label {top} of {len(refs)}, "
-                  f"{outward:.0%} point outward")
+                  f"{outward:.0%} point outward, {named:.0%} name an author"
+                  + (f", {trimmed} junk head entr"
+                     f"{'y' if trimmed == 1 else 'ies'} trimmed" if trimmed else ""))
 
 
 def span(nums: list[int]) -> str:

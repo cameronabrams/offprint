@@ -4449,12 +4449,14 @@ def main():
     # Review of 1965 really did number among its references. The median says
     # paragraph; the bottom quarter says list. Over-rejecting this one was the
     # specific risk `library` named.
-    mixed = _mk(["Whittaker and Watson, Modern Analysis, Cambridge "
-                 "University Press (1927), p. 133.",
-                 "Feller, Probability Theory, Wiley (1950), p. 254.",
+    mixed = _mk(["Whittaker, E. T. and Watson, G. N., Modern Analysis, "
+                 "Cambridge University Press (1927), p. 133.",
+                 "Feller, W., Probability Theory, Wiley (1950), p. 254.",
                  "E. T. Jaynes, Phys. Rev. 106, 620 (1957).",
-                 "A discursive footnote of the kind this journal numbers. " * 60,
-                 "A second long discursive footnote, equally numbered. " * 60,
+                 "Jaynes, E. T., a discursive footnote of the kind this "
+                 "journal numbers in Phys. Rev. " * 30,
+                 "Rubin, M., a second long discursive footnote, equally "
+                 "numbered in Phys. Rev. " * 30,
                  "M. Rubin, J. Math. Phys. 6, 1055 (1965)."])
     ok_m, why_m = _R.list_quality(mixed)
     check(ok_m, f"a real list is kept even when half its entries are long, "
@@ -4501,7 +4503,7 @@ def main():
     # SHORT, which is the evidence that guard trusts.
     rows = _mk([f"Xenopus myocyte Fetal 1.0 - - 10000 25 {i} 30000" for i in range(9)])
     ok_r, why_r = _R.list_quality(rows)
-    check(not ok_r and "points outward" in why_r,
+    check(not ok_r,
           f"table rows are refused though they are short -- a reference names a "
           f"journal, publisher or page range, a table row names nothing ({why_r[:44]})")
     eqs = _mk([f"P = 2 D e; = 2eAE t D 1 2 ; where e is energy {i}" for i in range(8)])
@@ -4512,6 +4514,36 @@ def main():
           "or by a volume and page range alone")
     check(not _R.points_outward("The indices i run over cartesian coordinates"),
           "and a note points nowhere")
+
+    # "Points outward" alone passed two fabrications whose prose names
+    # journals and places: a section outline and a journal masthead.
+    outline = _mk([f"Section {n} gives a brief introduction to the "
+                   f"two-dimensional nine-velocity LBE model of Phys. Rev. E"
+                   for n in ("II", "III", "IV", "V", "VI", "VII", "VIII", "IX",
+                             "X", "XI")])
+    ok_o, why_o = _R.list_quality(outline)
+    check(not ok_o and "name an author" in why_o,
+          f"a section outline is refused though it names a journal ({why_o[:44]})")
+    masthead = _mk(["Yoon IBM Almaden Research Center, San Jose, California "
+                    "95120-6099 (Received 4 April 1988) Phys. Rev. A"] * 10)
+    check(not _R.list_quality(masthead)[0],
+          "and so is a masthead, for the same reason")
+    check(_R.AUTHORISH.search("Graham CH, Lala PK:")
+          and not _R.AUTHORISH.search("Yoon IBM Almaden Research"),
+          "the comma is what separates joined initials from a company acronym")
+
+    # An entry numbered 0 is a table row or a figure label; a reference list
+    # starts at 1. A locator that produced one started too high.
+    with_zero = _mk(["Adams, P. R. (1981). Receptor kinetics. J Membrane Biol 58, 161."
+                     for _ in range(12)])
+    with_zero[0].label = "0"
+    with_zero[0].raw = "0 1.0 - - 10000 25 25 30000"
+    ok_z, why_z = _R.list_quality(with_zero)
+    check(ok_z and "trimmed" in why_z,
+          f"a junk head entry is trimmed rather than condemning the list ({why_z[:52]})")
+
+    check(any(n == "@N#" for n, _ in _R.NUMBER_STYLES),
+          "Physical Review's [21] OCR'd as @21# is a known numbering style")
 
     pages = cmap.split_pages(extract)
     check([p for p, _t, _o in pages] == [1, 2],

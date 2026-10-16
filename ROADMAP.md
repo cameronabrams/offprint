@@ -3373,6 +3373,57 @@ genuine references — `Abbott N J and Romero I A 1996 ... Mol. Med`,
 alphabetical from A. That is my reading of the output, not a grading; it needs
 theirs.*
 
+### Fourth sample: a reference names a PERSON — 0.42.0
+
+`library` re-graded the three cases 0.41.0 had changed — `Nicholson`,
+`Schmid1998Self` and `Maconochie1998Channel` are all genuine now — then drew
+40 unseen records. 36 written, **2 of them fabrications that cleared
+`MIN_OUTWARD` because their prose names journals and places**:
+`Lallemand2000Theory` parsed the paper's own section outline, `Kumar1988Off`
+its masthead.
+
+`points_outward` cannot see this, and the missing signal is simple: **a
+reference names a person.** `AUTHORISH` covers the five author shapes this
+corpus actually uses, and the comma is what separates `Graham CH,` from
+`Yoon IBM` — joined initials in a reference are punctuated, a company acronym
+is not. Scored on the first 60 characters, because a reference names its
+authors *first* and a long enough paragraph of prose contains an author-like
+string somewhere by chance — which is how `Kumar1988Off` scored 100% when
+scored over the whole entry.
+
+**Junk at the head is trimmed rather than condemning the list.** Six of the 36
+were real lists carrying a masthead or a stray caption as entry 1, and
+`library` supplied a free signal for it: `Kurose1994Cross` and
+`Leconte1992Linked` both begin at entry **0**, and a reference list never
+does. Up to three leading entries that do not both point outward and name an
+author are dropped before scoring.
+
+`@21#` is Physical Review's `[21]` with the brackets OCR'd, and `~1988!` its
+parens. One pattern recovers `Drossel1996Winding`, which was the sample's only
+wrong rejection — and `Lallemand2000Theory`, whose *real* list was in that
+notation all along.
+
+### My labels keep going stale, and that is the standing hazard
+
+Every fix that changes which region is parsed invalidates the grading that
+justified it. `Lallemand` moved from fabrication to genuine recovery inside
+one version. `Kumar1988Off` now finds its real list, two-column-glued into
+fragments like `Hadzioannou, D.` — `library`'s "real but contaminated" class,
+not a fabrication, so its DROP label is stale too.
+
+**Six rounds of this have made one thing clear: I cannot grade this feature.**
+Every threshold in `list_quality` was set against cases `library` read by
+hand, and each time I tune one, their labels describe a parse the code no
+longer produces. The refusal prints its measurements for exactly that reason.
+
+*Also reported and NOT a citemap bug: `text/Morel2001Proliferation.md` is
+Caesar-shifted by three (`HOLXP-RXUQDORI7KHRUHWLFDO%LRORJ\` is
+`...Journal of Theoretical Biology`) and carries `ocr: false`, so nothing
+flagged it. `page_is_garbled` is supposed to catch a broken layer and re-read
+it with pdftotext; a shift-encoded one reads as ordinary letters and passes.
+`library` swept the library and it is the only one. Recorded here as an
+extraction defect, not fixed, because re-extraction is theirs to run.*
+
 ## 33. `--yes` approved a list and acted on a directory — FIXED 0.32.0
 
 On 2026-10-14 `library` dry-ran `zotero_inbox.py` over `<out>/inbox/`, read
