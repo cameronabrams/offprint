@@ -4442,9 +4442,8 @@ def main():
                 "may be administered in any suitable manner. " * 12
                 for _ in range(11)])
     ok_p, why_p = _R.list_quality(para)
-    check(not ok_p and "body paragraphs" in why_p,
-          f"numbered PARAGRAPHS are refused -- a patent is not a bibliography "
-          f"({why_p[:50]})")
+    check(not ok_p, f"numbered PARAGRAPHS are refused -- a patent is not a "
+                    f"bibliography ({why_p[:50]})")
 
     # Rubin1965Random: six entries, one a discursive footnote that Physical
     # Review of 1965 really did number among its references. The median says
@@ -4467,13 +4466,51 @@ def main():
         r.label = str(699 + i)
     ok_l, why_l = _R.list_quality(pages_run)
     check(not ok_l, f"and page numbers with prose attached are refused ({why_l[:46]})")
-    short_but_numbered = _mk(["A. Author, J. Testing 1, 1 (1990)." for _ in range(6)])
+    short_but_numbered = _mk(["A. Author, Journal of Testing 1, 1-9 (1990)."
+                              for _ in range(6)])
     for i, r in enumerate(short_but_numbered):
         r.label = str(100 + i * 150)
     ok_n, why_n = _R.list_quality(short_but_numbered)
     check(not ok_n and "numbering is not a reference list" in why_n,
           f"an implausible highest entry number is refused on its own, even "
-          f"when the entries are short ({why_n[:48]})")
+          f"when the entries are short and name a journal ({why_n[:48]})")
+
+    # Same assumption about author initials, third outing: it cost the Sougrat
+    # reading in ROADMAP 34 and then six wrong rejections.
+    for _style in ("Graham CH, Lala PK:", "Arakawa T, Yphantis DA,",
+                   "CRESTFIELD, A. M.,", "Andersen, A. S.,"):
+        check(_R.AUTHOR_YEAR.match(_style),
+              f"an entry opening {_style!r} is recognized")
+
+    # A reference list routinely arrives as ONE line: clean_page_text turns a
+    # newline inside a paragraph into a space, and a bibliography is exactly
+    # that shape. Splitting on line starts then finds nothing -- which is why
+    # four of six wrongly rejected records had their heading found and zero
+    # entries parsed.
+    reflowed = ("References " + " ".join(
+        f"({i}) M. S. Author{i}, \u201cA title here\u201d, J. Testing {i}, {i}00 (19{70+i})."
+        for i in range(1, 13)))
+    ent, how = _R.split_inline(reflowed)
+    check(len(ent) == 12 and "inline" in how,
+          f"a reflowed numbered list is split on its inline markers ({len(ent)}, {how})")
+    check(ent[0][0] == "1" and "Author1" in ent[0][1],
+          f"starting at the first entry ({ent[0]})")
+
+    # The write-side failures the length guard cannot see: table rows are
+    # SHORT, which is the evidence that guard trusts.
+    rows = _mk([f"Xenopus myocyte Fetal 1.0 - - 10000 25 {i} 30000" for i in range(9)])
+    ok_r, why_r = _R.list_quality(rows)
+    check(not ok_r and "points outward" in why_r,
+          f"table rows are refused though they are short -- a reference names a "
+          f"journal, publisher or page range, a table row names nothing ({why_r[:44]})")
+    eqs = _mk([f"P = 2 D e; = 2eAE t D 1 2 ; where e is energy {i}" for i in range(8)])
+    check(not _R.list_quality(eqs)[0], "and so are numbered equations")
+    check(_R.points_outward("Braig, K. (1995) Nat. Struct. Biol. 2, 1083-1094"),
+          "a real entry points outward by its journal")
+    check(_R.points_outward("Andersen, A. S. (1990) 29, 7363-7366"),
+          "or by a volume and page range alone")
+    check(not _R.points_outward("The indices i run over cartesian coordinates"),
+          "and a note points nowhere")
 
     pages = cmap.split_pages(extract)
     check([p for p, _t, _o in pages] == [1, 2],

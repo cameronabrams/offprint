@@ -3260,6 +3260,61 @@ Also fixed: entries carried the next entry's number glued to the end
 (`... Nat. Struct. Biol. 2, 1083-1094. 17.`). Stripped only when it is exactly
 the label about to be used, so a real trailing page number survives.
 
+### The fresh sample: the REJECTIONS were the bigger loss — 0.40.0
+
+0.39.0's guard was tuned on `library`'s first ten, so those stopped testing
+it. They drew 30 unseen no-DOI records and graded both sides. **Six of eleven
+rejections had a perfectly clean reference list** — 55% wrong, against 16% bad
+on the write side — and a rejected paper looks exactly like a paper with
+nothing to find.
+
+**The cause was not the author pattern, though it looked like it.** In four of
+the six the heading WAS located and zero entries parsed, because the whole
+bibliography had been reflowed onto one line: `clean_page_text` turns a single
+newline inside a paragraph into a space, and a reference list is made of
+exactly that shape. `Zandstra1999Concentration` holds
+`References Arakawa T, Yphantis DA, ... 1991. Glycosylated ...` as a single
+line. Splitting on line starts finds nothing at all.
+
+`split_inline` takes the text after a located heading and splits it on inline
+entry markers — `(1)`, `[1]`, ` 1. ` in ascending sequence, or a surname
+opening just after the previous entry ended. Chaplain 32, Chaiken 18, Stater
+16, Zandstra 25, all from zero.
+
+`AUTHOR_YEAR` was also wrong, for the third time with the same assumption:
+it required punctuated initials after a comma, so `Graham CH,` and
+`Arakawa T,` failed where `Andersen,` and `CRESTFIELD,` passed. That same
+assumption produced the Sougrat misreading earlier in this item.
+
+### The write side: a fabrication can be SHORT
+
+None of the three new invented lists had the shape 0.39.0's length guard looks
+for. `Maconochie1998Channel` is table rows at a median of 59 characters —
+short entries being exactly the evidence that guard trusts.
+`Ping2004Numerical` is numbered equations; `Schmid1998Self` is the note-only
+tail of a real list.
+
+`library` supplied the discriminator and it is a better idea than either of
+mine: **a reference points outward.** It names a journal, a publisher, a place
+or a page range; a table row and an equation name nothing. Year-presence would
+also separate their sample but rejects `Rubin1965Random`, which both of us had
+already agreed to keep.
+
+`list_quality` now refuses a list where fewer than 45% of entries point
+outward. Worst kept list: 71%. Worst dropped: 41%.
+
+A bug worth recording in the regex itself: every abbreviation in the first
+VENUE pattern ended in `\b` after a period — `J\.\b`, `Proc\.\b` — and
+`\b` needs a word character on one side, so **none of them could ever
+match**. Only the bare words were doing any work. Single-letter forms are now
+left out deliberately: `J.` and `Z.` are author initials far more often than
+journals.
+
+**All 17 graded cases across both audits now sort correctly**, including both
+`library` warned against over-rejecting. Still 17 cases, still their grading,
+and the venue list is hand-made and English-language — the refusal prints its
+measurements so a wrong one stays auditable.
+
 ## 33. `--yes` approved a list and acted on a directory — FIXED 0.32.0
 
 On 2026-10-14 `library` dry-ran `zotero_inbox.py` over `<out>/inbox/`, read

@@ -215,7 +215,63 @@ def reference_head(lines: list[str], floor: int) -> int | None:
         if hits:
             return hits[-1]
     return None
-AUTHOR_YEAR = re.compile(r"^[A-Z][\w'’\-]+(?:,| et al\.| and )")
+# "Andersen," and "CRESTFIELD," matched from the start; "Graham CH," and
+# "Arakawa T," did not, because the pattern assumed initials are punctuated and
+# follow a comma. Same assumption, third outing: it cost the Sougrat reading in
+# ROADMAP 34 and six wrong rejections on 2026-10-16.
+AUTHOR_YEAR = re.compile(
+    r"^[A-Z][\w'’\-]+(?:\s+[A-Z]{1,3}\.?)*(?:,|:| et al\.?| and )")
+
+# An entry START found mid-line. `clean_page_text` turns a single newline
+# inside a paragraph into a space, and a reference list is made of exactly
+# that shape, so a whole bibliography routinely arrives as ONE line:
+# "References Arakawa T, Yphantis DA, ... 1991. Glycosylated ... Next A, ...".
+# Splitting on line starts then finds nothing at all, which is why four of six
+# wrongly rejected records had their heading located and zero entries parsed.
+INLINE_NUMBERED = [
+    ("(N)", re.compile(r"\((\d{1,3})\)\s+(?=[A-Z\"“])")),
+    ("[N]", re.compile(r"\[(\d{1,3})\]\s*(?=[A-Z\"“])")),
+    ("N.", re.compile(r"(?:(?<=[.\]\)])|^)\s*(\d{1,3})\.\s+(?=[A-Z\"“])")),
+]
+# A surname opening an entry just after the previous one ended.
+INLINE_AUTHOR = re.compile(
+    r"(?<=[.)])\s+(?=[A-Z][A-Za-z'’\-]{2,},?\s+(?:[A-Z]\.|[A-Z]{1,3}[,\s]))")
+
+
+def _ascending(hits: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """The longest run of `(number, position)` that climbs by one."""
+    best: list = []
+    run: list = []
+    for val, pos in hits:
+        if run and val == run[-1][0] + 1:
+            run.append((val, pos))
+        else:
+            run = [(val, pos)]
+        if len(run) > len(best):
+            best = list(run)
+    return best
+
+
+def split_inline(text: str) -> tuple[list[tuple[str, str]], str]:
+    """Entries out of a reference list that arrived as one reflowed line."""
+    for name, pat in INLINE_NUMBERED:
+        hits = [(int(m.group(1)), m.start()) for m in pat.finditer(text)]
+        run = _ascending(hits)
+        if len(run) >= 8:
+            out = []
+            for i, (val, pos) in enumerate(run):
+                stop = run[i + 1][1] if i + 1 < len(run) else len(text)
+                body = pat.sub("", text[pos:stop], count=1).strip()
+                out.append((str(val), " ".join(body.split())))
+            return out, f'inline "{name}" style, from a reflowed list'
+    cuts = [m.start() for m in INLINE_AUTHOR.finditer(text)]
+    if len(cuts) >= 8:
+        out = []
+        for i, pos in enumerate(cuts):
+            stop = cuts[i + 1] if i + 1 < len(cuts) else len(text)
+            out.append((str(i + 1), " ".join(text[pos:stop].split())))
+        return out, "inline author-year style, from a reflowed list"
+    return [], ""
 
 
 # A parse can find a numbered run that is not a reference list at all. Measured
@@ -241,10 +297,48 @@ MAX_Q1_LEN = 450        # above this the "entries" are paragraphs
 MAX_LABEL_RATIO = 8.0   # highest entry number against how many were recovered
 
 
+# A reference POINTS OUTWARD: it names a journal, a publisher, a place, or a
+# volume and page range. A table row and a numbered equation do not. `library`
+# found that on a fresh sample where the length test failed in both
+# directions -- `Maconochie1998Channel` is table rows at a median of 59
+# characters, which is exactly the short-entry evidence the length guard
+# trusts, and `Ping2004Numerical` is numbered equations.
+# NOTE on the regex shape: a trailing `\b` after an alternative ending in "."
+# can never match -- `\b` needs a word character on one side, and "J. " has
+# none. The first version ended every abbreviation that way, so ONLY the bare
+# words were ever doing any work. Leading boundary only.
+#
+# Single-letter abbreviations are left out on purpose: "J." and "Z." are author
+# initials far more often than they are journals, and this is scored as a
+# fraction over the whole list.
+VENUE = re.compile(
+    r"\b(?:"
+    r"Journal|Jnl|Proc\.?|Proceedings|Rev\.?|Review|Trans\.?|Bull\.?|Ann\.?|"
+    r"Acta|Arch\.?|Chem|Phys|Biol|Biochem|Biophys|Med\.|Sci\.?|Nature|"
+    r"Science|Cell|Lancet|Polym|Macromol|Mater|Eng|Lett|Commun|Res\.|"
+    r"Press|Wiley|Springer|Elsevier|Academic|Pergamon|Plenum|Dekker|McGraw|"
+    r"Blackwell|Oxford|Cambridge|Prentice|Publisher|Publishing|"
+    r"eds?\.|editors?|Vol\.|pp\.|Thesis|Dissertation|University|Univ\."
+    r")", re.I)
+# "29, 7363-7366" / "70: 867-874" / "2, 1083-1094"
+VOLPAGE = re.compile(r"\b\d{1,4}\s*[:,]\s*\d{1,5}\s*[-\u2013]\s*\d{1,5}\b")
+MIN_OUTWARD = 0.45      # of entries must point somewhere
+
+
+def points_outward(raw: str) -> bool:
+    return bool(VENUE.search(raw) or VOLPAGE.search(raw))
+
+
 def list_quality(refs: list[Ref]) -> tuple[bool, str]:
     """Does this parse look like a reference list? `(ok, why_not)`."""
     if not refs:
         return False, "nothing parsed"
+    outward = sum(1 for r in refs if points_outward(r.raw)) / len(refs)
+    if outward < MIN_OUTWARD:
+        return False, (f"only {outward:.0%} of the entries name a journal, "
+                       f"publisher, place or page range, so these are not "
+                       f"references -- a reference points outward, a table row "
+                       f"or an equation does not")
     lens = sorted(len(r.raw) for r in refs)
     q1 = lens[len(lens) // 4]
     labels = [int(r.label) for r in refs if r.label.isdigit()]
@@ -258,7 +352,8 @@ def list_quality(refs: list[Ref]) -> tuple[bool, str]:
         return False, (f"the numbering is not a reference list's: highest "
                        f"entry number {top} against {len(refs)} recovered, so "
                        f"these are most likely page or paragraph numbers")
-    return True, f"q1 {q1} chars, highest label {top} of {len(refs)}"
+    return True, (f"q1 {q1} chars, highest label {top} of {len(refs)}, "
+                  f"{outward:.0%} point outward")
 
 
 def span(nums: list[int]) -> str:
@@ -395,6 +490,13 @@ def text_refs(out: Path, key: str) -> tuple[list[Ref], str]:
         return refs, (f"author-year list, one entry per line, {how} (weaker parse; "
                       "entries are not numbered in the paper)")
 
+    # Last resort: the list is there but arrived as one reflowed line, so
+    # nothing starts a line and both scans above saw nothing to split.
+    if head is not None:
+        inline, how = split_inline(" ".join(lines[head:]))
+        if inline:
+            return ([Ref(label=lab, raw=body) for lab, body in inline],
+                    f"{how} (weaker parse)")
     return [], ("could not find a reference list in the extracted text -- a reflowed "
                 "two-column list often comes out as one unsplittable blob")
 
