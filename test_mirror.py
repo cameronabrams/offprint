@@ -4343,7 +4343,7 @@ def main():
           "and marking 1,048 files stale for that teaches the reader to ignore "
           "the report")
 
-    st, orph, cos, okn = cmap.stale_report(sdir)
+    st, orph, cos, okn = cmap.stale_report(sdir)[:4]
     check(okn == 1 and st == ["Moved2002Paper"],
           f"a page map built on a different extract is reported stale "
           f"({okn} ok, {st})")
@@ -4352,6 +4352,24 @@ def main():
           f"a changed extract leaves nothing in it wrong ({cos})")
     check(orph == ["Gone2004Paper"],
           f"and a file whose extract is gone is named, not deleted ({orph})")
+
+    # A citations file for a DELETED record is worse than a stale extract: it
+    # carries resolved citation keys and reads as current. A refresh deletes
+    # nothing, so the extract survives too and the orphan test cannot see it.
+    (sdir / "library.bib").write_text(
+        "".join(f"@article{{{k},\n doi={{10.1/{k}}}\n}}\n" for k in
+                ("Same2001Paper", "Moved2002Paper", "Named2003Paper",
+                 "Gone2004Paper")), encoding="utf-8")
+    _pair("Deleted2005Paper", 500, 500)
+    st2, orph2, _c2, _o2, gone_ = cmap.stale_report(sdir)
+    check(gone_ == ["Deleted2005Paper"],
+          f"a citations file whose record has left library.bib is named ({gone_})")
+    check("Deleted2005Paper" not in st2 and "Deleted2005Paper" not in orph2,
+          "and is not confused with a moved extract or a missing one")
+    check(orph2 == ["Gone2004Paper"],
+          f"while a record still in library.bib with no extract stays an "
+          f"orphan ({orph2})")
+    (sdir / "library.bib").unlink()
 
     # Files written before the hash existed stay checkable by their count --
     # weakly, but a weak check that names the file beats no check at all.
@@ -4365,12 +4383,12 @@ def main():
         f"---\ncitekey: Hash2005Paper\nverified: confirmed -- x\n"
         f"extract-sha: {cmap.extract_sha(_ext)}\nextract-characters: 9\n---\n",
         encoding="utf-8")
-    st2, _, _, ok2 = cmap.stale_report(hdir)
+    st2, _, _, ok2, _g = cmap.stale_report(hdir)
     check(ok2 == 1 and not st2,
           f"a hash that still matches reads as in step ({ok2}, {st2})")
     (hdir / "text" / "Hash2005Paper.md").write_text(
         _ext.replace("body text", "bodr text"), encoding="utf-8")
-    st3, _, _, ok3 = cmap.stale_report(hdir)
+    st3, _, _, ok3, _g3 = cmap.stale_report(hdir)
     check(st3 == ["Hash2005Paper"] and ok3 == 0,
           f"and the hash catches a change the count agrees with ({st3})")
 
@@ -4430,6 +4448,15 @@ def main():
     # "did not survive extraction" line makes a fabrication read as the more
     # rigorous of the two. Rejected, not labeled.
     import refs as _R
+    import inbox as _ib2
+    check({"dataset", "component", "peer-review"} <= _ib2.NOT_A_PAPER,
+          "a Crossref title search skips datasets: one returned the PDB entry "
+          "10.2210/pdb1grl/pdb for a paper at 0.94 title similarity")
+    check("proceedings-article" not in _ib2.NOT_A_PAPER
+          and "book-chapter" not in _ib2.NOT_A_PAPER
+          and "posted-content" not in _ib2.NOT_A_PAPER,
+          "but keeps proceedings, chapters and preprints, which are papers "
+          "someone files")
     def _mk(bodies):
         return [_R.Ref(label=str(i), raw=b) for i, b in enumerate(bodies, 1)]
     real = _mk(["Alper, H. E., and T. R. Stouch. 1995. Orientation and "

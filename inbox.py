@@ -237,16 +237,36 @@ def resolve_doi(doi: str) -> dict | None:
         return None
 
 
+# Crossref indexes more than papers, and a bibliographic search ranks by text
+# similarity alone. On 2026-10-16 `library` found a title search for
+# `Braig1994Crystal` returning the PDB DATASET `10.2210/pdb1grl/pdb` at 0.94
+# similarity -- a deposited structure carrying the paper's own title. Filing a
+# PDF against that DOI would put a dataset's metadata on a journal article.
+#
+# A deny list rather than an allowlist of `journal-article`: proceedings,
+# chapters, theses, reports and preprints are all papers somebody files, and
+# excluding them to be rid of datasets would cost more than it saves.
+NOT_A_PAPER = {
+    "dataset", "component", "peer-review", "grant", "journal", "journal-issue",
+    "journal-volume", "book-series", "book-set", "proceedings-series",
+    "report-series", "standard-series", "database", "entry",
+}
+
+
 def crossref_search(text: str) -> dict | None:
     """Ask Crossref what paper this first page belongs to."""
     query = " ".join(text.split()[:60])
     r = requests.get("https://api.crossref.org/works",
-                     params={"query.bibliographic": query, "rows": 3},
+                     params={"query.bibliographic": query, "rows": 5},
                      headers={"User-Agent": UA}, timeout=60)
     if r.status_code != 200:
         return None
     items = r.json()["message"].get("items") or []
-    return normalize(items[0]) if items else None
+    for item in items:
+        if (item.get("type") or "").lower() in NOT_A_PAPER:
+            continue
+        return normalize(item)
+    return None
 
 
 def title_of(meta: dict) -> str:

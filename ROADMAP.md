@@ -378,6 +378,16 @@ apart.
       not a body hash, because those bodies are no longer on disk — strong,
       not proof.
 
+      **`citations/` is a second orphan directory, since 2026-10-16.** When
+      `library` deleted three duplicate `Sullivan1998Induced*` records at
+      Cameron's word, the next refresh left **four** files behind, not two:
+      `text/` and `citations/` for each. A citations file for a deleted record
+      is worse than a stale extract — it carries resolved citation keys and
+      reads as current. `--stale` now names them, by the record's absence from
+      `library.bib` rather than by a missing extract, because a refresh
+      deletes nothing and the extract survives too. It still removes nothing:
+      one flag, one claim.
+
       **Four orphan extracts remain in the mirror** —
       `Shan2011How-3.md`, `Hirota2000Effect-2.md`, `Daoulas2005Molecular-2.md`
       — all byte-identical in body to live extracts — and, since 2026-10-14,
@@ -3467,6 +3477,21 @@ fabrication read as rigorous.
 
 Both are left. One wrong rejection and one fabrication in sixty is the floor
 this approach reaches, and the next improvement is in extraction, not here.
+
+### A title search can return something that is not a paper — 0.44.0
+
+`library` found a Crossref bibliographic search returning the PDB **dataset**
+`10.2210/pdb1grl/pdb` for `Braig1994Crystal` at 0.94 title similarity: a
+deposited structure carries its paper's title, and the search ranks on text
+alone. `crossref_search` took `items[0]` unconditionally, so filing a PDF
+against that would have put a dataset's metadata on a journal article. It is
+a live path — `zotero_inbox.py` reuses `inbox.py`'s identification whole.
+
+Their suggested fix was to filter to `journal-article`. **A deny list
+instead**: proceedings, chapters, theses, reports and preprints are all papers
+someone files, and excluding them to be rid of datasets would cost more than
+it saves. The search now skips datasets, components, peer reviews and the
+container types, and takes the first surviving result of five.
 
 ## 33. `--yes` approved a list and acted on a directory — FIXED 0.32.0
 

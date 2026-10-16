@@ -649,7 +649,7 @@ def extract_sha(raw: str) -> str:
     return hashlib.sha256(body.encode("utf-8", "replace")).hexdigest()[:16]
 
 
-def stale_report(out: Path) -> tuple[list, list, list, int]:
+def stale_report(out: Path) -> tuple[list, list, list, int, list]:
     """Which `citations/` files no longer describe the extract beneath them.
 
     A refresh never deletes this directory -- it unlinks only its own targets
@@ -668,7 +668,15 @@ def stale_report(out: Path) -> tuple[list, list, list, int]:
     they do not need regenerating, and saying they do would send a reader
     chasing 215 files that are fine.
     """
-    stale, orphan, cosmetic, ok = [], [], [], 0
+    # A citations file for a record that no longer exists is worse than a
+    # stale extract: it carries resolved citation keys and reads as current.
+    # `library` deleted three duplicate Sullivan records on 2026-10-16 and the
+    # next refresh left BOTH text/ and citations/ behind for each -- a refresh
+    # deletes nothing, by design. The extract survives, so the orphan test
+    # below cannot see it; the record's absence from library.bib can.
+    known = set(re.findall(r"^@\w+\{([^,]+),", (out / "library.bib").read_text(
+        encoding="utf-8", errors="replace"), re.M)) if (out / "library.bib").exists() else set()
+    stale, orphan, cosmetic, ok, gone = [], [], [], 0, []
     for path in sorted((out / "citations").glob("*.md")):
         head = path.read_text(encoding="utf-8", errors="replace")[:1200]
         key = re.search(r"^citekey:\s*(\S+)", head, re.M)
@@ -676,6 +684,9 @@ def stale_report(out: Path) -> tuple[list, list, list, int]:
         was = re.search(r"^extract-characters:\s*(\d+)", head, re.M)
         verdict = re.search(r"^verified:\s*(\S+)", head, re.M)
         if not key:
+            continue
+        if known and key.group(1) not in known:
+            gone.append(key.group(1))
             continue
         extract = out / "text" / f"{key.group(1)}.md"
         if not extract.exists():
@@ -699,7 +710,7 @@ def stale_report(out: Path) -> tuple[list, list, list, int]:
             cosmetic.append(key.group(1))
         else:
             stale.append(key.group(1))
-    return stale, orphan, cosmetic, ok
+    return stale, orphan, cosmetic, ok, gone
 
 
 def drop_self_matches(key: str, refs: list) -> int:
@@ -879,7 +890,7 @@ def main() -> int:
     args = ap.parse_args()
 
     if args.stale:
-        stale, orphan, cosmetic, ok = stale_report(args.out)
+        stale, orphan, cosmetic, ok, gone = stale_report(args.out)
         print(f"offprint {__version__} citemap --stale\n")
         print(f"  {ok} file(s) still describe their extract")
         if stale:
@@ -894,11 +905,18 @@ def main() -> int:
             print(f"\n  {len(cosmetic)} list-only file(s) whose extract "
                   "changed. These carry no page map, so nothing in them is "
                   "wrong; only the recorded character count is out of date.")
+        if gone:
+            print(f"\n  {len(gone)} file(s) for a record no longer in "
+                  f"library.bib -- these carry resolved citation keys and read "
+                  f"as current, which is worse than a stale extract:")
+            for k in gone:
+                print(f"    {k}")
         if orphan:
             print(f"\n  {len(orphan)} file(s) whose extract is gone: "
                   + ", ".join(orphan))
+        if gone or orphan:
             print("  Nothing here removes them -- that is a different claim.")
-        if not (stale or orphan or cosmetic):
+        if not (stale or orphan or cosmetic or gone):
             print("\n  Nothing is stale.")
         return 0
 
@@ -913,7 +931,7 @@ def main() -> int:
         if args.only:
             ap.error("--refresh-stale chooses the records itself; "
                      "--only names them. Give one.")
-        stale, orphan, cosmetic, ok = stale_report(args.out)
+        stale, orphan, cosmetic, ok, _gone = stale_report(args.out)
         print(f"offprint {__version__} citemap --refresh-stale: "
               f"{ok} file(s) still match their extract")
         if cosmetic:
