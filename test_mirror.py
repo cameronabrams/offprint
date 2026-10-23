@@ -4366,6 +4366,33 @@ def main():
           f"a citations file whose record has left library.bib is named ({gone_})")
     check("Deleted2005Paper" not in st2 and "Deleted2005Paper" not in orph2,
           "and is not confused with a moved extract or a missing one")
+    # The split is by PROVENANCE, not by whether a page map is present. When
+    # list-only meant author-year the list came from Crossref and a changed
+    # extract really did leave only the stamp out of date. A PARSED list is
+    # downstream of the text, and `library` found one carrying two references
+    # run together while --stale said nothing in it was wrong.
+    def _listonly(key, src, recorded, actual):
+        (sdir / "citations" / f"{key}.md").write_text(
+            f"---\ncitekey: {key}\nsource: {src}\nverified: parsed -- x\n"
+            f"extract-characters: {recorded}\n---\n", encoding="utf-8")
+        (sdir / "text" / f"{key}.md").write_text(
+            f"---\ncitekey: {key}\ncharacters: {actual}\n---\n\nbody",
+            encoding="utf-8")
+    _listonly("Parsed2006Paper", "extract", 500, 777)
+    _listonly("Deposit2007Paper", "crossref", 500, 777)
+    (sdir / "library.bib").write_text(
+        (sdir / "library.bib").read_text(encoding="utf-8")
+        + "".join(f"@article{{{k},\n doi={{10.1/{k}}}\n}}\n"
+                  for k in ("Parsed2006Paper", "Deposit2007Paper")),
+        encoding="utf-8")
+    st4, _o4, cos4, _ok4, _g4 = cmap.stale_report(sdir)
+    check("Parsed2006Paper" in st4 and "Parsed2006Paper" not in cos4,
+          f"a list-only file PARSED from the extract is stale when the extract "
+          f"changes -- its entries are downstream of the text ({st4})")
+    check("Deposit2007Paper" in cos4 and "Deposit2007Paper" not in st4,
+          f"while a deposit's list does not change when the extract does "
+          f"({cos4})")
+
     check(orph2 == ["Gone2004Paper"],
           f"while a record still in library.bib with no extract stays an "
           f"orphan ({orph2})")
@@ -4397,10 +4424,20 @@ def main():
     check("unverifiable" in cmap.LIST_ONLY and "no-signal" in cmap.LIST_ONLY,
           "a paper whose mapping could not be CHECKED still gets its "
           "reference list")
-    check("failed" not in cmap.LIST_ONLY and "offset" not in cmap.LIST_ONLY,
-          "but one whose mapping was checked and DISAGREED does not -- that is "
-          "evidence of disagreement, not absence of evidence, and the entry "
-          "numbering is the thing in dispute")
+    # Excluded until 2026-10-23. Two records gained a DOI, their deposits then
+    # failed verification, and the papers LOST reference lists they had been
+    # carrying from a parse -- worse off for acquiring an identifier. What
+    # `failed` impeaches is the MAPPING, and a list-only file publishes none.
+    check("failed" in cmap.LIST_ONLY and "offset" in cmap.LIST_ONLY,
+          "a mapping that was checked and DISAGREED still yields the list: the "
+          "verdict impeaches the mapping, and the file publishes no mapping")
+    for _v, _want in (("failed", "did NOT match"),
+                      ("offset", "an entry the printed one does not")):
+        _o = cmap.render("F2001Paper", "10.1/z", refs_true, [],
+                         {"verdict": _v, "rates": {}, "why": "w"}, [], 1)
+        check(_want in _o and "deposit order" in _o,
+              f"and says which it was ({_v}), beside the standing warning that "
+              f"the order was never checked")
     for _v in cmap.LIST_ONLY:
         _o = cmap.render("L2001Paper", "10.1/z", refs_true, [],
                          {"verdict": _v, "rates": {}, "why": "w"}, [], 1)

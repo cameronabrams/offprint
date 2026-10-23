@@ -126,11 +126,24 @@ STYLES = {"bracket": BRACKET, "paren": PAREN, "super": SUPER}
 # pointed out on 2026-10-15 that the same sentence is true of a paper whose
 # deposit simply names too few authors to test, and Cameron asked for them.
 #
-# `failed` and `offset` are deliberately NOT here. Those verdicts are not an
-# absence of evidence, they are evidence of disagreement between the deposit
-# and the printed list -- and the numbering of the entries is the thing in
-# dispute. Report when you do not know; refuse when you know it is wrong.
-LIST_ONLY = ("not-applicable", "unverifiable", "no-signal", "parsed")
+# `failed` and `offset` were excluded until 2026-10-23, on the reasoning that
+# those verdicts are evidence of DISAGREEMENT rather than absence of evidence,
+# and that the entry numbering was the thing in dispute.
+#
+# `library` showed the cost, without asking for the change: two records gained
+# a DOI in the backfill, their deposits then failed verification, and the
+# papers LOST the reference lists they had been carrying from a parse. A paper
+# is worse off for having acquired an identifier, which cannot be right.
+#
+# The reasoning was also inconsistent with the file it produces. What `failed`
+# impeaches is the MAPPING, and a list-only file publishes no mapping -- it
+# says in the body that the entries are in deposit order, unchecked against
+# the paper's own numbering, and are not a lookup table. That is exactly the
+# mitigation the exclusion was reaching for. The list itself is the
+# publisher's record of what this DOI cites, and a failed mapping does not
+# impeach it.
+LIST_ONLY = ("not-applicable", "unverifiable", "no-signal", "parsed",
+             "failed", "offset")
 
 # "(Rizzuto et al., 1998)". A paper citing this way has no marker N, so
 # "marker N means reference N" is not a claim that can hold or fail -- it does
@@ -513,6 +526,14 @@ def render(key: str, doi: str, refs: list, by_page: list, check: dict,
             "parsed":
                 "No publisher-deposited reference list exists for this record, "
                 "so the list below was READ OUT OF THE EXTRACT.",
+            "failed":
+                "This paper cites by number, and the deposited list did NOT "
+                "match the printed one when checked against it, so no page "
+                "map is given.",
+            "offset":
+                "This paper cites by number, and the deposited list appears "
+                "to carry an entry the printed one does not -- marker N "
+                "matched reference N+1 -- so no page map is given.",
         }[check["verdict"]]
         # The provenance sentence is NOT shared: "the publisher's own deposit,
         # nothing inferred" is true of three of these verdicts and false of
@@ -663,10 +684,22 @@ def stale_report(out: Path) -> tuple[list, list, list, int, list]:
     is what reads it back. Report only: regenerating is `--only`, and deleting
     someone's file is a different claim on different evidence.
 
-    A list-only file carries no page map, so a changed extract leaves
-    nothing in it wrong except the stamp. Reported apart for that reason --
-    they do not need regenerating, and saying they do would send a reader
-    chasing 215 files that are fine.
+    **The split is by PROVENANCE, not by whether a page map is present.** That
+    was wrong, and wrong in the reassuring direction: when list-only meant
+    author-year, the list came from Crossref and a changed extract really did
+    leave only the stamp out of date. Since 0.38.0 a list-only file can be
+    PARSED from the extract, and then its content is downstream too.
+    `library` found `citations/Lai1994Statics.md` carrying
+    `J. M. Hammersley, G. M. Torrie, and S. G. Whittington, [20] P. F. Luckham
+    and J. Klein` as one entry -- two references run together by the old OCR
+    scan, which the replacement extract has clean and separate -- while
+    `--stale` said nothing in it was wrong.
+
+    So: `source: extract` means the content is downstream of the extract and a
+    change makes it STALE; `source: crossref` means only the page map is, and
+    a list-only file from a deposit is merely out of date in its stamp. Fourth
+    time a standing sentence in this directory turned out false once a new
+    kind of file arrived.
     """
     # A citations file for a record that no longer exists is worse than a
     # stale extract: it carries resolved citation keys and reads as current.
@@ -681,6 +714,7 @@ def stale_report(out: Path) -> tuple[list, list, list, int, list]:
         head = path.read_text(encoding="utf-8", errors="replace")[:1200]
         key = re.search(r"^citekey:\s*(\S+)", head, re.M)
         sha = re.search(r"^extract-sha:\s*([0-9a-f]+)", head, re.M)
+        source = re.search(r"^source:\s*(\S+)", head, re.M)
         was = re.search(r"^extract-characters:\s*(\d+)", head, re.M)
         verdict = re.search(r"^verified:\s*(\S+)", head, re.M)
         if not key:
@@ -706,7 +740,9 @@ def stale_report(out: Path) -> tuple[list, list, list, int, list]:
             matched = False
         if matched:
             ok += 1
-        elif verdict and verdict.group(1) in LIST_ONLY:
+        elif (verdict and verdict.group(1) in LIST_ONLY
+                and not (source and source.group(1) == "extract")):
+            # A deposit's list does not change when the extract does.
             cosmetic.append(key.group(1))
         else:
             stale.append(key.group(1))
@@ -811,7 +847,7 @@ def plan_one(out: Path, key: str, doi: str, lib: list, cache: dict) -> dict:
                 "doi": doi, "why": check["why"]}
 
     check = verify_ordinal(body, refs)
-    if check["verdict"] in LIST_ONLY:
+    if check["verdict"] in LIST_ONLY:   # includes failed/offset since 0.46.0
         match_refs(refs, lib)
         drop_self_matches(key, refs)
         return {"key": key, "status": check["verdict"], "refs": refs,
@@ -877,6 +913,9 @@ def main() -> int:
     ap.add_argument("--refresh-stale", action="store_true",
                     help="rewrite only the files whose extract moved under "
                          "them. Dry like everything else: add --write to act")
+    ap.add_argument("--remove-refused", action="store_true",
+                    help="with --write, delete a citations/ file whose record "
+                         "this run refuses. Without it they are only named")
     ap.add_argument("--stale", action="store_true",
                     help="report which citations/ files no longer match the "
                          "extract beneath them, and stop")
@@ -902,9 +941,12 @@ def main() -> int:
                   "--write --only " + " ".join(stale[:8])
                   + (" ..." if len(stale) > 8 else ""))
         if cosmetic:
-            print(f"\n  {len(cosmetic)} list-only file(s) whose extract "
-                  "changed. These carry no page map, so nothing in them is "
-                  "wrong; only the recorded character count is out of date.")
+            print(f"\n  {len(cosmetic)} list-only file(s) from a CROSSREF "
+                  "deposit whose extract changed. A deposit does not change "
+                  "when the extract does and they carry no page map, so only "
+                  "the recorded hash is out of date. A list-only file PARSED "
+                  "from the extract is listed as stale above instead, because "
+                  "its entries are downstream of the text.")
         if gone:
             print(f"\n  {len(gone)} file(s) for a record no longer in "
                   f"library.bib -- these carry resolved citation keys and read "
@@ -939,9 +981,10 @@ def main() -> int:
             # them is wrong -- only the recorded hash. Rewriting 215 files to
             # correct a stamp would churn a directory that now syncs to
             # Cameron's laptops, for no change a reader could use.
-            print(f"  {len(cosmetic)} list-only file(s) also moved and are "
-                  f"SKIPPED: no page map, so nothing in them is wrong. "
-                  f"Refresh the stamp with --only if you want it.")
+            print(f"  {len(cosmetic)} deposit-sourced list-only file(s) also "
+                  f"moved and are SKIPPED: a deposit does not change when the "
+                  f"extract does, so only the stamp is out of date. Refresh "
+                  f"it with --only if you want it.")
         if orphan:
             print(f"  {len(orphan)} file(s) whose extract is gone, left alone: "
                   + ", ".join(orphan[:6]) + ("..." if len(orphan) > 6 else ""))
@@ -965,7 +1008,8 @@ def main() -> int:
     cache = load_cache()
     tally: dict[str, int] = {}
     rows: list[tuple] = []
-    written = refs_seen = held_seen = bib_seen = 0
+    written = refs_seen = held_seen = bib_seen = removed = 0
+    refused_standing: list[str] = []
     try:
         for i, (key, doi) in enumerate(sorted(wanted.items())):
             if args.limit and i >= args.limit:
@@ -983,6 +1027,18 @@ def main() -> int:
             if i and i % 50 == 0:
                 save_cache(cache)
             if plan["status"] not in ("confirmed",) + LIST_ONLY:
+                # A refusal does not remove the file a previous version wrote,
+                # so the mirror keeps an answer this tool would now decline to
+                # give -- and the file says its own presence is the check
+                # having passed. `library` hit this when two records gained a
+                # DOI and then failed verification: the 0.43.0 files stayed on
+                # disk. Same shape as the orphan extract.
+                stand = args.out / "citations" / f"{key}.md"
+                if stand.exists():
+                    refused_standing.append(key)
+                    if args.remove_refused and args.write:
+                        stand.unlink()
+                        removed += 1
                 if args.only or plan["status"] in ("offset", "failed",
                                                    "not-a-list"):
                     print(f"  - {key}: {plan['status']}"
@@ -1033,6 +1089,18 @@ def main() -> int:
         if bib_seen:
             print(f"{bib_seen:,} number(s) left out of the page maps as "
                   f"bibliography rather than citation.")
+    if refused_standing:
+        print(f"\n{len(refused_standing)} record(s) this run REFUSES still "
+              f"have a citations/ file from an earlier version"
+              + (f"; {removed} removed" if removed else
+                 ". The file says its own presence is the check having "
+                 "passed, which is now untrue of these. Pass --remove-refused "
+                 "with --write to delete them:") + "")
+        if not removed:
+            for k in refused_standing[:12]:
+                print(f"    {k}")
+            if len(refused_standing) > 12:
+                print(f"    ... and {len(refused_standing) - 12} more")
     if not args.write:
         print("\nDry run. Nothing was written. A paper listed above as anything "
               "other than a write is one whose mapping could not be confirmed, "

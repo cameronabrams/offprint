@@ -523,10 +523,40 @@ them — a sentence that is untrue on some of the files it is printed into is
 worse than no sentence. `library` found three Cell Press papers of one
 citation style drawing three different verdicts, none of them true.
 
-A `citations/` file records the extract's character count. A re-extraction
-changes it, which is how a stale file is spotted; nothing here repairs one,
-because regenerating is a whole-library claim and this flag makes a per-paper
-one.
+A `citations/` file records the extract's hash. A re-extraction changes it,
+which is how a stale file is spotted; nothing here repairs one, because
+regenerating is a whole-library claim and this flag makes a per-paper one.
+
+**`--stale` splits by PROVENANCE, not by whether a page map is present.** That
+distinction was wrong in the reassuring direction for two versions: when
+list-only meant author-year the list came from Crossref, so a changed extract
+really did leave only the stamp out of date — and the message said so. Since
+0.38.0 a list-only file can be *parsed from the extract*, and then its content
+is downstream too. `library` found one carrying two references run together by
+an OCR scan the replacement extract has clean, while `--stale` said nothing in
+it was wrong. `source: extract` means a changed extract makes the file stale;
+`source: crossref` means only the stamp is. **Fourth time a standing sentence
+here turned out false once a new kind of file arrived** — after the
+"mapping was verified" paragraph, the `controls: 0.00` line, and the
+deposit-provenance sentence.
+
+**A refusal must not leave the previous answer standing.** citemap writes no
+file for a record it refuses, but it does not remove the one an earlier
+version wrote — so the mirror keeps an answer this tool would now decline to
+give, in a file that says its own presence is the check having passed. The
+write path names them; `--remove-refused` deletes them, and only with
+`--write`. Same shape as the orphan extract.
+
+**`failed` and `offset` earn a list-only file**, which they did not until
+0.46.0. The exclusion reasoned that those verdicts are evidence of
+disagreement rather than absence of evidence. Its cost showed up when two
+records gained a DOI in a backfill, their deposits failed verification, and
+the papers lost reference lists they had been carrying from a parse — worse
+off for acquiring an identifier. The reasoning was also inconsistent with the
+artifact: what `failed` impeaches is the *mapping*, and a list-only file
+publishes no mapping. It says in the body that the entries are in deposit
+order, unchecked, and not a lookup table, which is the mitigation the
+exclusion was reaching for.
 
 ## An approval is for a list, never for a directory
 

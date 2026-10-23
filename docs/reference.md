@@ -68,6 +68,7 @@ line is exempt: naming it is approving it.
 --limit N              stop after N records
 --report PATH          TSV naming every record and its verdict
 --stale                report files that no longer match their extract
+--remove-refused       with --write, delete a file whose record is now refused
 --refresh-stale        rewrite only the files whose extract moved
 ```
 
