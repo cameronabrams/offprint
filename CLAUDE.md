@@ -585,6 +585,15 @@ And the run says what it LEFT, by name. `skipped: 2` on a clean run reads as
 two things that failed; a leftover is only obviously deliberate if the run
 says so.
 
+**That list is what the run did not DEAL WITH, not what is still on disk**,
+and the difference is the whole line. Reading the directory made it say the
+opposite of its purpose under `--keep-inbox`, where every successfully filed
+PDF stays put by request and was then reported as needing a person — the one
+flag that makes the list longest. Testing the flag would be the wrong repair:
+it drops the line exactly where a genuinely unhandled file is hardest to pick
+out of a full directory. Subtract what was handled, and the line is right
+whether or not anything moved.
+
 ## An approval is for a list, never for a directory
 
 `--yes` has always meant "do the run I just read". Over `<out>/inbox/` that

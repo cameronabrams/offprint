@@ -318,6 +318,24 @@ def retire_filed(path: Path, keep: bool) -> str:
     return ""
 
 
+def still_needing_a_person(out: Path, handled: set) -> list[str]:
+    """What this run did NOT deal with -- not simply what is still on disk.
+
+    Reading the directory made the closing line say the opposite of what it
+    was for: under `--keep-inbox` every successfully filed PDF stays put by
+    request, and each was then reported as needing a person. `library` saw it
+    on an already-attached file it had asked to keep.
+
+    Subtracting what was handled is right whether or not anything moved.
+    Testing the flag instead would drop the line entirely under
+    `--keep-inbox`, which is the one case where the genuinely unhandled files
+    are hardest to pick out of a full directory by eye.
+    """
+    return sorted(p.name for p in (out / "inbox").glob("*")
+                  if p.is_file() and not p.name.startswith(".")
+                  and p.name not in handled)
+
+
 def inbox_plan_path(out: Path) -> Path:
     """Where a dry run records what it showed a human.
 
@@ -439,6 +457,10 @@ def main() -> int:
         doi_index = zotero_doi_index(z)
 
     filed = skipped = created = retired = 0
+    # Names this run dealt with: uploaded, or found byte-identical to an
+    # attachment the record already holds. Both are done, whether or not the
+    # file was then moved.
+    handled: set[str] = set()
     recorded = {}
     for path in files:
         plan, why = plan_one(args.out, path, args.key or "", args.item or "",
@@ -499,6 +521,7 @@ def main() -> int:
                 if note:
                     print(f"      ! {note}")
                 retired += bool(moved)
+                handled.add(path.name)
                 skipped += 1
                 continue
             n_existing = len(storage_attachments(children))
@@ -525,6 +548,7 @@ def main() -> int:
         print(f"      uploaded {len(data):,} bytes as {att}")
         # Only after the upload is confirmed. A move before this point would
         # take the file out of reach of a retry.
+        handled.add(path.name)
         note = retire_filed(path, args.keep_inbox)
         if note:
             print(f"      ! {note}")
@@ -540,9 +564,16 @@ def main() -> int:
     # Say what is LEFT and why. "skipped: 2" on a clean run reads as two
     # things that failed; a leftover is only obviously deliberate if the run
     # says it is.
+    #
+    # The list is what this run did NOT deal with -- not simply what is still
+    # on disk. Reading the directory made the line say the opposite of what it
+    # was for under `--keep-inbox`, where every successfully filed PDF stays
+    # put by request and was then reported as needing a person. Subtracting
+    # what was handled is right whether or not anything moved, which testing
+    # the flag would not be: that would drop the line entirely in the one case
+    # where the genuinely unhandled files are hardest to pick out by eye.
     if args.yes and sweep:
-        left = sorted(p.name for p in (args.out / "inbox").glob("*")
-                      if p.is_file() and not p.name.startswith("."))
+        left = still_needing_a_person(args.out, handled)
         if left:
             print(f"\n{len(left)} file(s) still in inbox/, needing a person:")
             for name in left[:10]:

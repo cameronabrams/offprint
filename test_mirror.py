@@ -4705,6 +4705,22 @@ def main():
     finally:
         zi.filed_dir = _real_filed_dir
 
+    # The closing line exists so a leftover reads as DELIBERATE. Reading the
+    # directory made it say the opposite under --keep-inbox, where every
+    # successfully filed PDF stays put by request.
+    (ibx / "inbox").mkdir(parents=True, exist_ok=True)
+    for n in ("filed.pdf", "alreadythere.pdf", "notapaper.pdf", ".hidden.pdf"):
+        (ibx / "inbox" / n).write_bytes(b"%PDF-1.4 x")
+    check(zi.still_needing_a_person(ibx, {"filed.pdf", "alreadythere.pdf"})
+          == ["notapaper.pdf"],
+          "only what the run did not deal with is listed, so a file kept on "
+          "purpose is not reported as needing a person")
+    check(zi.still_needing_a_person(ibx, set())
+          == ["alreadythere.pdf", "filed.pdf", "notapaper.pdf"],
+          "and with nothing handled, everything present is still named")
+    check(".hidden.pdf" not in zi.still_needing_a_person(ibx, set()),
+          "dotfiles are not work")
+
     pages = cmap.split_pages(extract)
     check([p for p, _t, _o in pages] == [1, 2],
           f"the extract's own page markers delimit the pages "
