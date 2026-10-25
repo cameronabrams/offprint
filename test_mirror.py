@@ -4679,6 +4679,32 @@ def main():
     check("a check, not a guarantee" in _g0,
           "and when none do, says that is a check rather than a promise")
 
+    # An inbox stops being a work queue the moment finished items stay in it.
+    # `library` could not tell a fresh drop from an already-filed one without
+    # a 2,758-item dry run, and inbox/ syncs to every laptop.
+    ibx = tmp / "inboxretire"
+    (ibx / "inbox").mkdir(parents=True, exist_ok=True)
+    src = ibx / "inbox" / "paper.pdf"
+    src.write_bytes(b"%PDF-1.4 filed")
+    _real_filed_dir = zi.filed_dir
+    try:
+        zi.filed_dir = lambda: ibx / "cache-filed"
+        check(zi.retire_filed(src, keep=True) == "" and src.exists(),
+              "--keep-inbox leaves the file where the operator put it")
+        check(zi.retire_filed(src, keep=False) == "" and not src.exists()
+              and (ibx / "cache-filed" / "paper.pdf").exists(),
+              "otherwise it moves OUT of the mirror, which is the point: "
+              "inbox/ syncs and the cache does not")
+        # Two different PDFs can arrive under one publisher's download name.
+        src.write_bytes(b"%PDF-1.4 a different paper")
+        check(zi.retire_filed(src, keep=False) == ""
+              and (ibx / "cache-filed" / "paper-2.pdf").read_bytes()
+              == b"%PDF-1.4 a different paper",
+              "and a name collision is suffixed, never overwritten -- the "
+              "second file is not evidence about the first")
+    finally:
+        zi.filed_dir = _real_filed_dir
+
     pages = cmap.split_pages(extract)
     check([p for p, _t, _o in pages] == [1, 2],
           f"the extract's own page markers delimit the pages "

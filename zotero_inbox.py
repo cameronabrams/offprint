@@ -273,6 +273,51 @@ def plan_one(out: Path, path: Path, forced_key: str, forced_item: str,
     return {"create": doi}, label + " -- NEW record"
 
 
+def filed_dir() -> Path:
+    """Where a PDF goes once Zotero holds it.
+
+    **Outside the mirror, which is the whole point.** `<out>/inbox/` is inside
+    the Syncthing tree, so a filed PDF that stays there is copied to every
+    laptop forever -- `library` measured over 100 MB of finished work in one
+    week. `<out>/pdf/` is no better: it syncs too, and it is the refresh's
+    archive namespace, so dropping files there the refresh did not put there
+    invites a later run to reason about them.
+
+    This is what `inbox.py` did for Mendeley, and the cache column in
+    CLAUDE.md's table exists for exactly this reason: fetched PDFs live
+    outside the library so that having one does not sync it everywhere.
+    """
+    return Path.home() / ".cache" / "offprint" / "filed"
+
+
+def retire_filed(path: Path, keep: bool) -> str:
+    """Move a PDF out of the inbox once its work is done. Never deletes.
+
+    An inbox stops being a work queue the moment finished items stay in it.
+    `library` could not tell a fresh drop from an already-filed one without a
+    full 2,758-item dry run, and waited out a settle loop on a count that was
+    already wrong.
+
+    A name collision is suffixed rather than overwritten: two different PDFs
+    can arrive under one publisher's download name, and the second is not
+    evidence about the first.
+    """
+    if keep:
+        return ""
+    dest = filed_dir() / path.name
+    if dest.exists():
+        stem, suf, n = dest.stem, dest.suffix, 2
+        while dest.exists():
+            dest = filed_dir() / f"{stem}-{n}{suf}"
+            n += 1
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        path.replace(dest)
+    except OSError as exc:          # a cross-device move, a read-only mount
+        return f"could not move {path.name} out of inbox/: {exc}"
+    return ""
+
+
 def inbox_plan_path(out: Path) -> Path:
     """Where a dry run records what it showed a human.
 
@@ -343,6 +388,9 @@ def main() -> int:
     ap.add_argument("--no-create", action="store_true",
                     help="refuse a paper no record holds, instead of creating "
                          "the record for it")
+    ap.add_argument("--keep-inbox", action="store_true",
+                    help="leave filed PDFs in <out>/inbox/ instead of moving "
+                         "them to ~/.cache/offprint/filed/")
     ap.add_argument("--yes", action="store_true",
                     help="actually create and upload; without it this is a dry "
                          "run. Over <out>/inbox/ it files only what the last "
@@ -390,7 +438,7 @@ def main() -> int:
     if not (args.key or args.item):
         doi_index = zotero_doi_index(z)
 
-    filed = skipped = created = 0
+    filed = skipped = created = retired = 0
     recorded = {}
     for path in files:
         plan, why = plan_one(args.out, path, args.key or "", args.item or "",
@@ -441,7 +489,16 @@ def main() -> int:
             dup = already_attached(children, data)
             if dup:
                 label = citekey or item_key
-                print(f"  = {path.name}: already attached to {label} as {dup}")
+                # Byte-identical to something the record already holds, so
+                # this file's work is done even though this run did not do
+                # it. Leaving it is what turns an inbox into a midden.
+                note = retire_filed(path, args.keep_inbox) if args.yes else ""
+                moved = args.yes and not args.keep_inbox and not note
+                print(f"  = {path.name}: already attached to {label} as {dup}"
+                      + ("; moved out of inbox/" if moved else ""))
+                if note:
+                    print(f"      ! {note}")
+                retired += bool(moved)
                 skipped += 1
                 continue
             n_existing = len(storage_attachments(children))
@@ -466,10 +523,32 @@ def main() -> int:
             writer.register(att, auth["uploadKey"])
         filed += 1
         print(f"      uploaded {len(data):,} bytes as {att}")
+        # Only after the upload is confirmed. A move before this point would
+        # take the file out of reach of a retry.
+        note = retire_filed(path, args.keep_inbox)
+        if note:
+            print(f"      ! {note}")
+        else:
+            retired += not args.keep_inbox
 
     print(f"\n{'filed' if args.yes else 'would file'}: {filed}, "
           f"records {'created' if args.yes else 'to create'}: {created}, "
           f"skipped: {skipped}")
+    if retired:
+        print(f"{retired} file(s) moved out of inbox/ to {filed_dir()} -- "
+              f"Zotero holds them, and inbox/ syncs to every machine.")
+    # Say what is LEFT and why. "skipped: 2" on a clean run reads as two
+    # things that failed; a leftover is only obviously deliberate if the run
+    # says it is.
+    if args.yes and sweep:
+        left = sorted(p.name for p in (args.out / "inbox").glob("*")
+                      if p.is_file() and not p.name.startswith("."))
+        if left:
+            print(f"\n{len(left)} file(s) still in inbox/, needing a person:")
+            for name in left[:10]:
+                print(f"  {name}")
+            if len(left) > 10:
+                print(f"  ... and {len(left) - 10} more")
     if not args.yes:
         print("\nDry run. Nothing was created and nothing was uploaded.")
         if sweep:

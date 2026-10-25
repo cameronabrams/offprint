@@ -44,6 +44,7 @@ also why an OCR recovery run must be given the flag or it does nothing at all.
 --key CITEKEY          file ONE named PDF under this key, skipping identification
 --item KEY             file ONE named PDF onto this Zotero item key
 --no-create            refuse a paper no record holds, instead of creating one
+--keep-inbox           leave filed PDFs in inbox/ instead of moving them out
 --yes                  create and upload; without it this is a dry run
 ```
 

@@ -558,6 +558,33 @@ publishes no mapping. It says in the body that the entries are in deposit
 order, unchecked, and not a lookup table, which is the mitigation the
 exclusion was reaching for.
 
+## An inbox that keeps what it has finished is not a queue
+
+`zotero_inbox.py` uploaded and reported success and left the PDF in
+`<out>/inbox/` — for twenty-three days, as it turned out. Not a correctness
+bug: the byte-identical guard caught every leftover on both the dry run and
+`--yes`, and nothing was ever duplicated. What it cost is that `library` could
+not tell a fresh drop from an already-filed one without a 2,758-item dry run,
+waited out a settle loop on a count that was already wrong, and `inbox/` is
+inside the Syncthing tree, so a hundred megabytes of finished work had been
+copied to Cameron's laptops.
+
+So a PDF leaves the inbox once Zotero holds it — **after the upload is
+confirmed**, never before, because a move before that point takes the file out
+of reach of a retry. A file found **already attached** leaves too: byte-equal
+to something the record already holds means its work is done, whoever did it.
+Nothing is deleted, ever; `--keep-inbox` turns the move off.
+
+**It moves OUT of the mirror**, to `~/.cache/offprint/filed/`, and the
+destination is the whole point. `<out>/pdf/` is no better than `inbox/`: it
+syncs too, and it is the refresh's archive namespace, so leaving files there
+that the refresh did not put there invites a later run to reason about them.
+The cache column in the table above exists for exactly this.
+
+And the run says what it LEFT, by name. `skipped: 2` on a clean run reads as
+two things that failed; a leftover is only obviously deliberate if the run
+says so.
+
 ## An approval is for a list, never for a directory
 
 `--yes` has always meant "do the run I just read". Over `<out>/inbox/` that
