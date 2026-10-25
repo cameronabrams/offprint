@@ -4721,6 +4721,25 @@ def main():
     check(".hidden.pdf" not in zi.still_needing_a_person(ibx, set()),
           "dotfiles are not work")
 
+    # A message must not assert a cause its test did not check. This one said
+    # "a scan with no text layer" on a length test, and `library` found a
+    # probe with a text layer pdftotext reads fine that is merely short.
+    _rd2, _pt2, _cs2 = _ib.resolve_doi, _ib.pdf_text, _ib.crossref_search
+    try:
+        _ib.pdf_text = lambda *_a, **_k: "Short native first page."
+        _ib.resolve_doi = lambda _d: None
+        _ib.crossref_search = lambda _t: None
+        _m, _k2, _why2 = _ib.identify(zdir / "real.pdf")
+        check(_m is None and "characters of text" in _why2,
+              f"the refusal reports the LENGTH it measured ({_why2[:48]})")
+        check("usually a scan" in _why2 and "sometimes a short first page" in _why2,
+              "and offers the cause as the likely one rather than the "
+              "established one, since the test cannot tell them apart")
+        check("rename it to its DOI" in _why2,
+              "while the remedy, which is the same either way, is unchanged")
+    finally:
+        _ib.resolve_doi, _ib.pdf_text, _ib.crossref_search = _rd2, _pt2, _cs2
+
     pages = cmap.split_pages(extract)
     check([p for p, _t, _o in pages] == [1, 2],
           f"the extract's own page markers delimit the pages "

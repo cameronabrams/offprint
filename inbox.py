@@ -489,9 +489,19 @@ def identify(path: Path) -> tuple[dict | None, str, str]:
             detail += (f" (and {len(name_conflict)} refused by the file name "
                        "rather than by page 1)")
         return None, "", ("found DOIs but none matched the text on page 1: " + detail)
-    if len(page1.strip()) < 200:
-        return None, "", ("this PDF is a scan with no text layer, so there is nothing "
-                          "to identify it by -- rename it to its DOI, e.g. "
+    # What was measured is the LENGTH, so that is what this says. The old
+    # wording asserted a cause -- "a scan with no text layer" -- that this
+    # test never checked, and `library` found a probe with a text layer
+    # `pdftotext` reads perfectly that is simply short. The remedy is the same
+    # either way, which is exactly why the wrong cause could sit here: it sent
+    # a reader to OCR a file that does not need it, and nothing else went
+    # wrong to contradict it.
+    n = len(page1.strip())
+    if n < 200:
+        return None, "", (f"page 1 yielded only {n} characters of text, too "
+                          "little to identify the paper by -- usually a scan "
+                          "with no text layer, sometimes a short first page. "
+                          "Either way: rename it to its DOI, e.g. "
                           "10.2172_219366.pdf, and run again")
     return None, "", "no DOI in the file name, the metadata, or the first two pages"
 

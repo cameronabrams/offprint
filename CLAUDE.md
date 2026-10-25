@@ -331,6 +331,16 @@ indistinguishable, later, from what the paper actually said.
 
 Two implementation notes that exist because of real failures:
 
+- **A message must not assert a cause its test did not check.** A length test
+  (`page 1 yielded under 200 characters`) printed "this PDF is a scan with no
+  text layer". `library`'s probe has a text layer `pdftotext` reads perfectly
+  and is simply short. The remedy is the same either way — rename the file to
+  its DOI — **and that is exactly why the wrong cause could sit there**:
+  following the advice worked, so nothing contradicted it, and the only harm
+  was sending a reader to OCR a file that did not need it. Report the
+  measurement, and offer the cause as the likely one rather than the
+  established one. This is the same family as the four messages in
+  `citations/` that were true of every file until a new kind arrived.
 - **A status is the verdict of the reader that produced it.** `no-text` means
   the plain reader found nothing; `--ocr` is a stronger reader whose whole
   purpose is to re-read exactly those. Treating the weaker verdict as final made
