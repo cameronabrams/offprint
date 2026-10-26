@@ -3813,6 +3813,88 @@ the next person reaches for the bib, not the stamp.
 running head lands mid-page, where no edge window reaches. `confirm_offset`
 covers it once an operator supplies the number.
 
+### An inbox that keeps what it has finished — 0.47.0
+
+`zotero_inbox.py` uploaded, reported success, and left the PDF in
+`<out>/inbox/` — for twenty-three days. Not a correctness bug: the
+byte-identical guard caught every leftover and nothing was duplicated. The cost
+was that `library` could not tell a fresh drop from a filed one without a
+2,758-item dry run, and `inbox/` is inside the Syncthing tree, so a hundred
+megabytes of finished work had been copied to Cameron's laptops.
+
+A filed PDF now moves to `~/.cache/offprint/filed/` **after** the upload is
+confirmed, and a file found already attached moves too. Nothing is deleted;
+`--keep-inbox` turns it off.
+
+**0.47.1: the leftover list said the opposite of its purpose.** The line reports
+what the run did not *deal with*, and it was built by reading the directory — so
+under `--keep-inbox`, where every successfully filed PDF stays put by request,
+every one of them was reported as needing a person. The flag that should make
+the list shortest made it longest. Subtracting what was handled is right whether
+or not anything moved; testing the flag would have dropped the line exactly
+where an unhandled file is hardest to spot in a full directory.
+
+**0.47.2: a message asserted a cause its test did not check.** `len(page1) < 200`
+printed "this PDF is a scan with no text layer". `library`'s probe has a text
+layer `pdftotext` reads perfectly and is simply short. The remedy is the same
+either way — rename to the DOI — **and that is why it survived**: following the
+advice worked, so nothing contradicted it, and the only harm was sending someone
+to OCR a file that did not need it. A message that is wrong and useless gets
+found; one that is wrong and useful does not.
+
+### The claim ledger, and a count that says what it is a count of — 0.48.0
+
+`whatbreaks.py`, proposed by `library` on 2026-10-26 and adopted on
+`finding.py`'s argument: agent-authored, citekey-keyed assertions about papers,
+written into `<out>/`. **The data did not come with it.** `claims.json` is a
+judgment about one person's literature and changes when a paper changes his
+mind, not when this repo cuts a release.
+
+It arrived carrying its own defect, which is the part worth keeping.
+`--orphans` reported **2** claims resting on nothing when **4** did: it listed
+claims with an empty `sources` list, and two more carried a single `context`
+cite apiece, which is resting on nothing in exactly the same way. *A probe
+returning a smaller number than the truth with no sign that it is doing so* —
+the same shape as `| tail` and `grep -c`, and the shape of nearly every silent
+success in CLAUDE.md. What makes it hard is that both counts described
+something real, so neither reading looks wrong alone.
+
+Taking that as a shape to go looking for, rather than a bug to fix once, found
+it twice more in modes nobody had complained about: `--load` printed 25 rows out
+of 91 papers without saying 91, and `what would be left: NOTHING` was true of
+evidential support while the ledger still held `method` and `context` links.
+
+Three gaps `library` named, all closed: a write path (`--add`, `--link`,
+`--unlink`, `--set-status` — atomic, mode-preserving, and re-serialized in the
+ledger's own `indent=1` so a one-field edit is a one-field diff); schema
+validation on **every** mode rather than under `--check`, since hand-editing is
+how claims get added and a check you opt into does not run; and both-direction
+fixtures. `library` then sandboxed the write path independently and confirmed
+the round-trips byte-identical.
+
+Two things were moved out of the tool and into the ledger, for one reason — a
+judgment about this library must not need a release to change. Role weights,
+and the "why not the citation graph" paragraph, which carries four dated
+measurements that would have gone stale inside a renderer with nothing to say
+they had.
+
+### Open: 2,517 `citations/` files predate the fixes that would change them
+
+**Not started, and not this session's call to start.** Of 2,524 files in
+`citations/`, 2,517 were written by **0.43.0** — before the Nature author-shape
+fix, before the bibliography-as-citations fix, before `--stale`'s provenance
+split, and before `failed`/`offset` earned a list-only file.
+
+**`--stale` cannot see this**, and that is the whole difficulty: it compares the
+recorded extract hash against the extract, and the extracts did not change. The
+*tool* changed. A file written under rules that no longer hold still says, by
+its own presence, that it was verified — which was true when it was written and
+is the kind of sentence this repo keeps being wrong about.
+
+A re-run is cheap with the Crossref cache warm. It is `library`'s to run and
+Cameron's to approve, and it is recorded here because until now it existed only
+in a conversation.
+
 ## Deliberately not doing
 
 **Packaging (PyPI, conda-forge, console entry points).** The PEP 723 headers
