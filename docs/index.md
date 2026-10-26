@@ -34,6 +34,7 @@ offprint/                      ← this repo, clone it where you like
 ├── pdbxref.py             cited structures whose primary papers are missing
 ├── doixref.py             each record's own DOI against Crossref, read-only
 ├── citemap.py             which claims are citation-supported, and by what
+├── whatbreaks.py          what rests on each paper, and what breaks if it is wrong
 │
 │   writing to the live account
 ├── zotero_edit.py         correct fields on records already in Zotero
@@ -95,6 +96,7 @@ the-mirror
 reading
 filing
 findings
+claims
 structures
 corrections
 scheduling

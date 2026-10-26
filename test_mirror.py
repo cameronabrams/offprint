@@ -4826,6 +4826,137 @@ def main():
           "a frozen key can name Won while the record and Crossref both say "
           "Shan -- which is the key doing its job, and is counted apart")
 
+    print("\nwhatbreaks: a count says what it is a count OF")
+    import whatbreaks as wb
+
+    # The both-direction fixture. `--orphans` was one group -- claims with an
+    # empty `sources` list -- and reported 2 where 4 claims rested on nothing,
+    # because a claim carrying only a `context` cite rests on nothing in
+    # exactly the same way. The two cases are what the mode has to separate, so
+    # they are what the fixture holds, along with a properly carried claim that
+    # must appear in neither group.
+    LEDGER = {
+        "built": "2026-10-26",
+        "scope": "a fixture",
+        "roles": {"sole": "the only source", "primary": "carries it",
+                  "corroborating": "agrees", "contradicting": "disagrees",
+                  "method": "supplies a technique", "context": "background"},
+        "statuses": {"established": "settled", "open": "asked"},
+        "weights": {"sole": 1.0, "primary": 0.6, "contradicting": 0.4,
+                    "corroborating": 0.2, "method": 0.3, "context": 0.0},
+        "claims": [
+            {"id": "carried", "statement": "s", "status": "established",
+             "note": "", "sources": [{"k": "Alpha2001One", "role": "sole",
+                                      "why": "w"}]},
+            {"id": "bare", "statement": "s", "status": "open", "note": "",
+             "sources": []},
+            {"id": "context-only", "statement": "s", "status": "established",
+             "note": "", "sources": [{"k": "Beta2002Two", "role": "context",
+                                      "why": "w"}]},
+            {"id": "corroborated-only", "statement": "s",
+             "status": "established", "note": "",
+             "sources": [{"k": "Beta2002Two", "role": "corroborating",
+                          "why": "w"},
+                         {"k": "Gamma2003Three", "role": "method",
+                          "why": "w"}]},
+        ],
+    }
+    bare, ctx = wb.orphan_groups(LEDGER["claims"])
+    check([c["id"] for c in bare] == ["bare"],
+          "a claim with no link at all is an orphan")
+    check([c["id"] for c in ctx] == ["context-only", "corroborated-only"],
+          "and so is one whose only links are context or corroboration -- "
+          "reporting the first group alone said 2 when the answer was 4, with "
+          "nothing in the output to say it was a subset")
+    check("carried" not in [c["id"] for c in bare + ctx],
+          "while a claim with a carrying source is in neither group, so the "
+          "widened test did not simply widen to everything")
+
+    # A fixed-width listing that prints its first N rows and nothing else is
+    # the same shape one level down: the number is true of what it shows and
+    # smaller than the truth.
+    import io, contextlib as _ctx
+    buf = io.StringIO()
+    with _ctx.redirect_stdout(buf):
+        wb.load_rank(LEDGER, 2)
+    out = buf.getvalue()
+    check("top 2 of 3" in out,
+          "a truncated ranking says how many papers it is leaving out")
+    buf = io.StringIO()
+    with _ctx.redirect_stdout(buf):
+        wb.load_rank(LEDGER, None)
+    check("all 3 papers" in buf.getvalue(),
+          "and an untruncated one says it is complete, so the two read apart")
+
+    # Same again for the remainder line. "NOTHING" is right about evidential
+    # support and wrong about the ledger, and a reader who opens the file finds
+    # links the report did not mention.
+    ctx_claim = LEDGER["claims"][3]
+    check(wb.remainder(ctx_claim, "Beta2002Two")
+          == "NOTHING evidential (1 method link(s) remain)",
+          "withdrawing the last evidential source counts the links that stay")
+    check(wb.remainder(LEDGER["claims"][1], "Alpha2001One") == "NOTHING",
+          "and a claim with no links at all still reads plainly NOTHING")
+    check(wb.remainder(ctx_claim, "Gamma2003Three") == "Beta2002Two",
+          "while a surviving evidential source is named rather than counted")
+
+    check(len(wb.thin_rows(LEDGER["claims"])) == 4,
+          "every claim here stands on one carrying source or none")
+
+    # Drift is the normal failure, because adding a claim by hand is a
+    # supported way to use the ledger. Every mode validates, not just --check,
+    # and every problem is reported rather than the first one.
+    check(wb.validate(LEDGER, "fixture") == [],
+          "a well-formed ledger validates clean")
+    broken = copy.deepcopy(LEDGER)
+    broken["claims"][0]["status"] = "bogus"
+    broken["claims"][1]["sources"] = [{"k": "X", "role": "nonrole", "why": "w"}]
+    del broken["claims"][2]["statement"]
+    broken["claims"][3]["id"] = "bare"
+    problems = wb.validate(broken, "fixture")
+    check(len(problems) == 4,
+          f"and four separate drifts are reported as four, not as the first "
+          f"one ({problems})")
+    check(any("bogus" in p for p in problems)
+          and any("nonrole" in p for p in problems)
+          and any("statement" in p for p in problems)
+          and any("duplicate id" in p for p in problems),
+          "each naming what is wrong and which claim it is in")
+    check(wb.validate({"claims": []}, "fixture"),
+          "a ledger with no roles or statuses cannot be scored, and says so "
+          "rather than falling back to a table it invented")
+
+    check(wb.validate({**LEDGER, "roles": {**LEDGER["roles"], "hunch": "x"}},
+                      "fixture"),
+          "a documented role with no weight is drift too -- it would have "
+          "scored as a KeyError deep in a sort")
+
+    # A write that changes one field must produce a one-field diff. The ledger
+    # is hand-edited, so a renderer that reflows the whole file turns every
+    # edit into an unreadable diff exactly once, which is enough.
+    with tempfile.TemporaryDirectory() as td:
+        d_ = Path(td)
+        raw = json.dumps(LEDGER, indent=1, ensure_ascii=False) + "\n"
+        (d_ / "claims.json").write_text(raw, encoding="utf-8")
+        wb.save(d_, json.loads(raw))
+        check((d_ / "claims.json").read_text(encoding="utf-8") == raw,
+              "writing back an unchanged ledger changes no bytes")
+        os.chmod(d_ / "claims.json", 0o644)
+        wb.save(d_, json.loads(raw))
+        check((d_ / "claims.json").stat().st_mode & 0o777 == 0o644,
+              "and the file keeps the mode it had -- it lives in a synced "
+              "tree beside library.bib, not in .mirror/")
+
+    # The paragraph about the citation graph carries measured numbers. They
+    # belong to whoever can re-measure them, which is the ledger, not here.
+    check("edges that nobody counted" in
+          wb.render_text({**LEDGER,
+                          "why_not_citations": "edges that nobody counted"}),
+          "--render prints the ledger's own why-not-citations prose")
+    check("In-degree measures popularity" in wb.render_text(LEDGER),
+          "and falls back to a claim with no numbers in it when the ledger "
+          "has none, rather than to stale measurements hardcoded here")
+
     print("\nPEP 723 headers: eleven copies of the dependency list, kept honest")
 
     # There is no pyproject.toml here on purpose -- every script carries its own

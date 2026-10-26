@@ -178,9 +178,9 @@ left to connect the two.
 `mendeley_mirror.py` is the refresh and the module everything else imports.
 `get_pdf.py`, `refs.py`, `inbox.py`, `mendeley_push.py`, `mendeley_edit.py`,
 `finding.py`, `pdbrefs.py`, `pdbxref.py`, `doixref.py`, `zotero_migrate.py`,
-`zotero_source.py`, `zotero_attach.py`, `zotero_edit.py` and `zotero_inbox.py`
-are separate CLIs that reuse its `Mendeley` client,
-`config_dir()`, and `DEFAULT_OUT`. `finding.py` and `pdbrefs.py`
+`zotero_source.py`, `zotero_attach.py`, `zotero_edit.py`, `zotero_inbox.py` and
+`whatbreaks.py` are separate CLIs that reuse its `Mendeley` client,
+`config_dir()`, and `DEFAULT_OUT`. `finding.py`, `pdbrefs.py` and `whatbreaks.py`
 touch neither Mendeley nor the network; `pdbxref.py` queries RCSB and
 `doixref.py` queries Crossref, both public and unauthenticated, and neither
 writes anything — `doixref.py` caches to `~/.cache/offprint/` precisely so that
@@ -567,6 +567,64 @@ artifact: what `failed` impeaches is the *mapping*, and a list-only file
 publishes no mapping. It says in the body that the entries are in deposit
 order, unchecked, and not a lookup table, which is the mitigation the
 exclusion was reaching for.
+
+## A count says what it is a count OF
+
+`whatbreaks.py` arrived from the library session on 2026-10-26 as a proposal,
+not a request, and was adopted on `finding.py`'s argument: it is a tool for
+agent-authored, citekey-keyed assertions about papers that writes into `<out>/`,
+which is a shape this repo already owns. **The data did not come with it.**
+`claims.json` is a judgment about one person's literature and changes when a
+paper changes his mind, not when this repo cuts a release — the same split as
+`findings/`, and the reason neither is generated.
+
+Role weights were moved into the ledger before it was sent, and that was right
+for the same reason: how much a `primary` carries relative to a `corroborating`
+is a fact about this library, and leaving it in the tool means a release to
+change it. `FALLBACK` is reached only when the file omits `weights`, and a run
+that reaches it **says so**, because scoring with a table the ledger did not
+declare is a quiet substitution of one judgment for another.
+
+What it brought with it is a failure worth keeping. **`--orphans` reported 2
+when 4 claims rested on nothing.** It listed claims with an empty `sources`
+list; two more carried a single `context` cite apiece, which is resting on
+nothing in exactly the same way, and nothing in the output said the number was a
+subset. That is the `| tail` shape and the `grep -c` shape — *a probe returning
+a smaller number than the truth with no sign that it is doing so* — and it is
+the shape of nearly every silent success already in this file. The difference
+here is that both counts described something real, so neither reading looks
+wrong on its own.
+
+Adopting it meant looking for the same shape in the modes nobody had complained
+about, and finding it twice:
+
+- `--load` printed 25 rows out of 91 papers and did not say 91. It now prints
+  "top 25 of 91", and `--all` prints every one.
+- "what would be left: **NOTHING**" was true of evidential support and false
+  about the ledger, which still held `method` and `context` links. It counts
+  them now. A reader who opens the file and finds links the report did not
+  mention has to work out which of the two was lying, and the report is the one
+  that should not have made them.
+
+Two rules the adoption added:
+
+- **Validation runs on every mode, not under `--check`.** Hand-editing the JSON
+  is a supported way to add a claim, so schema drift is the normal case; a check
+  you have to opt into is a check that does not run. Every problem is reported
+  at once rather than the first, because a ledger with four typos should cost
+  one round trip.
+- **A statement is never rewritten in place.** The sources on a claim vouch for
+  the words that were there when they were linked, so changing the words under a
+  fixed id silently moves what they vouched for. The ledger's own vocabulary
+  already names the move — `superseded`, "replaced by a later claim" — so
+  restating is `--set-status` plus a fresh `--add`.
+
+**`--check` proves a citekey resolves; it does not prove the key is the paper
+meant.** A typo landing on another real key passes. The tool cannot close that,
+so it does the next thing: `--titles` prints every linked key with its title and
+year, which is how the first 91 were verified — by a person reading them — and
+`--link` prints the title at write time, while whoever is linking still
+remembers which paper they meant.
 
 ## An inbox that keeps what it has finished is not a queue
 
