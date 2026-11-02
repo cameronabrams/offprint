@@ -4826,6 +4826,63 @@ def main():
           "a frozen key can name Won while the record and Crossref both say "
           "Shan -- which is the key doing its job, and is counted apart")
 
+    print("\nthe minted-key alarm tests the cause it names")
+    import zotero_source as _zs
+
+    MINT_DOCS = {"9868BT9D": {"id": "9868BT9D", "title": "Cyclodextrin something"},
+            "AAA": {"id": "AAA", "title": "An older paper"}}
+    BEFORE = {"zotero:AAA": "Smith2020Older"}
+
+    # `library` filed a PDF whose DOI was not in the library, zotero_inbox.py
+    # created the record, and the next refresh warned that a key had been
+    # MINTED and that nothing below should be trusted. The mint was correct:
+    # zotero_inbox.py's own closing line says a record it creates has no
+    # citation key until a refresh assigns one. Two tools, two commands apart,
+    # disagreeing in print about whether the ordinary path is ordinary.
+    km = {**BEFORE, "zotero:9868BT9D": "Godinezleon2026Cyclodextrin"}
+    alarm, lines = _zs.minted_verdict(["zotero:9868BT9D"], BEFORE, km, MINT_DOCS, True)
+    check(not alarm,
+          "a record new to the mirror mints a key without raising an alarm -- "
+          "that is what filing a paper does")
+    check(any("Godinezleon2026Cyclodextrin" in ln for ln in lines),
+          "and the key is NAMED, because the reader's first question is which "
+          "one and a bare count sends them to a dry run to find out")
+
+    # The failure the alarm was written for. A Zotero run that qualified its
+    # ids as Mendeley's would mint `mendeley:<zotero key>` beside the
+    # `zotero:<zotero key>` already in the map -- nothing else produces that
+    # collision, and detecting it needs no threshold.
+    b2 = {"zotero:9868BT9D": "Godinezleon2026Cyclodextrin"}
+    alarm, lines = _zs.minted_verdict(["mendeley:9868BT9D"], b2,
+                                      {**b2, "mendeley:9868BT9D": "Godinezleon2026Cyclodextrina"},
+                                      MINT_DOCS, True)
+    check(alarm, "the same bare id appearing under a second backend's prefix "
+                 "IS the namespacing failure, and still alarms")
+    check(any("zotero:9868BT9D" in ln for ln in lines),
+          "naming the entry it collides with, so the diagnosis is checkable")
+
+    # load_json returns {} for a file it cannot parse, so an unreadable map
+    # reads exactly like a first run -- and assign_citekeys has already written
+    # a fresh one over it. Every key cited in a manuscript re-minted, silently.
+    alarm, lines = _zs.minted_verdict(["zotero:AAA", "zotero:9868BT9D"], {},
+                                      km, MINT_DOCS, True)
+    check(alarm,
+          "a citekeys.json that is ON DISK and yields nothing alarms, because "
+          "a fresh map has just been written over the one being replaced")
+    alarm, lines = _zs.minted_verdict(["zotero:AAA", "zotero:9868BT9D"], {},
+                                      km, MINT_DOCS, False)
+    check(not alarm,
+          "while an ABSENT file is a genuine first run and says so -- the two "
+          "are indistinguishable in `before` and distinguishable on disk")
+
+    many = [f"zotero:K{i:02d}" for i in range(12)]
+    alarm, lines = _zs.minted_verdict(
+        many, BEFORE, {**BEFORE, **{k: f"P{i}" for i, k in enumerate(many)}},
+        {}, True)
+    check(not alarm and any("and 2 more" in ln for ln in lines),
+          "a dozen filed at once is still not an alarm, and the listing says "
+          "how many it is not showing")
+
     print("\nwhatbreaks: a count says what it is a count OF")
     import whatbreaks as wb
 

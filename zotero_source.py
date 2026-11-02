@@ -45,10 +45,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from mendeley_mirror import (DEFAULT_OUT, __version__, assign_citekeys,  # noqa: E402
+from mendeley_mirror import (DEFAULT_OUT, KNOWN_BACKENDS, __version__,  # noqa: E402
+                             assign_citekeys,
                              bib_entry, harvest_attachments, load_json,
                              annotation_markdown, local_id, mirror_state_dir,
-                             qualify,
+                             qualify, split_id,
                              require_ocr_stack,
                              save_json, write_bibtex, write_extraction_report,
                              write_folders, write_index, write_status)
@@ -968,6 +969,88 @@ _NOT_CONTENT = {"key", "version", "itemType", "parentItem", "linkMode", "md5",
                 "deleted", "note"}
 
 
+def minted_verdict(new_ids: list, before: dict, keymap: dict,
+                   docs_by_id: dict, keymap_file_existed: bool) -> tuple:
+    """Why these citation keys are new, and whether that is alarming.
+
+    Returns `(alarm, lines)`.
+
+    The warning this replaces fired on **any** mint, under the sentence "on
+    this library that should be 0 -- every Zotero id already had one". That was
+    true on 2026-10-02, when the only way to mint was the backend-namespacing
+    failure it was written for. It stopped being true the moment
+    `zotero_inbox.py` could create a record: a record created minutes earlier
+    has no citation key by construction, and that script's own closing line
+    says so. So the two tools disagreed in print about whether the ordinary
+    filing path is ordinary, two commands apart -- and the warning told the
+    reader not to trust anything below it, every time, on a path where that
+    advice is always wrong.
+
+    **The cry-wolf shape is the cost, not the noise.** A check whose alarm is
+    routine stops being read, and the failure it exists for then arrives
+    wearing the same clothes. So the alarm tests the cause it names, and there
+    are exactly two things the evidence here can prove:
+
+    - **The same bare id is already present under another backend's prefix.**
+      That *is* the namespacing failure: a Zotero run qualifying its ids as
+      Mendeley's would mint `mendeley:<zotero key>` beside the
+      `zotero:<zotero key>` already in the map. Nothing else produces that
+      collision, and it needs no threshold to detect.
+    - **`citekeys.json` was on disk and yielded nothing.** `load_json` returns
+      `{}` for a file it cannot parse, so an unreadable map reads exactly like
+      a first run -- and `assign_citekeys` has already written a fresh one over
+      it. Every key cited in a manuscript would be re-minted, silently. An
+      *absent* file is a real first run and gets said so instead.
+
+    Anything else is a new paper arriving, which is what filing one does. It is
+    **named rather than counted**, because the reader's first question is which
+    one, and a count alone sends them to a dry run to find out.
+    """
+    crossed = []
+    for qid in new_ids:
+        _src, raw = split_id(qid)
+        for other in KNOWN_BACKENDS:
+            if f"{other}:{raw}" in before:
+                crossed.append((qid, f"{other}:{raw}"))
+                break
+
+    def name(qid):
+        _src, raw = split_id(qid)
+        title = (docs_by_id.get(raw) or {}).get("title") or "(no title)"
+        return f"{keymap.get(qid, '?')}  {title[:70]}"
+
+    if crossed:
+        lines = [f"! {len(crossed)} of {len(new_ids)} new ids are the SAME id "
+                 "already held under another backend's prefix. That is the "
+                 "namespacing failure, not a new paper:"]
+        lines += [f"    {qid}  collides with  {other}" for qid, other in crossed[:10]]
+        if len(crossed) > 10:
+            lines.append(f"    ... and {len(crossed) - 10} more")
+        lines.append("  Stop here and check the backend argument to "
+                     "assign_citekeys before trusting anything below.")
+        return True, lines
+
+    if keymap_file_existed and not before:
+        return True, [
+            f"! citekeys.json is on disk and yielded NOTHING, so all "
+            f"{len(new_ids)} ids read as new and a fresh map has just been "
+            "written over it.",
+            "  That is not a first run -- a first run has no file at all. "
+            "Restore the old map from a synced copy before the next refresh.",
+        ]
+
+    if not keymap_file_existed:
+        return False, [f"  no citekeys.json before this run, so all "
+                       f"{len(new_ids)} are first assignments"]
+
+    lines = [f"  {len(new_ids)} new to this mirror -- records with no citation "
+             "key yet, which is what zotero_inbox.py leaves behind:"]
+    lines += [f"    {name(q)}" for q in new_ids[:10]]
+    if len(new_ids) > 10:
+        lines.append(f"    ... and {len(new_ids) - 10} more")
+    return False, lines
+
+
 def entity_findings(items: list) -> list:
     """Records holding HTML entities literally. `[(key, field, raw, decoded)]`.
 
@@ -1141,19 +1224,19 @@ def refresh(out: Path, ocr: bool = False, dry_run: bool = False,
     print(f"  documents: {len(docs)}")
 
     keymap_path = mirror / "citekeys.json"
-    before = set(load_json(keymap_path, {}))
+    keymap_file_existed = keymap_path.exists()
+    before = load_json(keymap_path, {})
     keymap = assign_citekeys(docs, keymap_path, backend=BACKEND)
-    minted = len(set(keymap) - before)
-    # A first Zotero refresh should mint ZERO: all 2,739 zotero: entries were
-    # written by zotero_migrate.py in September precisely so no key would move.
-    # A non-zero count here is the failure CLAUDE.md warns about, arriving.
-    print(f"  citation keys: {len(keymap)} known, {minted} newly assigned")
-    if minted:
-        print(f"  ! {minted} keys were MINTED. On this library that should be 0 -- "
-              "every Zotero id already had one. Check the backend namespacing "
-              "before trusting anything below.")
+    docs_by_id = {d["id"]: d for d in docs}
+    new_ids = sorted(set(keymap) - set(before))
+    print(f"  citation keys: {len(keymap)} known, {len(new_ids)} newly assigned")
+    if new_ids:
+        alarm, lines = minted_verdict(new_ids, before, keymap, docs_by_id,
+                                      keymap_file_existed)
+        for line in lines:
+            print(f"  {line}" if alarm else line)
 
-    only_ids = resolve_only(only, keymap, {d["id"]: d for d in docs}, BACKEND) \
+    only_ids = resolve_only(only, keymap, docs_by_id, BACKEND) \
         if only else set()
 
     files = src.files_by_doc([d["id"] for d in docs])

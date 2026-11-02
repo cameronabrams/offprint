@@ -626,6 +626,45 @@ year, which is how the first 91 were verified — by a person reading them — a
 `--link` prints the title at write time, while whoever is linking still
 remembers which paper they meant.
 
+**The same section's mirror image arrived six days later, and `library` named
+it that way.** `--orphans` undercounted; the minted-key alarm over-fired.
+`zotero_source.py` warned `! N keys were MINTED. On this library that should be
+0 -- every Zotero id already had one. Check the backend namespacing before
+trusting anything below.` That sentence was true on 2026-10-02, when the only
+way to mint a key was the namespacing failure it was written for. It stopped
+being true the moment `zotero_inbox.py` could create a record — a record created
+minutes earlier has no citation key by construction, and **`zotero_inbox.py`'s
+own closing line says so**. Two tools, two commands apart on the ordinary filing
+path, disagreeing in print about whether that path is ordinary.
+
+**The cost is cry-wolf, not noise.** The wording tells the reader to distrust
+everything below it, and on the filing path the correct response is always to
+ignore it — so the check stops being read, and the real namespacing failure
+then arrives wearing the same clothes. That is the fifth entry in this file's
+standing-sentence family, and the first to fail by firing rather than by staying
+silent.
+
+`library`'s suggested rule — alarm only for an id that was already in
+`citekeys.json` — could not work: `minted` is *defined* as the ids that were
+not, so it would never fire again. **The fix is to test the cause the message
+names**, and exactly two things are provable from what the run holds:
+
+- **The same bare id under a second backend's prefix.** A Zotero run qualifying
+  its ids as Mendeley's mints `mendeley:<zotero key>` beside the
+  `zotero:<zotero key>` already in the map. Nothing else produces that
+  collision, and detecting it needs no threshold — which is why no threshold is
+  used. Scale was the tempting proxy and is the wrong one: "a lot of mints"
+  describes a bulk import as well as a bug.
+- **A `citekeys.json` that is on disk and yields nothing.** `load_json` returns
+  `{}` for a file it cannot parse, so an unreadable map reads *exactly* like a
+  first run — and `assign_citekeys` has already written a fresh one over it,
+  re-minting every key cited in a manuscript. The two are indistinguishable in
+  `before` and distinguishable on disk, so `keymap_path.exists()` is what
+  separates them.
+
+Everything else is a new paper, and it is **named, not counted**. A bare count
+sends the reader to a 2,758-item dry run to find out which.
+
 ## An inbox that keeps what it has finished is not a queue
 
 `zotero_inbox.py` uploaded and reported success and left the PDF in
