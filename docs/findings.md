@@ -62,11 +62,21 @@ durable records carrying a wrong journal page. Two of those needed no tool at al
 a sibling record in the same file, on the same marker page, already held the right
 answer.
 
-It exits 1 when anything disagrees or cannot be read, so a sweep can be scripted.
 Records the library has already retracted or checked by hand are marked and still
 reported, because the tool disagreeing with a person is more interesting rather than
-less. **Nothing is repaired:** these files are append-only, so the fix is a
-`RETRACTED` record written by whoever owns the library.
+less — and that marking is what showed, the first time it ran, that five apparent
+defects were repairs made weeks earlier.
+
+**A retracted record is not a live problem, in the counts or in the exit status.**
+These files are append-only, so a repaired record stays in the file and disagrees
+with the tool forever; live and retracted are counted apart, live rows print first,
+and only a live disagreement or an unreadable block exits 1. Quote drift never does:
+every record written before 0.50.0 may carry a folded character, and a standing
+condition like that would pin the status at 1 until the last one is re-recorded. A
+run with nothing live says so and still prints the rows — exit 0 is not silence.
+
+**Nothing is repaired:** the fix is a `RETRACTED` record written by whoever owns
+the library.
 
 **A record locates a passage; it never substitutes for one.** Consulted instead of
 the extract it becomes a paraphrase indistinguishable from the source, which is what

@@ -779,10 +779,23 @@ def replay(out: Path, only: str | None, show_all: bool) -> int:
     and reads as a locator lost. That is how the first replay reported four
     correct locators dropped that were not dropped at all.
 
-    Exit status is 1 when anything disagrees or cannot be read, so a sweep can be
-    scripted. A disagreement is a claim about the mirror, never a repair: these
-    files are append-only by their own header, and the fix is a RETRACTED record
-    written by whoever owns the library.
+    **A retracted record is not a live problem, and the counts have to say so.**
+    These files are append-only: a repaired record stays in the file forever with
+    a RETRACTED record beside it, so it disagrees with the tool forever. 0.51.0
+    reported `7 disagreeing` and exited 1 over a corpus whose every disagreement
+    had been repaired weeks earlier -- a check that fires on a healthy library on
+    every run, which is the shape 0.49.0 shipped to remove from the minted-key
+    alarm and which this reintroduced one day later. Live and retracted are
+    counted apart, live rows print first, and only a LIVE disagreement or a block
+    the reader could not read sets the exit status.
+
+    Quote drift deliberately does not set it. Every record written before 0.50.0
+    may carry a folded character, so a corpus-wide standing condition would pin
+    the status at 1 until the last one is re-recorded -- the same trap by a
+    different door.
+
+    A disagreement is a claim about the mirror, never a repair: the fix is a
+    RETRACTED record written by whoever owns the library.
     """
     fdir = out / "findings"
     if not fdir.is_dir():
@@ -793,13 +806,15 @@ def replay(out: Path, only: str | None, show_all: bool) -> int:
         if not files:
             die(f"no findings file for {only} under {fdir}")
 
-    rows: list[tuple[str, str, str]] = []
-    n = dict(records=0, disagree=0, quote=0, gains=0, support=0, blind=0,
-             same=0, unreadable=0)
+    rows: list[tuple[int, str, str, str]] = []
+    n = dict(records=0, disagree=0, dead_disagree=0, quote=0, dead_quote=0,
+             gains=0, support=0, blind=0, same=0, unreadable=0, retracted=0)
 
     def row(kind: str, key: str, ordinal: str, detail: str, mark: str) -> None:
-        rows.append((kind, f"{key} {ordinal}".strip() + (f"  [{mark}]" if mark else ""),
-                     detail))
+        # Live rows sort first. A reader who has to scroll past seven repaired
+        # records to reach the one that matters stops reading the report.
+        rows.append((1 if mark == "retracted" else 0, kind,
+                     f"{key} {ordinal}".strip() + (f"  [{mark}]" if mark else ""), detail))
 
     for path in files:
         key = path.stem
@@ -822,6 +837,10 @@ def replay(out: Path, only: str | None, show_all: bool) -> int:
             # tool disagreeing with a human is MORE interesting, not less.
             mark = ("retracted" if r.ordinal in retracted
                     else "checked by hand" if r.ordinal in hand else "")
+            # A record a person CHECKED is live: the tool disagreeing with a
+            # person is more interesting, not less. Only a retraction settles it.
+            dead = mark == "retracted"
+            n["retracted"] += dead
             if text is None:
                 n["blind"] += 1
                 row("NO EXTRACT", key, ordinal, f"nothing at text/{key}.md", mark)
@@ -847,6 +866,7 @@ def replay(out: Path, only: str | None, show_all: bool) -> int:
             span = extract_span(body, r.quote)
             if span is not None and span != " ".join(r.quote.split()):
                 n["quote"] += 1
+                n["dead_quote"] += dead
                 row("QUOTE DRIFT", key, ordinal,
                     f"stored:  {' '.join(r.quote.split())[:110]}\n"
                     f"extract: {span[:110]}", mark)
@@ -855,6 +875,7 @@ def replay(out: Path, only: str | None, show_all: bool) -> int:
             loc = resolve_locator(text, key, page, stored, rng)
             if loc.problem:
                 n["disagree"] += 1
+                n["dead_disagree"] += dead
                 row("DISAGREES", key, ordinal,
                     f"stored: {r.locator}\ntool:   {loc.problem}", mark)
                 continue
@@ -866,6 +887,7 @@ def replay(out: Path, only: str | None, show_all: bool) -> int:
                     f"stored: {r.locator}\ntool:   {loc.text}", mark)
             elif stored != now:
                 n["disagree"] += 1
+                n["dead_disagree"] += dead
                 row("DISAGREES", key, ordinal,
                     f"stored: {r.locator}\ntool:   {loc.text}", mark)
             elif loc.text != r.locator:
@@ -876,7 +898,7 @@ def replay(out: Path, only: str | None, show_all: bool) -> int:
             else:
                 n["same"] += 1
 
-    for kind, who, detail in rows:
+    for _dead, kind, who, detail in sorted(rows, key=lambda r: r[0]):
         print(f"\n{kind}  {who}")
         for ln in detail.splitlines():
             print(f"    {ln}")
@@ -886,7 +908,9 @@ def replay(out: Path, only: str | None, show_all: bool) -> int:
     print(f"\n{n['records']} FINDING records in {len(files)} file(s), "
           f"replayed against their extracts by offprint {__version__}:")
     print(f"  locator, one verdict per record:")
-    print(f"    {n['disagree']:4d} disagreeing with this tool about the printed page")
+    print(f"    {n['disagree']:4d} disagreeing with this tool about the printed page"
+          f" -- {n['disagree'] - n['dead_disagree']} live, "
+          f"{n['dead_disagree']} already retracted")
     print(f"    {n['gains']:4d} carrying no printed page, which would now be given one")
     print(f"    {n['support']:4d} agreeing on the page, differing only in how much support "
           f"is reported" + ("" if show_all else " (--all lists them)"))
@@ -894,12 +918,21 @@ def replay(out: Path, only: str | None, show_all: bool) -> int:
           f"quote has moved")
     print(f"    {n['same']:4d} unchanged")
     print(f"  quote, counted separately -- a record here may also appear above:")
-    print(f"    {n['quote']:4d} storing a quote differing from the extract's own characters")
+    print(f"    {n['quote']:4d} storing a quote differing from the extract's own "
+          f"characters -- {n['quote'] - n['dead_quote']} live, {n['dead_quote']} "
+          f"already retracted")
     print(f"  reader:")
     print(f"    {n['unreadable']:4d} block(s) this tool could not read in its own format")
+    live = n["disagree"] - n["dead_disagree"]
+    print(f"\n{n['retracted']} of the {n['records']} records carry a RETRACTED record and "
+          f"stay in the file\nforever, so they disagree with this tool forever. Only a LIVE "
+          f"disagreement or an\nunreadable block sets the exit status; quote drift never "
+          f"does, being a standing\ncondition of every record written before 0.50.0.")
+    if not live and not n["unreadable"]:
+        print("\nNothing live.")
     print("\nNothing was written. These files are append-only: a disagreement is "
           "repaired\nwith a RETRACTED record by whoever owns the library, not by this tool.")
-    return 1 if (n["disagree"] or n["unreadable"]) else 0
+    return 1 if (live or n["unreadable"]) else 0
 
 
 def main() -> int:

@@ -746,11 +746,22 @@ block the reader cannot read is a complaint with a count behind it, never a
 skip**. It writes nothing: these files are append-only by their own header, and
 a disagreement is repaired with a RETRACTED record by whoever owns the library.
 
-Two things the output has to keep doing. A record the library has already
+Three things the output has to keep doing. A record the library has already
 retracted or checked by hand is **marked and still reported** — the tool
-disagreeing with a person is more interesting, not less. And the locator
+disagreeing with a person is more interesting, not less, and that marking is what
+showed `library` its five "live" defects were September's repairs. The locator
 verdicts partition the records while the quote count does not, so the summary
 says which is which rather than printing six numbers that do not add up.
+
+And **a retracted record is not a live problem, in the counts or in the exit
+status.** 0.51.0 reported `7 disagreeing` and exited 1 over a corpus whose every
+disagreement had been repaired, and would have on every run forever, because
+these files are append-only. That is the minted-key alarm rebuilt one day after
+it was removed, in the tool whose whole job is to be read. Live and retracted are
+counted apart, live rows print first, and only a live disagreement or an
+unreadable block sets the status. Quote drift never sets it — every pre-0.50.0
+record may carry a folded character, so that standing condition would pin the
+status at 1 until the last re-record, which is the same trap by another door.
 
 **The regression for a change here is replaying `findings/` WITH each record's
 stored folio**, and the qualifier is the whole sentence. `library` replayed 181
@@ -763,9 +774,14 @@ input unlocks**, and it reports the gap as a finding about the tool.
 
 Passed back, the folio turns the replay into a disagreement detector rather than
 a diff: a refusal means the record and the tool disagree about the paper. That
-run found **five** durable records carrying a wrong journal page, two of which
-were visible without any tool — a sibling record in the same file, on the same
-marker page, already held the right answer.
+run re-surfaced **five** durable records carrying a wrong journal page, all five
+of which `library` had already found and repaired weeks earlier. The claim that
+the replay *found* them was written here and was wrong: what made them look live
+was an audit that grepped `locator:` out of each file, **which removes the
+RETRACTED record that explains the correction** — a retraction carries no locator
+line. A filter chosen for the field you care about drops the record type that
+makes the file coherent, and the file then reads as contradicting itself. Same
+family as grepping one spelling of an access and missing the others.
 
 The other half of the same correction: a replay against durable records measures
 the distance from whenever each record was written, which is not a version. Of 26

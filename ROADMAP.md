@@ -3926,17 +3926,24 @@ with the submitted bytes.
 0 refused, 26 locators changed, 16 quotes rewritten. The quote rewrites are all
 ligature folds and are the fix working.
 
-The replay is the reason to keep this entry. It found **five durable records
-carrying a wrong journal page** — `Hamerton1996Molecular` (3 for 313),
-`Kendrick1990Calculated` (2 for 3996), `Ikeno2011Molecular` (21 for 311, whose
-PDF page 1 is an interlibrary-loan cover sheet, so the stored offset was not a
-near miss), `Garau2003Dual` #1 (6 for 2228) and `Lin1999Effect` #1 (8 for 1934).
-Fixtures would never have found them.
+**Correction, 2026-11-07.** This entry said the replay *found* five durable
+records carrying a wrong journal page. It did not. All five —
+`Hamerton1996Molecular`, `Kendrick1990Calculated`, `Ikeno2011Molecular`,
+`Garau2003Dual` #1 and `Lin1999Effect` #1 — were found and repaired by `library`
+between 09-21 and 10-06, and two of those retractions say in their own text that
+they were surfaced by replaying all 98 records through the then-current code.
+The replay re-surfaced repaired records; it discovered nothing.
 
-The last two came out of the **corrected** replay and are the sharpest of the
-five, because they need no tool at all to see: a sibling record in the same file,
-on the same marker page, already carries the right answer. Two journal pages for
-one page of one paper, in one file, written by one tool on two days.
+What made them look live is worth more than the claim was. `library` audited the
+files by grepping `locator:` out of them, which **removes the RETRACTED record
+that explains the correction**, because a retraction carries no locator line. So
+`Garau2003Dual` #1 and #3 read as a file contradicting itself on one marker page,
+when the record sitting between them says exactly why. A filter chosen for the
+field you care about drops the record type that makes the file coherent — the
+same family as grepping one spelling of an access and missing the others.
+
+The replay's real result is the one below: a verdict per record, over a corpus,
+reproducible by two sessions independently.
 
 **But the replay was read as measuring 0.50.0, and it does not.** Running the
 same records through `v0.49.0` and `v0.50.0` gives identical locators on every
@@ -3972,8 +3979,8 @@ wrong.
 
 ### `finding.py --replay`, and the reader that ships with the writer — 0.51.0
 
-The thing that found five wrong durable records was a throwaway script in
-`library`'s `/tmp`. They saved it, then asked for it as a mode here, and the
+The thing that re-surfaced five repaired records — see the correction above —
+was a throwaway script in `library`'s `/tmp`. They saved it, then asked for it as a mode here, and the
 reason they gave is better than the one this ROADMAP had recorded: **their
 version re-implements this repo's record format in regex, so when the format
 changes it parses FEWER records and reports them as fine.** A faithful index
@@ -3999,13 +4006,35 @@ the writer asks and gets the answer as data rather than an exit status. A replay
 that re-derived the rule would drift from the rule, which is the defect one level
 up from the one being fixed.
 
-First run over the live corpus, independently of `library`'s: **181 records in
-107 files, 0 blocks unreadable, 7 disagreeing, 18 differing only in reported
-support, 16 storing a quote that differs from the extract.** Five of the seven
-are the wrong records `library` found, already carrying RETRACTED records and
-marked as such; the other two are `Baschnagel2005Computer` and
-`Ninarello2017Models`, written under 0.49.0 and still storing `863` and `2` where
-the journals print `R863` and `021039-2`.
+First run over the live corpus, independently of `library`'s and matching it
+exactly: **181 records in 107 files, 0 blocks unreadable, 7 disagreeing, 18
+differing only in reported support, 16 storing a quote that differs from the
+extract.** Five of the seven were already retracted and marked as such — which is
+what showed `library` that the five were repairs from September, not live
+defects. The other two were `Baschnagel2005Computer` and `Ninarello2017Models`,
+written under 0.49.0 and still storing `863` and `2` where the journals print
+`R863` and `021039-2`; they have since been retracted and re-recorded.
+
+### The replay fired on a healthy corpus — 0.51.1
+
+With those two repaired, every disagreement in the library carried a RETRACTED
+record. `--replay` reported **`7 disagreeing`** and **exited 1** anyway, and
+would have done so on every run forever: these files are append-only, so a
+repaired record stays in the file and disagrees with the tool for good.
+
+**That is the minted-key alarm again**, in the tool whose entire job is to be
+read, one day after shipping the fix for it. The wording was weaker, so the cost
+was slower, but it is the same defect: a check that fires on a healthy library
+every time is a check that stops being read, and the live disagreement then
+arrives wearing the same clothes.
+
+Live and retracted are counted apart in every line, live rows print first, and
+only a **live** disagreement or an unreadable block sets the exit status. Quote
+drift never sets it: every record written before 0.50.0 may carry a folded
+character, so a corpus-wide standing condition would pin the status at 1 until
+the last one is re-recorded — the same trap through a different door. A run with
+nothing live says `Nothing live.` and still prints the rows, because exit 0 is
+not the same as silence.
 
 **The corpus stays in the library.** `--out` points the mode at whatever mirror
 holds the records, and the only findings files in this repo are fixtures. That
