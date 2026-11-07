@@ -3922,11 +3922,39 @@ page number is caught by the offset check; this was caught by nothing.
 substituted, and a span that cannot be recovered is refused rather than filed
 with the submitted bytes.
 
-**Not yet replayed.** `library`'s regression for a change like this is replaying
-every record in `findings/` through `finding.py`, and the five records added
-2026-11-07 put both odd-pagination cases in that corpus. It is `library`'s to
-run; this session verified against fixtures and the 950-check suite only, which
-is the position CLAUDE.md names as a check that cannot fail.
+**Replayed the same day**, by `library`, over 181 FINDING records in 107 files:
+0 refused, 26 locators changed, 16 quotes rewritten. The quote rewrites are all
+ligature folds and are the fix working.
+
+The replay is the reason to keep this entry. It found **three durable records
+carrying a wrong journal page** — `Hamerton1996Molecular` (3 for 313),
+`Kendrick1990Calculated` (2 for 3996) and `Ikeno2011Molecular` (21 for 311,
+whose PDF page 1 is an interlibrary-loan cover sheet, so the stored offset was
+not a near miss). Fixtures would never have found them.
+
+**But the replay was read as measuring 0.50.0, and it does not.** Running the
+same records through `v0.49.0` and `v0.50.0` gives identical locators on every
+one: 0.50.0 contributed the two decoration changes and the sixteen quote
+rewrites and nothing else. The other 24 are accumulated drift between the
+version that wrote each record and 0.49.0 — including the two corrections above,
+which `derive_offset`'s own docstring names as what the EDGE_CHARS narrowing and
+the tie rule were made to fix. **A replay against durable records measures the
+distance from whenever each one was written**, which is not a version.
+
+**And four "lost" locators were not lost.** `confirm_offset` runs only when the
+operator passes `--journal-page`, deliberately: unaided it is 70% precise against
+the edge scan's 88%. The replay command passes no folio, so that path was
+unreachable on all 181 records, and the four records whose locators came through
+it reported as dropped. With the folio supplied all four come back byte-identical
+— under 0.49.0 too. `library` was one step from it, writing "if that is a
+separate code path that went away, these are its only users here"; it is a
+separate path and it did not go away. Same shape as the `--orphans` undercount
+they filed on 10-26: a probe returning a smaller number than the truth with
+nothing in the output saying so, and both readings describing something real.
+
+Account: `~/.local/state/fleet/drops/offprint-replay-attribution-20261107.md`.
+`Knight2015Memgen` and `Garau2003Dual` #3 derived when their records were written
+and do not now, which makes them two of the 137 papers item 4 below is about.
 
 ### Open: 2,517 `citations/` files predate the fixes that would change them
 
