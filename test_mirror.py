@@ -1885,7 +1885,7 @@ def main():
     check(fnd.normalize("a\nb   c") == "a b c", "line wrapping does not defeat a quote")
 
     # The offset is DERIVED from recurring edge numbers, never taken on trust.
-    check(fnd.derive_offset(EXTRACT) == (99, 4),
+    check(fnd.derive_offset(EXTRACT) == (99, 4, ""),
           f"a running footer yields the offset ({fnd.derive_offset(EXTRACT)})")
 
     # A number that appears on every page but is not a page number gives a different
@@ -1920,13 +1920,157 @@ def main():
     # above must still derive, and a head at the very end of the page must too.
     TRAILING = "".join(f"<!-- p. {n} -->\n\nbody text here\n{FILLER}\n{500 + n}\n"
                        for n in (1, 2, 3, 4))
-    check(fnd.derive_offset(TRAILING) == (500, 4),
+    check(fnd.derive_offset(TRAILING) == (500, 4, ""),
           "a footer at the end of a long page is still found")
 
     # Two pages can agree by chance; the threshold demands a majority of pages.
     SHORT = "<!-- p. 1 -->\n\nx 5 y\n\n<!-- p. 2 -->\n\nx 6 y\n"
     check(fnd.derive_offset(SHORT) is None,
           "a two-page paper yields no offset rather than a coincidence")
+
+    print("\nfinding.py: a printed page is not always an integer")
+
+    # library, 2026-11-07. Ninarello2017Models is Phys. Rev. X 7, 021039; PRX
+    # paginates by article number and the folio on its second page is 021039-2.
+    # The derivation found that string -- the article-number pattern is the
+    # oldest thing in derive_offset -- and then compared its own integer 2
+    # against the operator's 021039-2 as STRINGS, so the only citable locator
+    # the paper has was refused. Omitting --journal-page was no better: the
+    # tool then wrote "printed 2" by itself.
+    PRX = "".join(
+        f"<!-- p. {n} -->\n\nSTRUCTURAL RELAXATION IN DEEPLY SUPERCOOLED ...\n"
+        f"this is body text on page {n} of the article\n021039-{n}\n"
+        for n in range(1, 6))
+    got = fnd.derive_offset(PRX)
+    check(got == (0, 5, "021039-"),
+          f"an article-number folio reaches the locator whole (got {got})")
+
+    # R863 is what J. Phys. Condens. Matter prints for a topical review, and 863
+    # is not a page anyone can look up either. Same shape, different decoration.
+    RPFX = "".join(f"<!-- p. {n} -->\n\nTopical Review\nR{862 + n}\nbody here\n"
+                   for n in range(1, 6))
+    check(fnd.derive_offset(RPFX) == (862, 5, "R"),
+          f"a lettered folio keeps its letter (got {fnd.derive_offset(RPFX)})")
+
+    # The decoration is a recurrence claim and is held to the same majority as
+    # the offset. One page saying "p101" does not make the journal's folio
+    # lettered -- and the letters must not change the offset either.
+    ONEOFF = EXTRACT.replace("100-108 101", "100-108 p101")
+    check(fnd.derive_offset(ONEOFF) == (99, 4, ""),
+          f"a decoration on one page of four is not the folio ({fnd.derive_offset(ONEOFF)})")
+
+    # read_folio is the ONE reader of these forms, which is the actual fix: the
+    # derivation knew 021039-2 and the two checks could only parse integers.
+    check(fnd.read_folio("863") == ("", 863), "a bare page reads as itself")
+    check(fnd.read_folio("021039-2") == ("021039-", 2), "an article-number folio splits")
+    check(fnd.read_folio(" R863 ") == ("R", 863), "a lettered folio splits")
+    check(fnd.read_folio("E1234") == ("E", 1234), "and so does a PNAS E page")
+    # Refused by name rather than guessed at. Keeping "whatever digits are
+    # there" would read the page RANGE 12-15 as page 15, silently.
+    check(fnd.read_folio("12-15") is None, "a page range is not a folio")
+    check(fnd.read_folio("021039-2a") is None, "nor is a form nobody has seen")
+    check(fnd.read_folio("") is None, "nor is nothing")
+
+    # confirm_offset searches for what is PRINTED, not for the digits. Looking
+    # for a bare 3 on a PRX page cannot work -- the guard before the match
+    # refuses a digit preceded by a hyphen, which is every page of the paper --
+    # so without the prefix the confirmer could only ever refuse, in a message
+    # naming a cause it had not tested.
+    check(fnd.confirm_offset(PRX, 2, 2, "021039-") is not None,
+          "the folio is confirmed at a consistent position")
+    check(fnd.confirm_offset(PRX, 2, 2) is None,
+          "while its bare suffix is not findable at all -- the asymmetry that was the bug")
+    check(fnd.confirm_offset(PRX, 2, 3, "021039-") is None,
+          "and an off-by-one claim is still refused")
+
+    print("\nfinding.py: the record stores the extract's characters, not the submitted ones")
+
+    # library, filed 2026-11-04, reported 2026-11-07. `[24-27]` was submitted
+    # against an extract reading `[24–27]`; the page check normalized the
+    # difference away, PASSED, and wrote the submitted bytes into an
+    # append-only record. A wrong page number is caught by the offset check.
+    # This was caught by nothing.
+    PG = "Earlier work on this system [24–27] showed, as noted, that it melts."
+    check(fnd.extract_span(PG, "[24-27]") == "[24–27]",
+          "an en dash submitted as a hyphen is stored as the extract has it")
+    check(fnd.extract_span(PG, "showed, as noted, that it melts")
+          == "showed, as noted, that it melts",
+          "a quote the extract already matches is unchanged")
+    check(fnd.extract_span(PG, "system [24-27] showed") == "system [24–27] showed",
+          "the recovered span may start and end mid-sentence")
+    # A quote usually stops just before a comma, so the first and last words are
+    # a suffix and a prefix of the extract's own. Matching whole words only
+    # would refuse this, and refusing is not better than storing the wrong bytes.
+    check(fnd.extract_span(PG, "work on this system") == "work on this system",
+          "a span ending inside the extract's own word is found")
+    check(fnd.extract_span("The con\ufb01guration of the \u201csystem\u201d is fixed.",
+                           'configuration of the "system"')
+          == "con\ufb01guration of the \u201csystem\u201d",
+          "ligatures and typographic quotes come back as the extract writes them")
+    # Where the PDF broke the line is a fact about the PDF, not about the
+    # sentence, and it is the one difference deliberately NOT preserved.
+    check(fnd.extract_span("a quick brown\nfox jumps over", "quick brown fox jumps")
+          == "quick brown fox jumps", "line wrapping is collapsed, not preserved")
+    check(fnd.extract_span(PG, "not on this page at all") is None,
+          "a quote that is not there has no span")
+    check(fnd.extract_span(PG, "   ") is None, "and neither does an empty quote")
+
+    # End to end, because the defect was in the WIRING. read_folio and
+    # derive_offset each hold half the answer; main() compared a string to an
+    # integer and called a difference of FORM a disagreement about the page.
+    _fo = Path(tempfile.mkdtemp())
+    (_fo / "text").mkdir()
+    (_fo / "text" / "Ninarello2017Models.md").write_text(
+        PRX.replace("<!-- p. 2 -->\n",
+                    "<!-- p. 2 -->\nEarlier work [24\u201327] showed.\n"),
+        encoding="utf-8")
+
+    def _finding(*a):
+        return subprocess.run([sys.executable, str(Path(__file__).parent / "finding.py"),
+                               "--out", str(_fo), "--key", "Ninarello2017Models",
+                               "--question", "when does it relax?", "--page", "2",
+                               "--quote", "Earlier work [24-27] showed.", "--dry-run", *a],
+                              capture_output=True, text=True)
+
+    r = _finding("--journal-page", "021039-2")
+    check(r.returncode == 0 and "printed 021039-2 (offset +0" in r.stdout,
+          f"the folio PRX prints is accepted and recorded whole ({(r.stdout + r.stderr).strip()[:140]!r})")
+    check("> Earlier work [24\u201327] showed." in r.stdout,
+          "and the quote goes in as the extract has it, not as submitted")
+    check("stores the extract's wording" in r.stdout,
+          "and the run says it substituted rather than doing it quietly")
+
+    # The half that needed no operator at all: omitting --journal-page used to
+    # write "printed 2", a locator nobody can look up, with nothing to flag it.
+    r = _finding()
+    check(r.returncode == 0 and "printed 021039-2 (offset +0" in r.stdout,
+          f"the decorated form is written without being asked for ({(r.stdout + r.stderr).strip()[:140]!r})")
+
+    r = _finding("--journal-page", "021039-3")
+    check(r.returncode != 0 and "not 021039-3" in r.stderr,
+          "a real disagreement about the page is still refused")
+    check("is printed page 021039-2" in r.stderr,
+          "and the refusal names the right folio in the operator's own form")
+
+    r = _finding("--journal-page", "12-15")
+    check(r.returncode != 0 and "not a folio this tool reads" in r.stderr,
+          "a page range is refused by name rather than read as its last page")
+
+    # A bare 2 is the right NUMBER in the wrong form, and the decoration rests
+    # on the same majority the offset does, so the locator is completed and the
+    # run says it was. Recording the submitted `2` would put a locator nobody
+    # can look up into the record with a derivation standing behind it.
+    r = _finding("--journal-page", "2")
+    check(r.returncode == 0 and "printed 021039-2 (offset +0" in r.stdout,
+          f"a bare number is completed to the folio the page carries ({(r.stdout + r.stderr).strip()[:140]!r})")
+    check("rather than the submitted 2." in r.stdout,
+          "and the completion is stated, not done quietly")
+
+    r = _finding("--journal-page", "R2")
+    check(r.returncode != 0 and "print marker p. 2 as 021039-2" in r.stderr,
+          "two forms for one number is a disagreement, not a formatting difference")
+
+    shutil.rmtree(_fo, ignore_errors=True)
 
     print("\ncsl_year: the issue year, not the online one")
     from mendeley_push import csl_year

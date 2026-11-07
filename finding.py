@@ -40,6 +40,17 @@ warning -- a misattributed quote is the failure that reads as correct at the tim
 so it is the one worth making structurally hard. If --journal-page is given, that
 number must also appear on the marker page, which is the both-ends offset check.
 
+**What gets stored is the EXTRACT's text, not the text submitted.** The check
+normalizes both sides, so a quote can pass it and still differ -- an en dash
+written as a hyphen, a ligature typed out. Until 0.50.0 the submitted bytes went
+into the append-only record, which is a check that keeps records faithful
+normalizing the difference away and then writing the unfaithful version down.
+
+**A printed page is not always an integer**, and the part that is not a digit is
+the part that makes it citable: PRX prints `021039-2`, a topical review prints
+`R863`. `read_folio` is the one place that reads those forms, and the derivation,
+the confirmer and the --journal-page check all go through it.
+
 This script never touches Mendeley and never writes outside `<out>/findings/`.
 """
 
@@ -93,6 +104,72 @@ def normalize(s: str) -> str:
     return " ".join(s.lower().split())
 
 
+def _words(s: str) -> list[tuple[int, int, str]]:
+    """`(raw start, raw end, one normalized word)` for every word in `s`.
+
+    The word sequence this produces is exactly `normalize(s).split()`, which is
+    what makes a match found here the same match the quote check found. A raw
+    token that normalizes to two words -- a non-breaking space inside it -- gives
+    two entries over the same raw span, and one that normalizes to nothing gives
+    none, because `normalize` does both of those too.
+    """
+    out: list[tuple[int, int, str]] = []
+    for m in re.finditer(r"\S+", s):
+        for w in normalize(m.group(0)).split():
+            out.append((m.start(), m.end(), w))
+    return out
+
+
+def extract_span(page: str, quote: str) -> str | None:
+    """The PAGE's own characters for `quote`, wrapping collapsed, or None.
+
+    `normalize` folds en dashes to hyphens, typographic quotes to straight ones
+    and ligatures to their letters. That is right for deciding whether a quote is
+    on the page and wrong for deciding what to write down: on 2026-11-04 `library`
+    submitted `[24-27]` against an extract reading `[24\u201327]`, the page check
+    passed, and the record stored the submitted bytes. The record had to be
+    repaired by hand.
+
+    **That is the dangerous direction.** A wrong page number is caught by the
+    offset check. A quote that drifts from the extract by one character is caught
+    by nothing, and a findings record exists to locate a passage faithfully enough
+    to return to it.
+
+    Words are matched rather than characters, because a quote usually stops just
+    before a comma -- its first and last words are a suffix and a prefix of the
+    extract's own -- and because the word sequence is the one thing the normalizer
+    provably preserves. The span inside those two end words is then found by
+    trying them, which asserts nothing: the test is
+    `normalize(span) == normalize(quote)`, the same equality the check used.
+
+    Returning None is a real answer. A quote that begins or ends inside a
+    character the extract writes as a ligature has no raw span, and the caller
+    refuses rather than falling back to the submitted bytes -- falling back is the
+    defect this function exists to remove.
+    """
+    nq = normalize(quote)
+    if not nq:
+        return None
+    q = nq.split()
+    words = _words(page)
+    m = len(q)
+    for i in range(len(words) - m + 1):
+        if m >= 3 and [w[2] for w in words[i + 1:i + m - 1]] != q[1:m - 1]:
+            continue
+        if m == 1:
+            if q[0] not in words[i][2]:
+                continue
+        elif not (words[i][2].endswith(q[0]) and words[i + m - 1][2].startswith(q[-1])):
+            continue
+        lo_s, lo_e = words[i][0], words[i][1]
+        hi_s, hi_e = words[i + m - 1][0], words[i + m - 1][1]
+        for a in range(lo_s, lo_e):
+            for b in range(max(a + 1, hi_s), hi_e + 1):
+                if normalize(page[a:b]) == nq:
+                    return " ".join(page[a:b].split())
+    return None
+
+
 # How far into a page a running head or footer can sit. Wider than this and the
 # window reaches figure captions and reference markers, whose small integers vote
 # for an offset near zero; see derive_offset.
@@ -124,6 +201,41 @@ def page_text(extract: str, page: int) -> str | None:
         if n == page:
             end = marks[i + 1][0] if i + 1 < len(marks) else len(extract)
             return extract[e:end]
+    return None
+
+
+# The forms a printed folio takes, in ONE place, because this bug was three
+# readers of the same quantity disagreeing. `derive_offset` has read `2040011-9`
+# off the page since the easyAmber case; `confirm_offset` and the
+# `--journal-page` check could only compare integers. So PRX's `021039-2` --
+# the only locator Phys. Rev. X gives a reader, and one the derivation had
+# already found -- was refused as a mismatch against the `2` it derived.
+#
+# Unrecognized forms are refused by name rather than guessed at, the same way
+# `stem_conflict` excludes publisher templates one at a time. A rule that kept
+# whatever digits it found would silently read the page RANGE `12-15` as page 15.
+ARTICLE_FOLIO = re.compile(r"\b(\d{5,8})-(\d{1,3})\b")
+LETTER_LEAD = re.compile(r"(?<![A-Za-z])([A-Za-z]{1,2})$")
+FOLIO_FORMS = ("a page (863), an article-number folio (021039-2), "
+               "or a lettered page (R863)")
+
+
+def read_folio(s: str) -> tuple[str, int] | None:
+    """`(what the journal prints around the number, the number)`, or None.
+
+    The number is what offset arithmetic applies to; the rest is what makes the
+    result citable. `021039-2` reads as `("021039-", 2)` and `R863` as
+    `("R", 863)`. A form not listed in `FOLIO_FORMS` is None, never a guess.
+    """
+    s = s.strip()
+    if re.fullmatch(r"\d{1,5}", s):
+        return "", int(s)
+    m = re.fullmatch(r"(\d{5,8})-(\d{1,3})", s)
+    if m:
+        return m.group(1) + "-", int(m.group(2))
+    m = re.fullmatch(r"([A-Za-z]{1,2})(\d{1,5})", s)
+    if m:
+        return m.group(1), int(m.group(2))
     return None
 
 
@@ -182,8 +294,16 @@ def outside_pages(printed: int, pages: tuple[int, int] | None) -> bool:
     return not (first <= printed <= last)
 
 
-def derive_offset(extract: str) -> tuple[int, int] | None:
-    """(offset, how many pages agree), or None if the printed pages cannot be read.
+def derive_offset(extract: str) -> tuple[int, int, str] | None:
+    """(offset, how many pages agree, what is printed around the number), or None.
+
+    The third element is the DECORATION, and it is the difference between a
+    locator a reader can look up and one they cannot. Phys. Rev. X paginates by
+    article number: marker 2 of Ninarello2017Models is printed `021039-2`, and
+    `2` is not a page in that journal. This function already found `021039-2`
+    on the page -- the article-number pattern below is the oldest thing in it --
+    and then returned the bare suffix, so the record said `printed 2`. The
+    decoration is recorded, never counted: it adds no vote and moves no offset.
 
     Do not trust a claimed page number: derive it. A running head or footer prints
     the journal page, so for each marker page collect the integer tokens near the
@@ -253,18 +373,27 @@ def derive_offset(extract: str) -> tuple[int, int] | None:
     marks = [(m.start(), m.end(), int(m.group(1)))
              for m in re.finditer(r"<!-- p\. (\d+) -->", extract)]
     tally: dict[int, int] = {}
+    forms: dict[int, dict[str, set[int]]] = {}
     for i, (_s, e, n) in enumerate(marks):
         end = marks[i + 1][0] if i + 1 < len(marks) else len(extract)
         body = extract[e:end]
         edges = body[:EDGE_CHARS] + " " + body[-EDGE_CHARS:]
-        cands = re.findall(r"(?<![\d.-])(\d{1,5})(?![\d.])", edges)
+        cands: list[tuple[str, str]] = []
+        for m in re.finditer(r"(?<![\d.-])(\d{1,5})(?![\d.])", edges):
+            # J. Phys. Condens. Matter prints R863 for a topical review. The
+            # lookbehind in LETTER_LEAD is what keeps "Fig2" and "eq3" out: a
+            # run of letters longer than two is not a folio prefix.
+            lead = LETTER_LEAD.search(edges[:m.start()])
+            cands.append((lead.group(1) if lead else "", m.group(1)))
         # Article-number journals print "2040011-9" and have no journal page at all;
         # the suffix is the page. Without this easyAmber derived a WRONG offset that
         # four pages happened to agree on, which is worse than deriving none.
-        cands += re.findall(r"\b\d{5,8}-(\d{1,3})\b", edges)
+        for m in ARTICLE_FOLIO.finditer(edges):
+            cands.append((m.group(1) + "-", m.group(2)))
         seen = set()
-        for tok in cands:
+        for pre, tok in cands:
             off = int(tok) - n
+            forms.setdefault(off, {}).setdefault(pre, set()).add(n)
             if off not in seen:            # one vote per page per offset
                 seen.add(off)
                 tally[off] = tally.get(off, 0) + 1
@@ -284,7 +413,18 @@ def derive_offset(extract: str) -> tuple[int, int] | None:
         return None
     if len(ranked) > 1 and ranked[1][1] == best[1]:
         return None      # two candidates equally supported: no winner, so say so
-    return best
+    # The decoration is a recurrence claim too, and is judged the same way the
+    # offset is: it has to appear on a majority of pages. Requiring instead that
+    # EVERY vote for the winning offset agree on one form does not work, because
+    # the bare pattern fires on any stray integer that happens to equal the
+    # printed page -- which on a journal whose offset is 0 is most of the small
+    # integers on the page. The longer form wins a tie: `\d{5,8}-\d{1,3}`
+    # recurring at one offset across a majority of pages is the folio, where a
+    # bare integer doing so may be the coincidence this function already warns
+    # about twice.
+    pages = forms.get(best[0], {})
+    pre = max(pages, key=lambda k: (len(pages[k]), len(k)), default="")
+    return best[0], best[1], (pre if len(pages.get(pre, ())) >= need else "")
 
 
 def _page_bodies(extract: str) -> list[tuple[int, str]]:
@@ -295,8 +435,16 @@ def _page_bodies(extract: str) -> list[tuple[int, str]]:
             for i, (_s, e, n) in enumerate(marks)]
 
 
-def confirm_offset(extract: str, page: int, journal_page: int) -> int | None:
+def confirm_offset(extract: str, page: int, journal_page: int,
+                   prefix: str = "") -> int | None:
     """Support for an offset the OPERATOR claims, or None. Never guesses one.
+
+    `prefix` is what the journal prints around the number, from `read_folio`, and
+    the search is for the whole printed folio rather than its digits: marker 3 of
+    a PRX paper prints `021039-3`, and looking for a bare `3` would not find it --
+    the guard before the match refuses a digit preceded by a hyphen, which is
+    every page of such a paper. Without this the confirmer could only ever refuse
+    an article-number folio, in a message naming a cause it had not tested.
 
     derive_offset looks near the page edges, which is where a running head sits
     on most papers and not on all of them. Lin1999Effect prints its footer and
@@ -336,6 +484,7 @@ def confirm_offset(extract: str, page: int, journal_page: int) -> int | None:
         want = str(n + off)
         if not want.lstrip("-").isdigit():
             continue
+        want = prefix + want
         lines = body.split("\n")
         at = 0                                  # character offset of the line start
         for i, line in enumerate(lines):
@@ -406,7 +555,8 @@ def main() -> int:
     ap.add_argument("--question", help="what was asked")
     ap.add_argument("--quote", help="the verbatim sentence that answered it")
     ap.add_argument("--page", type=int, help="extract marker page the quote is on")
-    ap.add_argument("--journal-page", help="printed page, if the journal has one")
+    ap.add_argument("--journal-page",
+                    help="printed folio: 863, or 021039-2, or R863")
     ap.add_argument("--asked-by", default="", help="who asked")
     ap.add_argument("--used-for", default="", help="what the answer was used for")
     # the other two record types
@@ -444,12 +594,34 @@ def main() -> int:
         pages = [int(m.group(1)) for m in re.finditer(r"<!-- p\. (\d+) -->", text)]
         die(f"{args.key} has no marker page {args.page} (it has 1-{max(pages) if pages else 0})")
 
+    if not normalize(args.quote):
+        die("--quote is empty once normalized. Nothing written.")
+
     if normalize(args.quote) not in normalize(page):
         where = [n for n in (int(m.group(1)) for m in re.finditer(r"<!-- p\. (\d+) -->", text))
                  if (pt := page_text(text, n)) and normalize(args.quote) in normalize(pt)]
         hint = f" -- but it IS on marker page {where[0]}" if where else ""
         die(f"that quote is not on marker page {args.page} of {args.key}{hint}. "
             f"Nothing written. Re-read the extract rather than adjusting the quote.")
+
+    # **The record stores the extract's characters, not the submitted ones.**
+    # The check above normalizes both sides, so it passes on a difference it
+    # then has no way to report -- and what used to be written down was the
+    # submitted form. `library` filed `[24-27]` against an extract reading
+    # `[24–27]` on 2026-11-04 and repaired the record by hand afterwards.
+    # Line wrapping is the one difference NOT preserved: where the PDF broke the
+    # line is a fact about the PDF, not about the sentence.
+    quote = extract_span(page, args.quote)
+    if quote is None:
+        die(f"the quote matches marker p. {args.page} of {args.key} only after "
+            f"normalization, and the extract's own characters for it could not be "
+            f"located -- it begins or ends inside a ligature or a similar fold. "
+            f"Nothing written. Copy the sentence out of text/{args.key}.md.")
+    if quote != " ".join(args.quote.split()):
+        print("note: the record stores the extract's wording, not the submitted "
+              "wording.\n"
+              f"      submitted: {' '.join(args.quote.split())}\n"
+              f"      extract:   {quote}")
 
     locator = f"marker p. {args.page}"
     page_range = bib_page_range(out, args.key)
@@ -480,12 +652,17 @@ def main() -> int:
                       f"the {page_range[0]}-{page_range[1]} library.bib records")
             derived = None
     if args.journal_page:
+        folio = read_folio(args.journal_page)
+        if folio is None:
+            die(f"--journal-page {args.journal_page.strip()!r} is not a folio this "
+                f"tool reads. It reads {FOLIO_FORMS}. Nothing written.")
+        prefix, jp = folio
         if derived is None:
             # The edge scan found nothing. Before refusing -- which blocks a
             # correct record and costs the locator entirely -- test the operator's
             # own number against the page positions. This cannot invent an offset;
             # it can only agree or stay silent.
-            support = confirm_offset(text, args.page, int(args.journal_page))
+            support = confirm_offset(text, args.page, jp, prefix)
             if support is None:
                 if vetoed:
                     die(f"{vetoed}, and marker p. {args.page} does not carry "
@@ -496,20 +673,40 @@ def main() -> int:
                     f"Check the printed number on the rendered page "
                     f"(uv run --script get_pdf.py {args.key}); if it is right, record this "
                     f"without --journal-page and say in --used-for where the number came from.")
-            off = int(args.journal_page) - args.page
-            locator += (f" · printed {args.journal_page} (offset {off:+d}, confirmed at a "
-                        f"consistent position on {support} pages)")
+            off = jp - args.page
+            locator += (f" · printed {args.journal_page.strip()} (offset {off:+d}, confirmed "
+                        f"at a consistent position on {support} pages)")
         else:
-            off, agree = derived
-            want = args.page + off
-            if str(args.journal_page).strip() != str(want):
-                die(f"offset says marker p. {args.page} is printed page {want} "
-                    f"(offset {off:+d}, agreeing on {agree} pages), not {args.journal_page}. "
+            off, agree, dpre = derived
+            # The comparison is between NUMBERS and the report is in the
+            # operator's own form. Comparing the strings refused `021039-2`
+            # against a derived `2` -- a disagreement purely of form, on a
+            # journal where the form is the whole locator.
+            if jp != args.page + off:
+                die(f"offset says marker p. {args.page} is printed page "
+                    f"{dpre}{args.page + off} (offset {off:+d}, agreeing on {agree} "
+                    f"pages), not {args.journal_page.strip()}. Nothing written.")
+            # Two forms for one number is a real disagreement, not a formatting
+            # difference, and picking one quietly is how a locator nobody can
+            # look up gets written with a derivation behind it.
+            if dpre and prefix and dpre != prefix:
+                die(f"{agree} pages print marker p. {args.page} as "
+                    f"{dpre}{args.page + off}, not {args.journal_page.strip()}. "
                     f"Nothing written.")
-            locator += f" · printed {want} (offset {off:+d}, derived from {agree} pages)"
+            # The decoration recurs on a majority of pages, which is the same
+            # evidence the offset rests on -- so a bare number the operator
+            # supplied for an article-number journal is completed rather than
+            # recorded as the uncitable `2` it is.
+            shown = f"{dpre or prefix}{args.page + off}"
+            if shown != args.journal_page.strip():
+                print(f"note: the locator records {shown}, which is the folio the page "
+                      f"carries, rather than the submitted {args.journal_page.strip()}.")
+            locator += (f" · printed {shown} (offset {off:+d}, "
+                        f"derived from {agree} pages)")
     elif derived:
-        off, agree = derived
-        locator += f" · printed {args.page + off} (offset {off:+d}, derived from {agree} pages)"
+        off, agree, dpre = derived
+        locator += (f" · printed {dpre}{args.page + off} (offset {off:+d}, "
+                    f"derived from {agree} pages)")
     elif vetoed:
         # No printed page rather than a wrong one. A findings record is quoted
         # back months later as the place a passage sits.
@@ -522,7 +719,7 @@ def main() -> int:
         lines.append(f"asked-by:  {args.asked_by}")
     lines.append(f"locator:   {locator}")
     lines.append("")
-    lines += ["> " + ln for ln in args.quote.strip().splitlines()]
+    lines += ["> " + ln for ln in quote.strip().splitlines()]
     if args.used_for:
         lines += ["", f"used-for:  {args.used_for}"]
     append(path, args.key, "\n".join(lines) + "\n", args.dry_run)

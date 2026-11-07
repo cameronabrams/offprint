@@ -3878,6 +3878,56 @@ and the "why not the citation graph" paragraph, which carries four dated
 measurements that would have gone stale inside a renderer with nothing to say
 they had.
 
+### The minted-key alarm tests the cause it names — 0.49.0
+
+`zotero_source.py` warned `! N keys were MINTED` on every record
+`zotero_inbox.py` creates, two commands apart from `zotero_inbox.py`'s own
+closing line saying a new record has no citation key until a refresh assigns
+one. Cry-wolf, not noise: the wording tells the reader to distrust everything
+below it, and on the filing path the right response is always to ignore it.
+`minted_verdict` now proves exactly two things — a bare id under a second
+backend's prefix, and a `citekeys.json` on disk that yields nothing — with no
+threshold, because "a lot of mints" describes a bulk import as well as a bug.
+Everything else is a new paper, **named rather than counted**. `library` filed
+it, proposed a discriminator that was empty by construction, and annotated its
+own drop once that was shown.
+
+### A locator is what the journal prints — 0.50.0
+
+Two `finding.py` symptoms from `library`, reported as symptoms with their cases
+and no proposed mechanism:
+`~/.local/state/fleet/drops/finding-py-locator-symptoms-20261107.md`.
+
+**`--journal-page 021039-2` was refused** on `Ninarello2017Models`, Phys. Rev. X
+7, 021039. PRX paginates by article number and that string is the only locator
+the paper gives a reader. The derivation had already read it off the page and
+returned the bare suffix; the check then compared `"2"` against `"021039-2"` as
+strings. `Baschnagel2005Computer` is the same with `R863`. The third option
+`library` took — omitting the flag — was no better: the tool wrote `printed 2`
+by itself, and nothing said so.
+
+`read_folio` is now the single reader of the three forms, and it is shared by
+the derivation, `confirm_offset` and the `--journal-page` check, which is the
+actual repair: the bug was three readers of one quantity disagreeing. The
+comparison is between numbers and the report is in the printed form; the
+decoration is carried into the locator under the same majority rule the offset
+obeys; and a bare number supplied for a journal that prints a folio is completed
+to it, out loud.
+
+**The mirror image, same drop.** A quote differing from the extract only by an
+en dash written as a hyphen passed the page check and was stored as submitted
+(`findings/Alhamdani2025Unravelling.md`, filed 11-04, repaired by hand). A wrong
+page number is caught by the offset check; this was caught by nothing.
+`extract_span` recovers the page's own characters, a run says when it
+substituted, and a span that cannot be recovered is refused rather than filed
+with the submitted bytes.
+
+**Not yet replayed.** `library`'s regression for a change like this is replaying
+every record in `findings/` through `finding.py`, and the five records added
+2026-11-07 put both odd-pagination cases in that corpus. It is `library`'s to
+run; this session verified against fixtures and the 950-check suite only, which
+is the position CLAUDE.md names as a check that cannot fail.
+
 ### Open: 2,517 `citations/` files predate the fixes that would change them
 
 **Not started, and not this session's call to start.** Of 2,524 files in

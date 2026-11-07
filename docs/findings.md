@@ -26,6 +26,19 @@ Two properties do the real work:
   `text/<citekey>.md` under the marker page claimed for it, after Unicode and
   whitespace normalization. A quote that cannot be found is refused, not filed with a
   warning. If it turns up on a different page, the error says which.
+- **The locator is the string the journal prints.** Not every journal paginates by
+  page: Phys. Rev. X prints `021039-2` on the second page of article 021039, and a
+  topical review in J. Phys. Condens. Matter prints `R863`. `2` and `863` are not
+  places a reader can look up, so `--journal-page` takes the folio whole, the
+  derivation carries the printed form into the record, and a bare number supplied
+  for a journal that prints a folio is completed to it — out loud. An unrecognized
+  form is refused by name rather than stripped down to its digits, which would read
+  the page range `12-15` as page 15.
+- **The record stores the extract's characters, not the submitted ones.** The quote
+  check normalizes en dashes, typographic quotes and ligatures on both sides, so a
+  quote can pass it and still differ from the page. What goes into the append-only
+  file is the extract's own wording, and the run says when it substituted. Where the
+  PDF broke the line is not preserved: that is a fact about the PDF, not the sentence.
 - **The page offset is derived, never trusted.** `finding.py` reads the recurring
   page number out of each page's running head or footer and takes the offset a
   majority of pages agree on. On fourteen papers whose offsets had been worked out by

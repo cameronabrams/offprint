@@ -665,6 +665,75 @@ names**, and exactly two things are provable from what the run holds:
 Everything else is a new paper, and it is **named, not counted**. A bare count
 sends the reader to a 2,758-item dry run to find out which.
 
+## A locator is what the journal prints, not the number the tool derived
+
+`library` filed two `finding.py` symptoms on 2026-11-07 and said plainly that it
+had not read the source and was not proposing a mechanism — the drop is
+`finding-py-locator-symptoms-20261107.md`. Both are about what gets **stored**,
+and they pull opposite ways: one refuses a difference that is only form, the
+other accepts one.
+
+**`--journal-page 021039-2` was refused.** Phys. Rev. X paginates by article
+number; the folio printed on page 2 of `Ninarello2017Models` is `021039-2`, and
+that string is the only locator the paper gives a reader. `derive_offset` had
+already found it — the article-number pattern is among the oldest things in that
+function, written for easyAmber — and then returned the bare suffix `2`, and the
+check compared `"2" != "021039-2"` as **strings** and called that a disagreement
+about the page. `Baschnagel2005Computer` is the same shape with a different
+decoration: J. Phys. Condens. Matter prints `R863` for a topical review.
+
+So the tool offered a refusal or a locator that is wrong, and `library` took
+neither — it omitted `--journal-page` and put the real folio in a prose note.
+**That third option was no better**, and nothing said so: with no folio supplied
+the tool derived +0 and wrote `printed 2` by itself.
+
+Three readers of one quantity, and they disagreed. `read_folio` is now the only
+one, and the three forms live beside it: a page, an article-number folio, a
+lettered page. Three things follow, and each of them was a bug.
+
+- **The comparison is between numbers; the report is in the printed form.** A
+  difference of form is not a disagreement about the page.
+- **`confirm_offset` searches for what is printed**, not for the digits. The
+  guard before its match refuses a digit preceded by a hyphen — which is every
+  page of an article-number journal — so without the prefix it could only ever
+  refuse, in a message naming a cause it had not tested. Same family as the
+  `no-text` message that asserted a scan.
+- **The decoration is carried to the locator and is held to the same majority
+  the offset is.** It is recorded, never counted: it adds no vote and moves no
+  offset. A form appearing on one page of four is not the folio. And a bare
+  number the operator supplies for a journal that prints a folio is **completed
+  rather than stored**, with the completion stated — the decoration rests on
+  exactly the evidence the offset does, so recording `2` would put an uncitable
+  locator in the file with a derivation standing behind it.
+
+An unrecognized form is refused by name. A rule that kept whatever digits it
+found would read the page range `12-15` as page 15, silently; publisher forms
+are added one at a time, the way `stem_conflict` excludes templates.
+
+**The mirror image, in the same drop.** A quote differing from the extract only
+by an en dash written as a hyphen **passed** the page check and was stored as
+submitted. `findings/Alhamdani2025Unravelling.md` carried `[24-27]` where the
+extract reads `[24–27]`, filed 2026-11-04 and repaired by hand.
+
+That is the dangerous direction. The check exists to keep records faithful, and
+it normalized the difference away and then wrote the unfaithful version into an
+append-only file. A wrong page number is caught by the offset check; this was
+caught by nothing, because the normalizer that lets a quote match is the same
+normalizer that hides what it matched past.
+
+**The record now stores the extract's characters.** `extract_span` finds the
+page's own bytes for the passage and the run says when it substituted. Words are
+matched rather than characters, because a quote usually stops just before a
+comma — its first and last words are a suffix and a prefix of the extract's own
+— and because the word sequence is the one thing `normalize` provably preserves;
+the span inside those two end words is then found by trying them, tested with
+`normalize(span) == normalize(quote)`, the same equality the check used. A quote
+whose span cannot be recovered is **refused**, not filed with the submitted
+bytes: falling back is the defect being removed.
+
+Line wrapping is the one difference deliberately not preserved. Where the PDF
+broke the line is a fact about the PDF, not about the sentence.
+
 ## An inbox that keeps what it has finished is not a queue
 
 `zotero_inbox.py` uploaded and reported success and left the PDF in
