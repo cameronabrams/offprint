@@ -3926,11 +3926,17 @@ with the submitted bytes.
 0 refused, 26 locators changed, 16 quotes rewritten. The quote rewrites are all
 ligature folds and are the fix working.
 
-The replay is the reason to keep this entry. It found **three durable records
+The replay is the reason to keep this entry. It found **five durable records
 carrying a wrong journal page** — `Hamerton1996Molecular` (3 for 313),
-`Kendrick1990Calculated` (2 for 3996) and `Ikeno2011Molecular` (21 for 311,
-whose PDF page 1 is an interlibrary-loan cover sheet, so the stored offset was
-not a near miss). Fixtures would never have found them.
+`Kendrick1990Calculated` (2 for 3996), `Ikeno2011Molecular` (21 for 311, whose
+PDF page 1 is an interlibrary-loan cover sheet, so the stored offset was not a
+near miss), `Garau2003Dual` #1 (6 for 2228) and `Lin1999Effect` #1 (8 for 1934).
+Fixtures would never have found them.
+
+The last two came out of the **corrected** replay and are the sharpest of the
+five, because they need no tool at all to see: a sibling record in the same file,
+on the same marker page, already carries the right answer. Two journal pages for
+one page of one paper, in one file, written by one tool on two days.
 
 **But the replay was read as measuring 0.50.0, and it does not.** Running the
 same records through `v0.49.0` and `v0.50.0` gives identical locators on every
@@ -3955,6 +3961,28 @@ nothing in the output saying so, and both readings describing something real.
 Account: `~/.local/state/fleet/drops/offprint-replay-attribution-20261107.md`.
 `Knight2015Memgen` and `Garau2003Dual` #3 derived when their records were written
 and do not now, which makes them two of the 137 papers item 4 below is about.
+
+**Replayed again with the folio passed back: 176 ok, 5 refused, 2 substantive
+locator changes, 15 quote rewrites.** The 2 are the decorations. That is 0.50.0's
+whole footprint on this corpus, and it is what a replay that enters both paths
+measures. The 5 refusals are the 5 wrong records above — passing the stored folio
+back turns the replay from a diff into a **disagreement detector**, where a
+refusal means the record and the tool disagree about the paper and one of them is
+wrong.
+
+### Open: the findings replay lives in a scratchpad
+
+**Not started.** The thing that found five wrong durable records is a throwaway
+script in `library`'s `/tmp`, and `/tmp` does not survive the restart that is
+already pending. `citations/` has `--stale`; `findings/` has nothing, and a
+findings record is the more durable claim of the two — it is quoted back months
+later as the place a passage sits.
+
+The natural home is a mode on `finding.py` that re-runs every record in
+`findings/<key>.md` against its extract and reports the disagreements, which is
+what `library` built by hand twice in one day. It is not written because nobody
+has asked for it, and because the corpus it must be measured against is
+`library`'s, not this repo's.
 
 ### Open: 2,517 `citations/` files predate the fixes that would change them
 

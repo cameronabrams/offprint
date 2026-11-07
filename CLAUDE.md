@@ -734,6 +734,28 @@ bytes: falling back is the defect being removed.
 Line wrapping is the one difference deliberately not preserved. Where the PDF
 broke the line is a fact about the PDF, not about the sentence.
 
+**The regression for a change here is replaying `findings/` WITH each record's
+stored folio**, and the qualifier is the whole sentence. `library` replayed 181
+records without `--journal-page` and reported four correct locators lost. They
+were not lost: `confirm_offset` runs only when a folio is supplied — deliberately,
+since unaided it measures 70% precision against the edge scan's 88% — so the
+replay could not enter that path on any of the 181, and the records that had used
+it came back bare. **A replay that omits an input cannot exercise the path that
+input unlocks**, and it reports the gap as a finding about the tool.
+
+Passed back, the folio turns the replay into a disagreement detector rather than
+a diff: a refusal means the record and the tool disagree about the paper. That
+run found **five** durable records carrying a wrong journal page, two of which
+were visible without any tool — a sibling record in the same file, on the same
+marker page, already held the right answer.
+
+The other half of the same correction: a replay against durable records measures
+the distance from whenever each record was written, which is not a version. Of 26
+locator changes, 0.50.0 accounted for 2; `v0.49.0` and `v0.50.0` give identical
+locators on all nine records checked. Attributing the whole diff to the newest
+change is the same error as reading `! N keys were MINTED` as a namespacing
+failure — a real quantity, read against the wrong cause.
+
 ## An inbox that keeps what it has finished is not a queue
 
 `zotero_inbox.py` uploaded and reported success and left the PDF in
