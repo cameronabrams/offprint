@@ -22,6 +22,8 @@ six months later. Records live in `<out>/findings/<citekey>.md`.
     uv run --script finding.py --key Jo2007Automated --retract 1 \
         --note "superseded: the sentence is conditional, see record 4"
 
+    uv run --script finding.py --replay            # re-check every record, write nothing
+
 **A record locates a passage; it never substitutes for one.** The moment one is
 consulted instead of the extract it becomes a paraphrase indistinguishable from the
 source, which is the whole thing deterministic extraction exists to prevent. Every
@@ -62,11 +64,12 @@ import re
 import sys
 import unicodedata
 from pathlib import Path
+from typing import NamedTuple
 
 sys.path.insert(0, str(Path(__file__).parent))
 
 try:
-    from mendeley_mirror import DEFAULT_OUT
+    from mendeley_mirror import DEFAULT_OUT, __version__
 except ImportError as exc:  # pragma: no cover
     sys.exit(f"finding.py must sit beside the other mirror scripts ({exc})")
 
@@ -76,6 +79,108 @@ HEADER = """# Findings: {key}
 `text/{key}.md` before quoting anything below. Append-only: corrections are
 appended as RETRACTED records, never edited in.*
 """
+
+
+class Record(NamedTuple):
+    """One block of a findings file, as `render_finding` writes it."""
+    ordinal: int
+    kind: str                 # FINDING | CHECKED | RETRACTED
+    date: str
+    by: str = ""              # CHECKED / RETRACTED: who
+    ref: int = 0              # CHECKED / RETRACTED: the ordinal it is about
+    note: str = ""            # CHECKED / RETRACTED: the note
+    question: str = ""
+    asked_by: str = ""
+    locator: str = ""
+    quote: str = ""
+    used_for: str = ""
+
+
+HEAD = re.compile(r"^## (\d+) \u00b7 (FINDING|CHECKED|RETRACTED) \u00b7 "
+                  r"(\d{4}-\d\d-\d\d)(?: \u00b7 (.*))?$")
+FIELD = re.compile(r"^(question|asked-by|locator|used-for): {2,}(.*)$")
+REF = re.compile(r"^re: (\d+)(?: \u2014 (.*))?$")
+MARKER = re.compile(r"^marker p\. (\d+)\b")
+PRINTED = re.compile(r"\u00b7 printed (\S+) \(offset ")
+
+
+def render_finding(ordinal: int, date: str, question: str, asked_by: str,
+                   locator: str, quote: str, used_for: str) -> str:
+    """The one place a FINDING record's text is built.
+
+    `parse_findings` is its inverse and `test_mirror.py` round-trips the pair,
+    which is the point of having it. `library` replayed the corpus with a
+    hand-written regex parser of this format and said the quiet part first: when
+    the format changes, a parser that lives elsewhere matches FEWER records and
+    reports them as fine. That is the stale-record shape with this tool's own
+    output as the stale file -- a faithful index over something only this repo
+    owns. So the reader ships beside the writer, and anything the reader cannot
+    read is reported by name rather than skipped.
+    """
+    lines = [f"## {ordinal} \u00b7 FINDING \u00b7 {date}", f"question:  {question}"]
+    if asked_by:
+        lines.append(f"asked-by:  {asked_by}")
+    lines.append(f"locator:   {locator}")
+    lines.append("")
+    lines += ["> " + ln for ln in quote.strip().splitlines()]
+    if used_for:
+        lines += ["", f"used-for:  {used_for}"]
+    return "\n".join(lines) + "\n"
+
+
+def parse_findings(body: str) -> tuple[list[Record], list[str]]:
+    """`(records, complaints)` for one findings file.
+
+    **A block this cannot read is a complaint, never a silent skip.** A parser
+    that drops what it does not recognize reports a corrupted file as a clean
+    one, and the count of what it parsed is the only thing that would show it --
+    which is the guard `library` described as weak, correctly.
+    """
+    recs: list[Record] = []
+    bad: list[str] = []
+    blocks = re.split(r"(?m)^(?=## )", body)
+    for block in blocks:
+        if not block.startswith("## "):
+            continue
+        head = HEAD.match(block.splitlines()[0])
+        if not head:
+            bad.append(f"unreadable header: {block.splitlines()[0][:70]!r}")
+            continue
+        ordinal, kind, date, by = int(head.group(1)), head.group(2), head.group(3), head.group(4) or ""
+        rest = block.splitlines()[1:]
+        while rest and not rest[-1].strip():
+            rest.pop()
+        if kind != "FINDING":
+            ref = REF.match(rest[0]) if rest else None
+            if not ref or len(rest) != 1:
+                bad.append(f"#{ordinal} {kind}: body is not a single 're: N' line")
+                continue
+            recs.append(Record(ordinal, kind, date, by=by,
+                               ref=int(ref.group(1)), note=ref.group(2) or ""))
+            continue
+        fields: dict[str, str] = {}
+        quote: list[str] = []
+        for ln in rest:
+            if not ln.strip():
+                continue
+            f = FIELD.match(ln)
+            if f:
+                fields[f.group(1)] = f.group(2)
+            elif ln.startswith(">"):
+                quote.append(ln[2:] if ln.startswith("> ") else ln[1:])
+            else:
+                bad.append(f"#{ordinal} FINDING: line is neither a field nor a quote: {ln[:60]!r}")
+                break
+        else:
+            missing = [k for k in ("question", "locator") if k not in fields]
+            if missing or not quote:
+                bad.append(f"#{ordinal} FINDING: no " + ", ".join(missing + ([] if quote else ["quote"])))
+                continue
+            recs.append(Record(ordinal, kind, date, question=fields["question"],
+                               asked_by=fields.get("asked-by", ""),
+                               locator=fields["locator"], quote="\n".join(quote),
+                               used_for=fields.get("used-for", "")))
+    return recs, bad
 
 
 def die(msg: str):
@@ -546,11 +651,266 @@ def append(path: Path, key: str, block: str, dry_run: bool) -> None:
     print(f"appended to {path}")
 
 
+class Locator(NamedTuple):
+    """What a locator resolved to: the line, why it was refused, what to say.
+
+    Exactly one of `text` and `problem` is non-empty. It is a return value rather
+    than a `die()` so that `--replay` can ask the same question `main` asks and
+    get the answer as data. A replay that re-derived the rule would drift from
+    the rule -- the same defect, one level up, that made `library`'s hand-written
+    parser of this tool's own output a weak guard.
+    """
+    text: str = ""
+    problem: str = ""
+    note: str = ""
+
+
+def resolve_locator(extract: str, key: str, page: int, journal_page: str | None,
+                    page_range: tuple[int, int] | None) -> Locator:
+    """The locator for one record, and nothing else. Writes nothing, reads nothing."""
+    locator = f"marker p. {page}"
+    derived = derive_offset(extract)
+    # **The bib vetoes a derivation; it never makes one.** 0.31.0 and 0.31.1
+    # both tried to let `library.bib` steer the derivation -- first by its
+    # first page, then by its range -- and `library`'s replay of 148 real
+    # findings scored the second at 10 fixed against 15 newly broken. Each
+    # version traded a wrong locator for a different wrong locator, because an
+    # offset built partly from the bib is wrong in a way that looks plausible.
+    #
+    # Used only to REFUSE, it has none of that. An offset that puts the cited
+    # marker on a page the article does not contain is wrong whatever supports
+    # it, and discarding it loses nothing: the operator's own --journal-page
+    # still goes through `confirm_offset`, which is how these records were
+    # written before any of this.
+    #
+    # It is also the only thing that answers Berthier2023Modern, where the
+    # attachment is a 17-page arXiv preprint and the bib holds the published
+    # 15-page range. No derivation can be right there -- the extract is not
+    # the document the pages describe -- and a refusal is the only correct
+    # output. 0.31.1 emitted "printed 110" instead.
+    vetoed = ""
+    if derived and page_range and outside_pages(page + derived[0], page_range):
+        vetoed = (f"derived offset {derived[0]:+d} would put marker "
+                  f"p. {page} on page {page + derived[0]}, outside "
+                  f"the {page_range[0]}-{page_range[1]} library.bib records")
+        derived = None
+
+    if not journal_page:
+        if derived:
+            off, agree, dpre = derived
+            return Locator(f"{locator} \u00b7 printed {dpre}{page + off} "
+                           f"(offset {off:+d}, derived from {agree} pages)")
+        if vetoed:
+            # No printed page rather than a wrong one. A findings record is
+            # quoted back months later as the place a passage sits.
+            return Locator(locator, note=(f"no printed page recorded -- {vetoed}. "
+                                          f"Pass --journal-page if you can read the "
+                                          f"number on the page."))
+        return Locator(locator)
+
+    folio = read_folio(journal_page)
+    if folio is None:
+        return Locator(problem=f"--journal-page {journal_page.strip()!r} is not a folio "
+                               f"this tool reads. It reads {FOLIO_FORMS}. Nothing written.")
+    prefix, jp = folio
+
+    if derived is None:
+        # The edge scan found nothing. Before refusing -- which blocks a correct
+        # record and costs the locator entirely -- test the operator's own number
+        # against the page positions. This cannot invent an offset; it can only
+        # agree or stay silent.
+        support = confirm_offset(extract, page, jp, prefix)
+        if support is None:
+            if vetoed:
+                return Locator(problem=f"{vetoed}, and marker p. {page} does not carry "
+                                       f"{journal_page.strip()} at a consistent position "
+                                       f"either. Nothing written.")
+            return Locator(problem=f"cannot derive a page offset for {key}, and marker "
+                                   f"p. {page} does not carry {journal_page.strip()} at a "
+                                   f"consistent position either. Check the printed number "
+                                   f"on the rendered page (uv run --script get_pdf.py "
+                                   f"{key}); if it is right, record this without "
+                                   f"--journal-page and say in --used-for where the number "
+                                   f"came from.")
+        off = jp - page
+        return Locator(f"{locator} \u00b7 printed {journal_page.strip()} (offset {off:+d}, "
+                       f"confirmed at a consistent position on {support} pages)")
+
+    off, agree, dpre = derived
+    # The comparison is between NUMBERS and the report is in the operator's own
+    # form. Comparing the strings refused `021039-2` against a derived `2` -- a
+    # disagreement purely of form, on a journal where the form is the locator.
+    if jp != page + off:
+        return Locator(problem=f"offset says marker p. {page} is printed page "
+                               f"{dpre}{page + off} (offset {off:+d}, agreeing on {agree} "
+                               f"pages), not {journal_page.strip()}. Nothing written.")
+    # Two forms for one number is a real disagreement, not a formatting
+    # difference, and picking one quietly is how a locator nobody can look up
+    # gets written with a derivation behind it.
+    if dpre and prefix and dpre != prefix:
+        return Locator(problem=f"{agree} pages print marker p. {page} as "
+                               f"{dpre}{page + off}, not {journal_page.strip()}. "
+                               f"Nothing written.")
+    # The decoration recurs on a majority of pages, which is the same evidence
+    # the offset rests on -- so a bare number the operator supplied for an
+    # article-number journal is completed rather than recorded as the uncitable
+    # `2` it is.
+    shown = f"{dpre or prefix}{page + off}"
+    note = ("" if shown == journal_page.strip() else
+            f"the locator records {shown}, which is the folio the page carries, "
+            f"rather than the submitted {journal_page.strip()}.")
+    return Locator(f"{locator} \u00b7 printed {shown} (offset {off:+d}, "
+                   f"derived from {agree} pages)", note=note)
+
+
+def replay(out: Path, only: str | None, show_all: bool) -> int:
+    """Re-run every record in `findings/` against its extract. Writes NOTHING.
+
+    `library` built this twice by hand in one day and it found five durable
+    records carrying a wrong journal page -- two of them visible without any tool
+    at all, since a sibling record in the same file on the same marker page
+    already held the right answer. It lives here rather than in a replay script
+    for the reason they gave: a parser of this format that lives anywhere else
+    matches FEWER records as the format drifts and reports them as fine.
+
+    **The stored folio is passed back**, which is what makes a refusal mean
+    something. Without it `confirm_offset` is unreachable -- it never derives an
+    offset unaided, deliberately -- so every record that used it comes back bare
+    and reads as a locator lost. That is how the first replay reported four
+    correct locators dropped that were not dropped at all.
+
+    Exit status is 1 when anything disagrees or cannot be read, so a sweep can be
+    scripted. A disagreement is a claim about the mirror, never a repair: these
+    files are append-only by their own header, and the fix is a RETRACTED record
+    written by whoever owns the library.
+    """
+    fdir = out / "findings"
+    if not fdir.is_dir():
+        die(f"no findings directory at {fdir}")
+    files = sorted(fdir.glob("*.md"))
+    if only:
+        files = [f for f in files if f.stem == only]
+        if not files:
+            die(f"no findings file for {only} under {fdir}")
+
+    rows: list[tuple[str, str, str]] = []
+    n = dict(records=0, disagree=0, quote=0, gains=0, support=0, blind=0,
+             same=0, unreadable=0)
+
+    def row(kind: str, key: str, ordinal: str, detail: str, mark: str) -> None:
+        rows.append((kind, f"{key} {ordinal}".strip() + (f"  [{mark}]" if mark else ""),
+                     detail))
+
+    for path in files:
+        key = path.stem
+        recs, bad = parse_findings(path.read_text(encoding="utf-8"))
+        for complaint in bad:
+            n["unreadable"] += 1
+            row("UNREADABLE", key, "", complaint, "")
+        retracted = {r.ref for r in recs if r.kind == "RETRACTED"}
+        hand = {r.ref for r in recs if r.kind == "CHECKED"}
+        epath = out / "text" / f"{key}.md"
+        text = epath.read_text(encoding="utf-8", errors="replace") if epath.is_file() else None
+        rng = bib_page_range(out, key)
+        for r in recs:
+            if r.kind != "FINDING":
+                continue
+            n["records"] += 1
+            ordinal = f"#{r.ordinal}"
+            # A record a person checked against the PDF, or one already
+            # retracted, is still reported -- the mark says which, because the
+            # tool disagreeing with a human is MORE interesting, not less.
+            mark = ("retracted" if r.ordinal in retracted
+                    else "checked by hand" if r.ordinal in hand else "")
+            if text is None:
+                n["blind"] += 1
+                row("NO EXTRACT", key, ordinal, f"nothing at text/{key}.md", mark)
+                continue
+            m = MARKER.match(r.locator)
+            if not m:
+                n["unreadable"] += 1
+                row("UNREADABLE", key, ordinal,
+                    f"locator does not begin with a marker page: {r.locator[:60]!r}", mark)
+                continue
+            page = int(m.group(1))
+            body = page_text(text, page)
+            if body is None:
+                n["blind"] += 1
+                row("NO SUCH PAGE", key, ordinal,
+                    f"the extract has no marker page {page}", mark)
+                continue
+            if normalize(r.quote) not in normalize(body):
+                n["blind"] += 1
+                row("QUOTE GONE", key, ordinal,
+                    f"the stored quote is no longer on marker p. {page}", mark)
+                continue
+            span = extract_span(body, r.quote)
+            if span is not None and span != " ".join(r.quote.split()):
+                n["quote"] += 1
+                row("QUOTE DRIFT", key, ordinal,
+                    f"stored:  {' '.join(r.quote.split())[:110]}\n"
+                    f"extract: {span[:110]}", mark)
+            pm = PRINTED.search(r.locator)
+            stored = pm.group(1) if pm else None
+            loc = resolve_locator(text, key, page, stored, rng)
+            if loc.problem:
+                n["disagree"] += 1
+                row("DISAGREES", key, ordinal,
+                    f"stored: {r.locator}\ntool:   {loc.problem}", mark)
+                continue
+            nm = PRINTED.search(loc.text)
+            now = nm.group(1) if nm else None
+            if stored is None and now is not None:
+                n["gains"] += 1
+                row("GAINS A PAGE", key, ordinal,
+                    f"stored: {r.locator}\ntool:   {loc.text}", mark)
+            elif stored != now:
+                n["disagree"] += 1
+                row("DISAGREES", key, ordinal,
+                    f"stored: {r.locator}\ntool:   {loc.text}", mark)
+            elif loc.text != r.locator:
+                n["support"] += 1
+                if show_all:
+                    row("SUPPORT ONLY", key, ordinal,
+                        f"stored: {r.locator}\ntool:   {loc.text}", mark)
+            else:
+                n["same"] += 1
+
+    for kind, who, detail in rows:
+        print(f"\n{kind}  {who}")
+        for ln in detail.splitlines():
+            print(f"    {ln}")
+
+    # Every number says what it is a number OF, and the locator verdicts
+    # partition the records while the quote count deliberately does not.
+    print(f"\n{n['records']} FINDING records in {len(files)} file(s), "
+          f"replayed against their extracts by offprint {__version__}:")
+    print(f"  locator, one verdict per record:")
+    print(f"    {n['disagree']:4d} disagreeing with this tool about the printed page")
+    print(f"    {n['gains']:4d} carrying no printed page, which would now be given one")
+    print(f"    {n['support']:4d} agreeing on the page, differing only in how much support "
+          f"is reported" + ("" if show_all else " (--all lists them)"))
+    print(f"    {n['blind']:4d} unverifiable -- no extract, no such marker page, or the "
+          f"quote has moved")
+    print(f"    {n['same']:4d} unchanged")
+    print(f"  quote, counted separately -- a record here may also appear above:")
+    print(f"    {n['quote']:4d} storing a quote differing from the extract's own characters")
+    print(f"  reader:")
+    print(f"    {n['unreadable']:4d} block(s) this tool could not read in its own format")
+    print("\nNothing was written. These files are append-only: a disagreement is "
+          "repaired\nwith a RETRACTED record by whoever owns the library, not by this tool.")
+    return 1 if (n["disagree"] or n["unreadable"]) else 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Record what was asked of a paper and where the answer is.")
-    ap.add_argument("--key", required=True, help="citation key")
+    ap.add_argument("--key", help="citation key (every mode but --replay needs one)")
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT, help="mirror directory")
     ap.add_argument("--dry-run", action="store_true", help="show the record, write nothing")
+    ap.add_argument("--replay", action="store_true",
+                    help="re-check every record in findings/ against its extract; writes nothing")
+    ap.add_argument("--all", action="store_true",
+                    help="--replay: list the records that differ only in reported support")
     # a finding
     ap.add_argument("--question", help="what was asked")
     ap.add_argument("--quote", help="the verbatim sentence that answered it")
@@ -567,6 +927,10 @@ def main() -> int:
     args = ap.parse_args()
 
     out = args.out.expanduser()
+    if args.replay:
+        return replay(out, args.key, args.all)
+    if not args.key:
+        die("--key is required for everything but --replay")
     path = out / "findings" / f"{args.key}.md"
     today = _dt.date.today().isoformat()
 
@@ -623,106 +987,18 @@ def main() -> int:
               f"      submitted: {' '.join(args.quote.split())}\n"
               f"      extract:   {quote}")
 
-    locator = f"marker p. {args.page}"
-    page_range = bib_page_range(out, args.key)
-    derived = derive_offset(text)
-    # **The bib vetoes a derivation; it never makes one.** 0.31.0 and 0.31.1
-    # both tried to let `library.bib` steer the derivation -- first by its
-    # first page, then by its range -- and `library`'s replay of 148 real
-    # findings scored the second at 10 fixed against 15 newly broken. Each
-    # version traded a wrong locator for a different wrong locator, because an
-    # offset built partly from the bib is wrong in a way that looks plausible.
-    #
-    # Used only to REFUSE, it has none of that. An offset that puts the cited
-    # marker on a page the article does not contain is wrong whatever supports
-    # it, and discarding it loses nothing: the operator's own --journal-page
-    # still goes through `confirm_offset`, which is how these records were
-    # written before any of this.
-    #
-    # It is also the only thing that answers Berthier2023Modern, where the
-    # attachment is a 17-page arXiv preprint and the bib holds the published
-    # 15-page range. No derivation can be right there -- the extract is not
-    # the document the pages describe -- and a refusal is the only correct
-    # output. 0.31.1 emitted "printed 110" instead.
-    vetoed = ""
-    if derived and args.page and page_range:
-        if outside_pages(args.page + derived[0], page_range):
-            vetoed = (f"derived offset {derived[0]:+d} would put marker "
-                      f"p. {args.page} on page {args.page + derived[0]}, outside "
-                      f"the {page_range[0]}-{page_range[1]} library.bib records")
-            derived = None
-    if args.journal_page:
-        folio = read_folio(args.journal_page)
-        if folio is None:
-            die(f"--journal-page {args.journal_page.strip()!r} is not a folio this "
-                f"tool reads. It reads {FOLIO_FORMS}. Nothing written.")
-        prefix, jp = folio
-        if derived is None:
-            # The edge scan found nothing. Before refusing -- which blocks a
-            # correct record and costs the locator entirely -- test the operator's
-            # own number against the page positions. This cannot invent an offset;
-            # it can only agree or stay silent.
-            support = confirm_offset(text, args.page, jp, prefix)
-            if support is None:
-                if vetoed:
-                    die(f"{vetoed}, and marker p. {args.page} does not carry "
-                        f"{args.journal_page} at a consistent position either. "
-                        f"Nothing written.")
-                die(f"cannot derive a page offset for {args.key}, and marker p. {args.page} "
-                    f"does not carry {args.journal_page} at a consistent position either. "
-                    f"Check the printed number on the rendered page "
-                    f"(uv run --script get_pdf.py {args.key}); if it is right, record this "
-                    f"without --journal-page and say in --used-for where the number came from.")
-            off = jp - args.page
-            locator += (f" · printed {args.journal_page.strip()} (offset {off:+d}, confirmed "
-                        f"at a consistent position on {support} pages)")
-        else:
-            off, agree, dpre = derived
-            # The comparison is between NUMBERS and the report is in the
-            # operator's own form. Comparing the strings refused `021039-2`
-            # against a derived `2` -- a disagreement purely of form, on a
-            # journal where the form is the whole locator.
-            if jp != args.page + off:
-                die(f"offset says marker p. {args.page} is printed page "
-                    f"{dpre}{args.page + off} (offset {off:+d}, agreeing on {agree} "
-                    f"pages), not {args.journal_page.strip()}. Nothing written.")
-            # Two forms for one number is a real disagreement, not a formatting
-            # difference, and picking one quietly is how a locator nobody can
-            # look up gets written with a derivation behind it.
-            if dpre and prefix and dpre != prefix:
-                die(f"{agree} pages print marker p. {args.page} as "
-                    f"{dpre}{args.page + off}, not {args.journal_page.strip()}. "
-                    f"Nothing written.")
-            # The decoration recurs on a majority of pages, which is the same
-            # evidence the offset rests on -- so a bare number the operator
-            # supplied for an article-number journal is completed rather than
-            # recorded as the uncitable `2` it is.
-            shown = f"{dpre or prefix}{args.page + off}"
-            if shown != args.journal_page.strip():
-                print(f"note: the locator records {shown}, which is the folio the page "
-                      f"carries, rather than the submitted {args.journal_page.strip()}.")
-            locator += (f" · printed {shown} (offset {off:+d}, "
-                        f"derived from {agree} pages)")
-    elif derived:
-        off, agree, dpre = derived
-        locator += (f" · printed {dpre}{args.page + off} (offset {off:+d}, "
-                    f"derived from {agree} pages)")
-    elif vetoed:
-        # No printed page rather than a wrong one. A findings record is quoted
-        # back months later as the place a passage sits.
-        print(f"note: no printed page recorded -- {vetoed}. Pass --journal-page "
-              f"if you can read the number on the page.")
+    loc = resolve_locator(text, args.key, args.page, args.journal_page,
+                          bib_page_range(out, args.key))
+    if loc.problem:
+        die(loc.problem)
+    if loc.note:
+        print(f"note: {loc.note}")
+    locator = loc.text
 
-    lines = [f"## {next_ordinal(path)} · FINDING · {today}",
-             f"question:  {args.question}"]
-    if args.asked_by:
-        lines.append(f"asked-by:  {args.asked_by}")
-    lines.append(f"locator:   {locator}")
-    lines.append("")
-    lines += ["> " + ln for ln in quote.strip().splitlines()]
-    if args.used_for:
-        lines += ["", f"used-for:  {args.used_for}"]
-    append(path, args.key, "\n".join(lines) + "\n", args.dry_run)
+    append(path, args.key,
+           render_finding(next_ordinal(path), today, args.question, args.asked_by,
+                          locator, quote, args.used_for),
+           args.dry_run)
     return 0
 
 

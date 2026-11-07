@@ -180,7 +180,8 @@ left to connect the two.
 `finding.py`, `pdbrefs.py`, `pdbxref.py`, `doixref.py`, `zotero_migrate.py`,
 `zotero_source.py`, `zotero_attach.py`, `zotero_edit.py`, `zotero_inbox.py` and
 `whatbreaks.py` are separate CLIs that reuse its `Mendeley` client,
-`config_dir()`, and `DEFAULT_OUT`. `finding.py`, `pdbrefs.py` and `whatbreaks.py`
+`config_dir()`, and `DEFAULT_OUT`. `finding.py --replay` re-checks every record in `findings/` against its extract
+and writes nothing. `finding.py`, `pdbrefs.py` and `whatbreaks.py`
 touch neither Mendeley nor the network; `pdbxref.py` queries RCSB and
 `doixref.py` queries Crossref, both public and unauthenticated, and neither
 writes anything — `doixref.py` caches to `~/.cache/offprint/` precisely so that
@@ -733,6 +734,23 @@ bytes: falling back is the defect being removed.
 
 Line wrapping is the one difference deliberately not preserved. Where the PDF
 broke the line is a fact about the PDF, not about the sentence.
+
+**`--replay` is that regression, and it lives here because the format does.**
+`library` ran it twice by hand from a scratchpad script and named the hazard
+before anyone hit it: a parser of this format that lives anywhere else matches
+FEWER records as the format drifts, and reports the ones it missed as fine. That
+is the stale-record shape with this tool's own output as the stale file, and the
+parse count is the only thing that would show it. So `render_finding` and
+`parse_findings` are inverses, `test_mirror.py` round-trips the pair, and **a
+block the reader cannot read is a complaint with a count behind it, never a
+skip**. It writes nothing: these files are append-only by their own header, and
+a disagreement is repaired with a RETRACTED record by whoever owns the library.
+
+Two things the output has to keep doing. A record the library has already
+retracted or checked by hand is **marked and still reported** — the tool
+disagreeing with a person is more interesting, not less. And the locator
+verdicts partition the records while the quote count does not, so the summary
+says which is which rather than printing six numbers that do not add up.
 
 **The regression for a change here is replaying `findings/` WITH each record's
 stored folio**, and the qualifier is the whole sentence. `library` replayed 181

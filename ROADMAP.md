@@ -3970,19 +3970,47 @@ back turns the replay from a diff into a **disagreement detector**, where a
 refusal means the record and the tool disagree about the paper and one of them is
 wrong.
 
-### Open: the findings replay lives in a scratchpad
+### `finding.py --replay`, and the reader that ships with the writer — 0.51.0
 
-**Not started.** The thing that found five wrong durable records is a throwaway
-script in `library`'s `/tmp`, and `/tmp` does not survive the restart that is
-already pending. `citations/` has `--stale`; `findings/` has nothing, and a
-findings record is the more durable claim of the two — it is quoted back months
-later as the place a passage sits.
+The thing that found five wrong durable records was a throwaway script in
+`library`'s `/tmp`. They saved it, then asked for it as a mode here, and the
+reason they gave is better than the one this ROADMAP had recorded: **their
+version re-implements this repo's record format in regex, so when the format
+changes it parses FEWER records and reports them as fine.** A faithful index
+over a format only this repo owns — the stale-record shape, with this tool's own
+output as the stale file — and the parse count is the only guard, which is a
+weak one.
 
-The natural home is a mode on `finding.py` that re-runs every record in
-`findings/<key>.md` against its extract and reports the disagreements, which is
-what `library` built by hand twice in one day. It is not written because nobody
-has asked for it, and because the corpus it must be measured against is
-`library`'s, not this repo's.
+So `render_finding` and `parse_findings` ship as inverses, `test_mirror.py`
+round-trips the pair, and **a block the reader cannot read is a complaint with a
+count behind it, never a skip**. `--replay` writes nothing and exits 1 when
+anything disagrees or cannot be read.
+
+Two things it does that the script could not. It passes each record's **stored
+folio** back, which is what makes a refusal mean something — without it
+`confirm_offset` is unreachable and every record that used it reads as a locator
+lost, which is how the first replay reported four correct locators dropped. And
+it **marks rather than hides** a record the library has already retracted or
+checked by hand: the tool disagreeing with a person is more interesting, not
+less.
+
+`resolve_locator` was factored out of `main` so the replay asks the same question
+the writer asks and gets the answer as data rather than an exit status. A replay
+that re-derived the rule would drift from the rule, which is the defect one level
+up from the one being fixed.
+
+First run over the live corpus, independently of `library`'s: **181 records in
+107 files, 0 blocks unreadable, 7 disagreeing, 18 differing only in reported
+support, 16 storing a quote that differs from the extract.** Five of the seven
+are the wrong records `library` found, already carrying RETRACTED records and
+marked as such; the other two are `Baschnagel2005Computer` and
+`Ninarello2017Models`, written under 0.49.0 and still storing `863` and `2` where
+the journals print `R863` and `021039-2`.
+
+**The corpus stays in the library.** `--out` points the mode at whatever mirror
+holds the records, and the only findings files in this repo are fixtures. That
+split is what made the measurement worth anything — a fix verified against the
+case that prompted it is a check that cannot fail.
 
 ### Open: 2,517 `citations/` files predate the fixes that would change them
 

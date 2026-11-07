@@ -46,6 +46,28 @@ Two properties do the real work:
   usable footer. It has never returned a wrong offset, which is the property that
   matters: a refusal costs a minute, a wrong locator ships.
 
+## Re-checking what is already written
+
+```
+uv run --script finding.py --replay              # every record, every file
+uv run --script finding.py --replay --key Lin1999Effect
+uv run --script finding.py --replay --all        # including wording-only differences
+```
+
+`--replay` re-runs every record in `findings/` against its extract and **writes
+nothing**. It passes each record's own stored folio back to the tool, which is what
+makes a refusal mean something: a record and the tool disagreeing about the printed
+page is a claim one of them is wrong, and over the first real corpus that found five
+durable records carrying a wrong journal page. Two of those needed no tool at all —
+a sibling record in the same file, on the same marker page, already held the right
+answer.
+
+It exits 1 when anything disagrees or cannot be read, so a sweep can be scripted.
+Records the library has already retracted or checked by hand are marked and still
+reported, because the tool disagreeing with a person is more interesting rather than
+less. **Nothing is repaired:** these files are append-only, so the fix is a
+`RETRACTED` record written by whoever owns the library.
+
 **A record locates a passage; it never substitutes for one.** Consulted instead of
 the extract it becomes a paraphrase indistinguishable from the source, which is what
 deterministic extraction exists to prevent. Every file says so in its own header.

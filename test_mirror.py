@@ -2070,6 +2070,110 @@ def main():
     check(r.returncode != 0 and "print marker p. 2 as 021039-2" in r.stderr,
           "two forms for one number is a disagreement, not a formatting difference")
 
+
+    print("\nfinding.py: the reader of a findings file ships with its writer")
+
+    # `library` replayed this corpus with a hand-written regex parser of a format
+    # only this repo owns, and named the hazard before anyone hit it: when the
+    # format changes, a parser living elsewhere matches FEWER records and reports
+    # them as fine. The stale-record shape, with this tool's own output as the
+    # stale file. So render_finding and parse_findings are inverses, and this is
+    # what keeps them that way.
+    _rec = fnd.render_finding(3, "2026-11-07", "does it melt?", "cfa",
+                              "marker p. 2 \u00b7 printed 021039-2 (offset +0, derived from 5 pages)",
+                              "Earlier work showed.", "Introduction")
+    _got, _bad = fnd.parse_findings(_rec)
+    check(_bad == [] and len(_got) == 1, f"a rendered record parses back ({_bad})")
+    _r = _got[0]
+    check((_r.ordinal, _r.kind, _r.date) == (3, "FINDING", "2026-11-07"),
+          "the header round-trips")
+    check(_r.question == "does it melt?" and _r.asked_by == "cfa"
+          and _r.used_for == "Introduction", "and so do the fields")
+    check(_r.quote == "Earlier work showed.", "and so does the quote")
+    check(_r.locator.endswith("derived from 5 pages)"), "and so does the locator")
+
+    # A record with no optional fields is the common shape and must round-trip too.
+    _bare = fnd.render_finding(1, "2026-11-07", "q", "", "marker p. 1", "a quote", "")
+    _g2, _b2 = fnd.parse_findings(_bare)
+    check(_b2 == [] and _g2[0].asked_by == "" and _g2[0].used_for == "",
+          "a record with no asked-by or used-for round-trips")
+
+    # **A block the reader cannot read is a complaint, never a silent skip.**
+    # That is the whole difference between this and the script it replaces: a
+    # parser that drops what it does not recognize reports a corrupted file as a
+    # clean one, and the count of what it parsed is the only thing that shows it.
+    _junk = _rec.replace("question:  does it melt?", "asked:  does it melt?")
+    _g3, _b3 = fnd.parse_findings(_junk)
+    check(_g3 == [] and len(_b3) == 1 and "#3" in _b3[0],
+          f"an unrecognized line is reported by name, not dropped ({_b3})")
+    _noloc = fnd.render_finding(4, "2026-11-07", "q", "", "marker p. 1", "a quote", "")
+    _noloc = _noloc.replace("locator:   marker p. 1\n", "")
+    _g4, _b4 = fnd.parse_findings(_noloc)
+    check(_g4 == [] and _b4 and "no locator" in _b4[0],
+          f"a missing field is reported, not defaulted ({_b4})")
+    _g5, _b5 = fnd.parse_findings("## 2 \u00b7 WHATEVER \u00b7 2026-11-07\nbody\n")
+    check(_g5 == [] and len(_b5) == 1, f"an unknown record kind is a complaint ({_b5})")
+
+    # CHECKED and RETRACTED carry the ordinal they are about, which is how
+    # --replay can mark a disagreement the library already knows about.
+    _g6, _b6 = fnd.parse_findings("## 5 \u00b7 RETRACTED \u00b7 2026-11-07 \u00b7 cfa\n"
+                                  "re: 2 \u2014 wrong page\n")
+    check(_b6 == [] and _g6[0].kind == "RETRACTED" and _g6[0].ref == 2
+          and _g6[0].by == "cfa", f"a retraction names its target ({_g6})")
+
+    print("\nfinding.py: --replay re-checks durable records and writes nothing")
+
+    _rp = Path(tempfile.mkdtemp())
+    (_rp / "text").mkdir()
+    (_rp / "findings").mkdir()
+    (_rp / "text" / "Ninarello2017Models.md").write_text(
+        PRX.replace("<!-- p. 2 -->\n",
+                    "<!-- p. 2 -->\nEarlier work [24\u201327] showed.\n"), encoding="utf-8")
+    # one record right, one with a page the extract contradicts, one whose quote
+    # drifted from the extract, and one already retracted.
+    (_rp / "findings" / "Ninarello2017Models.md").write_text(
+        fnd.HEADER.format(key="Ninarello2017Models")
+        + "\n" + fnd.render_finding(1, "2026-11-07", "q1", "", "marker p. 2 \u00b7 printed "
+                                     "021039-2 (offset +0, derived from 5 pages)",
+                                     "Earlier work [24\u201327] showed.", "")
+        + "\n" + fnd.render_finding(2, "2026-11-07", "q2", "", "marker p. 2 \u00b7 printed "
+                                     "021039-9 (offset +7, derived from 5 pages)",
+                                     "Earlier work [24\u201327] showed.", "")
+        + "\n" + fnd.render_finding(3, "2026-11-07", "q3", "", "marker p. 2",
+                                     "Earlier work [24-27] showed.", "")
+        + "\n## 4 \u00b7 RETRACTED \u00b7 2026-11-07\nre: 2 \u2014 wrong page\n",
+        encoding="utf-8")
+
+    _before = (_rp / "findings" / "Ninarello2017Models.md").read_bytes()
+    _rr = subprocess.run([sys.executable, str(Path(__file__).parent / "finding.py"),
+                          "--out", str(_rp), "--replay"], capture_output=True, text=True)
+    check((_rp / "findings" / "Ninarello2017Models.md").read_bytes() == _before,
+          "--replay writes nothing, byte for byte")
+    check(_rr.returncode == 1, f"and exits 1 when something disagrees ({_rr.returncode})")
+    check("DISAGREES" in _rr.stdout and "#2" in _rr.stdout,
+          "the record whose page the extract contradicts is named")
+    check("[retracted]" in _rr.stdout,
+          "and a record the library already retracted is marked, not hidden -- "
+          "the tool disagreeing with a human is more interesting, not less")
+    check("QUOTE DRIFT" in _rr.stdout and "#3" in _rr.stdout,
+          "a stored quote that drifted from the extract is named too")
+    check("1 disagreeing with this tool about the printed page" in _rr.stdout,
+          f"the summary says what each number is a number OF ({_rr.stdout[-400:]!r})")
+    check("0 block(s) this tool could not read in its own format" in _rr.stdout,
+          "including the count that would show the reader going stale")
+    check("3 FINDING records in 1 file(s)" in _rr.stdout,
+          "and the total, so a shrinking parse cannot pass for a clean corpus")
+
+    # A findings file this tool did not write is reported rather than skipped.
+    (_rp / "findings" / "Garbled2020Thing.md").write_text(
+        "## 1 \u00b7 FINDING \u00b7 2026-11-07\nasked: who knows\n> a quote\n",
+        encoding="utf-8")
+    _rr2 = subprocess.run([sys.executable, str(Path(__file__).parent / "finding.py"),
+                           "--out", str(_rp), "--replay"], capture_output=True, text=True)
+    check("UNREADABLE" in _rr2.stdout and "1 block(s) this tool could not read" in _rr2.stdout,
+          "a file this tool did not write is a complaint with a count behind it")
+
+    shutil.rmtree(_rp, ignore_errors=True)
     shutil.rmtree(_fo, ignore_errors=True)
 
     print("\ncsl_year: the issue year, not the online one")
