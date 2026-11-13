@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["requests>=2.31"]   # transitive: mendeley_mirror imports it for DEFAULT_OUT
+# dependencies = ["requests>=2.31"]   # transitive: mirror imports it for DEFAULT_OUT
 # ///
 """
 whatbreaks.py -- what breaks if a paper is wrong.
@@ -73,7 +73,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 try:
-    from mendeley_mirror import DEFAULT_OUT, __version__
+    from mirror import DEFAULT_OUT, __version__
 except ImportError as exc:  # pragma: no cover
     sys.exit(f"whatbreaks.py must sit beside the other mirror scripts ({exc})")
 

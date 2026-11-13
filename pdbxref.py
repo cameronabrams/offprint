@@ -51,7 +51,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 try:
     import requests
-    from mendeley_mirror import DEFAULT_OUT
+    from mirror import DEFAULT_OUT
     from pdbrefs import scan
 except ImportError as exc:  # pragma: no cover
     sys.exit(f"pdbxref.py must sit beside the other mirror scripts ({exc})")
@@ -78,7 +78,7 @@ def norm_title(s: str) -> str:
 def library_keys(out: Path) -> tuple[set[str], set[str], set[str]]:
     """(dois, pmids, normalized titles) -- THREE keys, because one is not enough.
 
-    17% of this library's records carry no `doi` field: an older Mendeley import
+    17% of this library's records carry no `doi` field: an older import
     often has a PMID and a PubMed URL instead. Matching on DOI alone reported
     Kwong 2000 as a paper the library lacked, it was downloaded a second time, and
     the extract had been on disk since August. RCSB publishes a PubMed ID beside

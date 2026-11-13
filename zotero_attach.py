@@ -8,7 +8,7 @@
 The 2026-09-28 migration carried every record into Zotero but no bytes: each
 attachment arrived as an `imported_file` item with `md5: None`, a filename and a
 parent, and nothing behind it. The bytes are in `<out>/pdf/`, evacuated from
-Mendeley by `mendeley_mirror.py --backfill`, and that archive is now the only
+the previous backend before it was retired, and that archive is now the only
 copy of them that is not behind a subscription.
 
 This script fills those attachments in, and makes each one describe the file it
@@ -16,10 +16,10 @@ is given. It does not create them: where Zotero has no `imported_file`
 attachment for a record, that is reported, because inventing an item is a
 different kind of write from supplying bytes for one that exists.
 
-Two things arrived wrong through the migration, from Mendeley rather than
-because of Zotero, and both are corrected by a PATCH before the upload:
+Two things arrived wrong through the migration, from the source side rather
+than because of Zotero, and both are corrected by a PATCH before the upload:
 
-- **The filename is Mendeley's.** The archive names every attachment
+- **The filename is the one the import carried in.** The archive names every attachment
   `<citekey>` plus its real extension, which is the name `library.bib`,
   `text/<key>.md` and `findings/` all already use. One of them is the mangled
   `...biolo.-_charmm_g`.
@@ -62,7 +62,7 @@ Pairing is the one place this can be wrong in a way nobody notices. A record
 with one archived file and one Zotero attachment is unambiguous and is the
 overwhelming majority. A record with several is paired on file extension only
 when that is unique on both sides and the two sets agree -- otherwise it is
-REPORTED, not guessed, which is the rule that took `zotero_migrate.py` from
+REPORTED, not guessed, which is the rule that took `zotero.py` from
 98.5% to 2,739 of 2,739 with nothing left by hand.
 
 The protocol is Zotero Web API v3 (verified against
@@ -83,9 +83,9 @@ import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from mendeley_mirror import (DEFAULT_OUT, __version__, load_json,  # noqa: E402
+from mirror import (DEFAULT_OUT, __version__, load_json,  # noqa: E402
                              load_removed, looks_like_pdf, mirror_state_dir)
-from zotero_migrate import Zotero, load_zotero_credentials  # noqa: E402
+from zotero import Zotero, load_zotero_credentials  # noqa: E402
 
 MAX_TRIES = 5
 
@@ -115,7 +115,7 @@ def storage_attachments(children: list) -> list:
     became the mirror's 2,745. A bookmark is recognizable without consulting the
     mode at all: it has no `filename` and an empty `contentType`.
 
-    `imported_url` is what Mendeley's import produced for attachments it had
+    `imported_url` is what the import produced for attachments it had
     recorded as fetched from a URL. The provenance differs from `imported_file`;
     the storage behavior does not. 24 records in this library have one as their
     only child, each carrying `application/pdf`, an `m-api-<uuid>.pdf` filename
@@ -229,7 +229,7 @@ def pair_attachments(locals_: list, items: list, by_order: bool = False,
     honest answer rather than a coin flip.
 
     `by_order` is the deliberate exception: pair same-count records by archive
-    order, which is Mendeley's attachment order. Zotero's child order is not
+    order, which is the order the attachments were imported in. Zotero's child order is not
     promised to match it, so this is a GUESS and is off by default. It exists
     because the alternative for ~61 records is doing them by hand, and the dry
     run prints the pairing it would use so a person can check a sample first.
@@ -296,9 +296,9 @@ def plan_metadata(item: dict, path: Path, is_pdf: bool) -> dict:
     """The fields that should change so Zotero describes the file it is given.
 
     Two things are wrong on the Zotero side and both came through the migration
-    from Mendeley rather than being introduced by it:
+    rather than being introduced by it:
 
-    - **The filename is Mendeley's**, which for one record is the mangled
+    - **The filename is the imported one**, which for one record is the mangled
       `...biolo.-_charmm_g`. The archive names every attachment `<citekey>` plus
       its real extension, and that is the name every other part of this system
       already uses -- `library.bib`, `text/<key>.md`, `findings/`.
@@ -385,13 +385,13 @@ def upload_body(prefix: str, data: bytes, suffix: str) -> bytes:
 
 
 # --------------------------------------------------------------------------
-# the write client, kept out of zotero_migrate on purpose
+# the write client, kept out of zotero on purpose
 # --------------------------------------------------------------------------
 
 class ZoteroWriter:
     """File upload for Zotero Web API v3.
 
-    Deliberately NOT a method on `zotero_migrate.Zotero`, whose docstring makes
+    Deliberately NOT a method on `zotero.Zotero`, whose docstring makes
     a promise worth keeping: "It takes no write method at all, so a mistake in
     this script cannot become a mistake in someone's library." Adding one there
     would quietly retire that guarantee for every other caller.
@@ -513,7 +513,7 @@ def main() -> None:
     ap.add_argument("--pair-by-order", action="store_true",
                     help="for records that cannot be paired by extension, pair "
                          "them by archive order -- a GUESS, since Zotero does "
-                         "not promise to return children in Mendeley's order")
+                         "not promise to return children in import order")
     ap.add_argument("--no-metadata", action="store_true",
                     help="upload bytes only; leave each attachment's filename and "
                          "content type as the migration left them")
@@ -522,13 +522,13 @@ def main() -> None:
     out: Path = args.out
     pdf_dir = out / "pdf"
     if not pdf_dir.is_dir():
-        sys.exit(f"No archive at {pdf_dir}. Run mendeley_mirror.py --backfill first.")
+        sys.exit(f"No archive at {pdf_dir}. Run mirror.py --backfill first.")
 
     keymap = load_json(mirror_state_dir(out) / "citekeys.json", {})
     zotero_keys = {k.split(":", 1)[1]: v for k, v in keymap.items()
                    if k.startswith("zotero:")}
     if not zotero_keys:
-        sys.exit("citekeys.json holds no zotero: entries. Run zotero_migrate.py first.")
+        sys.exit("citekeys.json holds no zotero: entries. Run zotero.py first.")
     wanted = set(args.key)
     if wanted:
         missing = wanted - set(zotero_keys.values())

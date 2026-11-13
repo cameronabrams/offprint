@@ -1,12 +1,16 @@
 @echo off
-REM Register (or re-register) the hourly Mendeley mirror refresh.
+REM Register (or re-register) the hourly mirror refresh.
 REM Runs as you, only while you are logged on, with no visible window.
 setlocal
 
-set TASKNAME=Mendeley mirror
+set TASKNAME=Offprint mirror
+REM Renamed from "Mendeley mirror" on 2026-11-13. `remove` deletes both, so a
+REM machine registered under the old name can still be cleaned up from here.
+set OLDTASKNAME=Mendeley mirror
 
 if /i "%~1"=="remove" (
     schtasks /delete /tn "%TASKNAME%" /f
+    schtasks /delete /tn "%OLDTASKNAME%" /f 2>nul
     echo Removed the scheduled task.
     goto :end
 )

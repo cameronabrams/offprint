@@ -3,22 +3,22 @@
 Running the refresh on a schedule, and the one rule that matters: never two at once.
 
 ```{warning}
-**The scheduled refresh is retired as of 2026-10-02.** Everything on this page
-drives `mendeley_mirror.py` against a Mendeley account that is no longer in use.
-The systemd timer is **disabled**, not broken, and re-enabling it as a repair is
-the mistake this note exists to prevent — a disabled hourly timer looks like
-something somebody forgot.
+**There is no scheduled refresh at present.** The launchers on this page now
+drive `zotero_source.py --refresh`, which is the live refresh, but the systemd
+timer is **disabled** — deliberately, since 2026-10-02. Re-enabling it as a
+repair is the mistake this note exists to prevent: a disabled hourly timer looks
+exactly like something somebody forgot.
 
-`zotero_source.py --refresh` has no scheduled form yet and is run by hand. A
-mirror that has stopped refreshing can be made to say so: `mendeley_mirror.py
---retire "<reason>"` replaces `mirror-status.md` with a standing notice, because
-otherwise the file keeps repeating the last successful run's **ok** for as long
-as anyone cares to read it.
+The retired backend's refresh carried a `--retire` flag that replaced
+`mirror-status.md` with a standing notice, so a mirror that had stopped
+refreshing said so rather than repeating its last **ok** forever. That flag went
+with that code on 2026-11-13. The marker it wrote, `.mirror/retired.json`, is
+still honored and still cleared by a successful refresh.
 ```
 
 ## Keeping it fresh automatically
 
-Mendeley has no webhooks, so this is polling — but a run with nothing new to do
+There are no webhooks, so this is polling — but a run with nothing new to do
 costs about thirty API calls and no downloads, so polling is cheap.
 
 ```
@@ -62,7 +62,7 @@ Two things make unattended running safe to trust:
   and "has not worked in nine days" cannot read the same. One success clears it.
 
 Because the poll is hourly, a paper you add and immediately want to discuss may
-not be here yet — Mendeley has to sync it to its own servers first, then the
+not be here yet — the backend has to sync it to its own servers first, then the
 mirror has to pick it up. Just run `run_mirror.bat` when you know you've added
 something.
 
@@ -70,7 +70,7 @@ something.
 ## Running it on a schedule (when you want it)
 
 ```
-schtasks /create /tn "Mendeley mirror" /tr "\"%USERPROFILE%\Git\offprint\run_mirror.bat\"" /sc daily /st 06:30
+schtasks /create /tn "Offprint mirror" /tr "\"%USERPROFILE%\Git\offprint\run_mirror.bat\"" /sc daily /st 06:30
 ```
 
 Drop `pause` from the .bat first, or the window will sit there waiting for a

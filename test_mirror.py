@@ -3,12 +3,12 @@
 # requires-python = ">=3.10"
 # dependencies = ["requests>=2.31", "pymupdf>=1.24"]
 # ///
-"""Offline tests for mendeley_mirror.py -- pure functions + a stubbed API."""
+"""Offline tests for mirror.py -- pure functions + a stubbed API."""
 import copy, json, os, re, shutil, subprocess, sys, tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-import mendeley_mirror as mm
+import mirror as mm
 
 DOCS = [
     {   # ordinary journal article, TeX-hostile title, accented author, 100% fields
@@ -84,31 +84,47 @@ def check(cond, msg):
         fails.append(msg)
 
 
+def fetch_via(client):
+    """Adapt a stub client to the `fetch(file_id) -> bytes` interface.
+
+    `harvest_attachments` takes the fetch and nothing else -- that function is
+    the entire backend interface -- so the stubs below stay exactly as they
+    were and this wraps them. It lives here rather than in the tool because a
+    helper that locates bytes belongs beside the backend it reads, and the
+    tool has only one real one.
+    """
+    def fetch(file_id: str) -> bytes:
+        resp = client.get(f"/files/{file_id}", accept="*/*", allow_redirects=False)
+        resp.raise_for_status()
+        return resp.content
+    return fetch
+
+
 def main():
     tmp = Path(tempfile.mkdtemp())
     cfgdir = tmp / "cfg"
     cfgdir.mkdir()
-    mm.config_dir = lambda: cfgdir  # keep the test out of the real config dir
     out = tmp / "out"
     out.mkdir()
 
     print("citation keys")
-    keymap = mm.assign_citekeys(DOCS, cfgdir / "citekeys.json")
+    keymap = mm.assign_citekeys(DOCS, cfgdir / "citekeys.json", backend="zotero")
     print("   ", keymap)
-    q = mm.qualify                       # ids are stored namespaced: 'mendeley:d1'
+    def q(raw):                          # ids are stored namespaced: 'zotero:d1'
+        return mm.qualify(raw, "zotero")
     check(keymap[q("d1")] == "Muller2020Yield", "accents folded, stopword-free title word")
     check(keymap[q("d2")] == "Bird2021Transport", "stopword 'the' skipped")
     check(keymap[q("d3")] == "Bird2021Transporta", "collision gets a suffix")
     check(keymap[q("d5")] == "NISTndSteam", f"corporate acronym keeps its case -> {keymap[q('d5')]}")
     check(len(set(keymap.values())) == len(DOCS), "all keys unique")
-    check(all(k.startswith("mendeley:") for k in keymap),
+    check(all(k.startswith("zotero:") for k in keymap),
           "every stored id names the backend it came from")
 
     # stability: re-running with a new document must not renumber existing keys
     more = DOCS + [{"id": "d7", "created": "2018-01-01T00:00:00Z", "type": "journal",
                     "title": "The transport of heat", "year": 2021,
                     "authors": [{"last_name": "Bird", "first_name": "R"}]}]
-    keymap2 = mm.assign_citekeys(more, cfgdir / "citekeys.json")
+    keymap2 = mm.assign_citekeys(more, cfgdir / "citekeys.json", backend="zotero")
     check(all(keymap2[k] == v for k, v in keymap.items()), "keys stable across runs")
 
     # Stability the other way: CORRECTING a field on a document already keyed must
@@ -119,26 +135,41 @@ def main():
     corrected = copy.deepcopy(DOCS)
     corrected[0]["year"] = 1976
     corrected[0]["authors"] = [{"last_name": "Pincus", "first_name": "P"}]
-    keymap3 = mm.assign_citekeys(corrected, cfgdir / "citekeys.json")
+    keymap3 = mm.assign_citekeys(corrected, cfgdir / "citekeys.json", backend="zotero")
     check(keymap3[q("d1")] == "Muller2020Yield",
           "a corrected year and author do not renumber a key already assigned")
     check(len(keymap3) == len(keymap2), "and no second key is minted for the same id")
 
     print("\nidentifier namespaces (ROADMAP 1)")
 
-    check(mm.qualify("abc") == "mendeley:abc", "a bare id gets this backend's name")
-    check(mm.qualify(mm.qualify("abc")) == "mendeley:abc", "and qualifying twice is a no-op")
-    check(mm.qualify("abc", "zotero") == "zotero:abc", "another backend names itself")
+    check(mm.qualify("abc", "zotero") == "zotero:abc", "a bare id gets the named backend")
+    check(mm.qualify(mm.qualify("abc", "zotero"), "zotero") == "zotero:abc",
+          "and qualifying twice is a no-op")
     check(mm.split_id("zotero:abc") == ("zotero", "abc"), "and splits back apart")
-    check(mm.split_id("abc") == ("mendeley", "abc"),
-          "a bare id reads as Mendeley's, which is what makes old files readable")
+
+    # `backend` has no default, and that IS the safety property: the only way to
+    # namespace an id is to say whose it is. A default is what would let a run
+    # mint a fresh citation key over one already cited in a manuscript.
+    for fn, args in ((mm.qualify, ("abc",)), (mm.local_id, ("zotero:abc",)),
+                     (mm.assign_citekeys, ([], Path("x")))):
+        try:
+            fn(*args)
+            check(False, f"{fn.__name__} still has a default backend")
+        except TypeError:
+            check(True, f"{fn.__name__} refuses to guess which backend an id is")
+
+    check(mm.LEGACY_BACKEND == "mendeley",
+          "a bare id still means the backend that wrote it, which is what keeps "
+          "the entries already on disk readable")
+    check(mm.split_id("abc") == (mm.LEGACY_BACKEND, "abc"),
+          "a bare id reads as the legacy backend's, which makes old files readable")
     # A colon alone is not a namespace, or a DOI-ish or URL-ish id would be eaten.
     check(mm.is_qualified("http://example.org/x") is False, "a URL is not a namespaced id")
-    check(mm.split_id("http://example.org/x") == ("mendeley", "http://example.org/x"),
+    check(mm.split_id("http://example.org/x") == (mm.LEGACY_BACKEND, "http://example.org/x"),
           "and survives a round trip unchanged")
 
-    check(mm.local_id("mendeley:abc") == "abc", "this backend's id comes back raw")
-    check(mm.local_id("zotero:abc") is None,
+    check(mm.local_id("mendeley:abc", "mendeley") == "abc", "a backend's own id comes back raw")
+    check(mm.local_id("zotero:abc", "mendeley") is None,
           "another backend's id resolves to nothing rather than to a wrong paper")
     check(mm.local_id("zotero:abc", "zotero") == "abc", "and to itself under its own backend")
 
@@ -155,31 +186,53 @@ def main():
     mixed, n3 = mm.qualify_map({"zotero:z": "Key3", "a": "Key1"})
     check(mixed == {"zotero:z": "Key3", "mendeley:a": "Key1"} and n3 == 1,
           "a map holding both backends migrates only what needs it")
+    # qualify_map takes NO backend, deliberately: a bare id belongs to whoever
+    # wrote it, which can never be a backend added later. It looks exactly like
+    # an omission, which is why it is asserted.
+    try:
+        mm.qualify_map({"a": "Key1"}, "zotero")
+        check(False, "qualify_map lets a caller claim bare ids for a later backend")
+    except TypeError:
+        check(True, "qualify_map cannot be told which backend a bare id is")
     check(list(mixed) == ["zotero:z", "mendeley:a"], "and keeps its order, so the file diffs cleanly")
 
-    # THE ACCEPTANCE CRITERION for the Zotero migration: a key already cited in a
-    # manuscript, or naming a file under findings/, must still mean the same paper.
+    # THE ACCEPTANCE CRITERION for namespacing: a key already cited in a
+    # manuscript, or naming a file under findings/, must still mean the same
+    # paper. The ids in a pre-namespacing file are BARE, so this is the legacy
+    # backend's run -- qualifying them as anything else is the failure the whole
+    # scheme exists to prevent, and it is asserted separately below.
+    def ql(raw):
+        return mm.qualify(raw, mm.LEGACY_BACKEND)
     premigration = tmp / "premigration.json"
     bare = {d["id"]: keymap[q(d["id"])] for d in DOCS}
     premigration.write_text(json.dumps(bare), encoding="utf-8")
-    after = mm.assign_citekeys(DOCS, premigration)
-    check(all(after[q(doc_id)] == key for doc_id, key in bare.items()),
+    after = mm.assign_citekeys(DOCS, premigration, backend=mm.LEGACY_BACKEND)
+    check(all(after[ql(doc_id)] == key for doc_id, key in bare.items()),
           "every pre-namespacing key still resolves to the same paper")
     check(sorted(after.values()) == sorted(bare.values()),
           "and no key was added, dropped or renumbered by the migration")
+
+    # And the failure itself: the same file read by a run that names a DIFFERENT
+    # backend matches nothing and mints a fresh key for every record -- silently,
+    # and indistinguishably from a first run. This is why `backend` is required.
+    wrong = mm.assign_citekeys(DOCS, premigration, backend="zotero")
+    check(all(wrong[q(d["id"])] != bare[d["id"]] for d in DOCS),
+          "a run naming the wrong backend mints a second key for every record")
+    check(len(wrong) == len(bare) + len(DOCS),
+          "and leaves the originals in place, so the file doubles rather than errors")
 
     # Adding a second backend afterwards must not disturb what is already assigned.
     with_zot = dict(after)
     with_zot["zotero:ZZZ"] = "Somebody2030New"
     premigration.write_text(json.dumps(with_zot), encoding="utf-8")
-    after2 = mm.assign_citekeys(DOCS, premigration)
-    check(all(after2[q(doc_id)] == key for doc_id, key in bare.items()),
+    after2 = mm.assign_citekeys(DOCS, premigration, backend=mm.LEGACY_BACKEND)
+    check(all(after2[ql(doc_id)] == key for doc_id, key in bare.items()),
           "a second backend's entries do not renumber the first's")
     check(after2["zotero:ZZZ"] == "Somebody2030New", "and are themselves left alone")
 
     # But `taken` is built from VALUES and is deliberately namespace-blind, so a
     # citekey spoken for by EITHER half is spoken for. That is what stops a Zotero
-    # record being handed a key a Mendeley record already owns while both halves
+    # record being handed a key the legacy half already owns while both halves
     # describe the same corpus -- and it is also why a half-finished deletion is
     # worse than none: dropping the mendeley: entry alone does not release the key.
     solo = tmp / "solo.json"
@@ -187,10 +240,10 @@ def main():
             "title": "New results", "year": 2030,
             "authors": [{"last_name": "Somebody", "first_name": "A"}]}
     solo.write_text(json.dumps({"zotero:ZZZ": "Somebody2030New"}), encoding="utf-8")
-    check(mm.assign_citekeys([twin], solo)[q("d9")] == "Somebody2030Newa",
-          "a key held only by the zotero half still blocks a new mendeley key")
+    check(mm.assign_citekeys([twin], solo, backend="zotero")[q("d9")] == "Somebody2030Newa",
+          "a key held only by one half still blocks a new key in the other")
     solo.write_text(json.dumps({}), encoding="utf-8")
-    check(mm.assign_citekeys([twin], solo)[q("d9")] == "Somebody2030New",
+    check(mm.assign_citekeys([twin], solo, backend="zotero")[q("d9")] == "Somebody2030New",
           "and the same document takes the unsuffixed key when nothing holds it")
 
     # state.json is keyed by FILE id and gets the same treatment. The property that
@@ -200,29 +253,16 @@ def main():
     known, moved = mm.qualify_map(old_state["files"])
     check(moved == 1 and known["mendeley:f1"]["filehash"] == "abc",
           "attachment state migrates with its filehash intact")
-    check(known.get(mm.qualify("f1"), {}).get("filehash") == "abc",
+    check(known.get(mm.qualify("f1", mm.LEGACY_BACKEND), {}).get("filehash") == "abc",
           "and is still found by the id the API reports, so nothing re-extracts")
 
-    print("\nzotero_migrate: pairing citation keys with a second backend (ROADMAP 1)")
+    print("\nzotero: the readers every caller shares")
 
-    import zotero_migrate as zmig
+    import zotero as zmig
 
     check(zmig.norm_doi("https://doi.org/10.1/A") == "10.1/a", "a DOI URL reduces to the DOI")
     check(zmig.norm_doi("doi: 10.1/a.") == "10.1/a", "as does a doi: prefix with trailing stop")
     check(zmig.norm_doi(None) == "", "and a missing DOI is empty, not an error")
-
-    # The normalization that did the real work. Zotero's Mendeley import writes
-    # &#8208; where the BibTeX has a plain hyphen; strip punctuation before
-    # entities and "8208" survives as a word, so two identical titles differ.
-    check(zmig.norm_title("A model of an&#8208;paraffinic liquid")
-          == zmig.norm_title("A model of an-paraffinic liquid"),
-          "an HTML entity and the character it stands for normalize alike")
-    check("8208" not in zmig.norm_title("an&#8208;paraffinic"),
-          "and the entity's digits do not survive as a word")
-    check(zmig.norm_title(r"2.4 &angst; resolution") == zmig.norm_title("2.4 Angstrom resolution")
-          or "angst" not in zmig.norm_title("2.4 &angst; resolution"),
-          "a named entity is dropped rather than read as letters")
-    check(zmig.norm_title("{Title}") == "title", "brace protection does not survive normalization")
 
     # parse_bib reads what write_bibtex writes; the hard part is braces INSIDE
     # values -- protected titles and abstracts that contain them.
@@ -240,83 +280,15 @@ def main():
     check(ents[0][2]["doi"] == "10.1/x", "and a later field is still found after it")
     check("{clause}" in ents[0][2]["abstract"], "braces inside an abstract do not end the field")
 
-    def _row(ident, doi, title, year):
-        return zmig.Row(ident, zmig.norm_doi(doi), zmig.norm_title(title),
-                        zmig.year_of(year), title)
-
-    M = [
-        _row("Doe2000Alpha",   "10.1/a", "First paper", "2000"),
-        _row("Roe2001Unique",  "",       "A quite unique title", "2001"),
-        _row("Poe2002Dup",     "",       "Duplicated paper", "2002"),
-        _row("Poe2002Dupa",    "",       "Duplicated paper", "2002"),
-        _row("Coe2003Fuzzy",   "",       r"Molecular picture of folding of a small \$\textbackslash{}alpha\$/\$\textbackslash{}beta\$ protein", "2003"),
-        _row("Zoe2004Orphan",  "",       "Nothing matches this", "2004"),
-        _row("Hyp1980Model",   "",       "A computer model of an-paraffinic liquid", "1980"),
-        _row("Lon2006Missing", "",       "Only one copy survived", "2006"),
-        _row("Lon2006Missinga", "",      "Only one copy survived", "2006"),
-    ]
-    Z = [
-        _row("Z1", "https://doi.org/10.1/A", "Completely different title", "2000-01-01"),
-        _row("Z2", "", "A quite unique title", "2001-05-01"),
-        _row("Z3", "", "Duplicated paper", "2002"),
-        _row("Z4", "", "Duplicated paper", "2002"),
-        _row("Z5", "", r"Molecular picture of folding of a small $\alpha$/$\beta$ protein", "2003"),
-        _row("Z7", "", "A computer model of an&#8208;paraffinic liquid", "1980"),
-        _row("Z8", "", "Only one copy survived", "2006"),
-        _row("Z9", "", "Unclaimed extra", "2005"),
-    ]
-    pairs, unmatched, unclaimed, stats = zmig.match(M, Z)
-
-    check(pairs.get("Doe2000Alpha") == "Z1",
-          "a DOI match wins even when the titles disagree entirely")
-    check(pairs.get("Roe2001Unique") == "Z2", "an exact title+year pairs")
-    check(pairs.get("Hyp1980Model") == "Z7",
-          "and so does a title that only agrees after entity normalization")
-    check(pairs.get("Coe2003Fuzzy") == "Z5",
-          "a title differing only in surviving LaTeX matches fuzzily")
-    check(stats["fuzzy title"] == 1, "and the fuzzy pass is credited for exactly that one")
-
-    # Two-sided, because a threshold tested only from above is a threshold nobody
-    # has measured. The pair above scores 0.8952; the same difference in a shorter
-    # title scores 0.8254, and must be refused.
-    short = [_row("Sho2003Fuzzy", "", r"Folding of a small \$\textbackslash{}alpha\$/\$\textbackslash{}beta\$ protein", "2003")]
-    shortz = [_row("S5", "", r"Folding of a small $\alpha$/$\beta$ protein", "2003")]
-    p4, u4, _, _ = zmig.match(short, shortz)
-    check(not p4 and len(u4) == 1,
-          "the same difference in a shorter title falls below the threshold and is refused")
-    check({pairs.get("Poe2002Dup"), pairs.get("Poe2002Dupa")} == {"Z3", "Z4"},
-          "two indistinguishable copies pair with the two on the other side")
-
-    # What it must NOT do.
-    check("Zoe2004Orphan" in [m.ident for m in unmatched],
-          "a reference with nothing to match is reported, not attached to the nearest thing")
-    check({"Lon2006Missing", "Lon2006Missinga"} <= {m.ident for m in unmatched},
-          "and an UNEQUAL duplicate group is reported whole rather than half-guessed")
-    check("Z8" in {z.ident for z in unclaimed},
-          "the lone survivor on the other side stays unclaimed, so the loss is visible")
-    check("Z9" in {z.ident for z in unclaimed}, "an item nothing points at is reported too")
-
-    check(len(set(pairs.values())) == len(pairs),
-          "no Zotero item is claimed twice (the map is a bijection)")
-    check(set(pairs) & {m.ident for m in unmatched} == set(),
-          "and nothing is both matched and unmatched")
-
-    # The margin: a near-tie is not a match. Two candidates equally close to the
-    # query must leave it unmatched rather than let a thousandth of a ratio pick.
-    q = [_row("Tie2010Paper", "", "the quick brown fox jumps over", "2010")]
-    tied = [_row("T1", "", "the quick brown fox jumps over it", "2010"),
-            _row("T2", "", "the quick brown fox jumps over us", "2010")]
-    p2, u2, _, _ = zmig.match(q, tied)
-    check(not p2 and len(u2) == 1,
-          "two equally-near titles leave the reference unmatched rather than guessing")
-
-    # A single near candidate below the threshold is still refused.
-    far = [_row("F1", "", "an entirely unrelated piece of writing", "2010")]
-    p3, u3, _, _ = zmig.match(q, far)
-    check(not p3 and len(u3) == 1, "and a candidate below the threshold is not a match")
+    # `norm_title` and the pairing itself (`Row`, `match`, and the two row
+    # builders) were removed on 2026-11-13 with the one-time migration they
+    # served. Their result is durable in `.mirror/citekeys.json` and the
+    # backend they paired against is gone, so the code went rather than
+    # staying as a path nobody can exercise. `norm_doi`, `parse_bib` and
+    # `year_of` stay: they are read by live callers.
 
     print("\nbibtex")
-    mm.write_bibtex(DOCS, keymap, out, include_abstract=True)
+    mm.write_bibtex(DOCS, keymap, out, include_abstract=True, backend="zotero")
     bib = (out / "library.bib").read_text(encoding="utf-8")
     # Captured HERE rather than read off `bib` at the end, so the closing
     # sample cannot depend on a name staying unshadowed for 3,400 lines.
@@ -365,13 +337,13 @@ def main():
     e = entry(type="thesis", institution="Johannes Gutenberg University")
     check("@phdthesis{" in e, "a thesis is still @phdthesis, which is what styles know")
     check("type" in e and "{Thesis}" in e,
-          "but carries type = {Thesis}, so no style prints a degree Mendeley never gave")
+          "but carries type = {Thesis}, so no style prints a degree nobody recorded")
     check("school" in e, "and institution still lands in school")
 
     # Both notes coexist rather than one overwriting the other.
     e = mm.bib_entry({"id": "d9", "type": "generic", "source": "Some venue"},
                      "Anonnd", include_abstract=False)
-    check("Some venue" in e and "Untitled Mendeley record" in e,
+    check("Some venue" in e and "Untitled record" in e,
           "an untitled record with a venue reports both, not whichever was added last")
 
     # No source, no note: the fix must not add an empty field to every entry.
@@ -410,12 +382,12 @@ def main():
     check("title    = {{Yield" in bib, "title double-braced for case protection")
     check("author = {{NIST}}" in bib, "corporate author double-braced")
     check(bib.count("institution") == 0, "thesis uses school, not institution")
-    check("Untitled Mendeley record" in bib and "key  = {AnonndUntitled}" in bib,
+    check("Untitled record" in bib and "key  = {AnonndUntitled}" in bib,
           "degenerate record still yields a sortable, traceable entry")
 
     print("\nbibtex round-trip (real bibtex binary)")
     tex = tmp / "t.tex"
-    cites = ",".join(keymap[mm.qualify(d["id"])] for d in DOCS)
+    cites = ",".join(keymap[mm.qualify(d["id"], backend="zotero")] for d in DOCS)
     tex.write_text(
         "\\documentclass{article}\\usepackage[utf8]{inputenc}\\begin{document}\n"
         f"\\nocite{{{cites}}}\n\\bibliographystyle{{plain}}\\bibliography{{library}}\n"
@@ -437,17 +409,17 @@ def main():
     ann_by_doc = {}
     for a in ANNOTATIONS:
         ann_by_doc.setdefault(a["document_id"], []).append(a)
-    mm.write_index(DOCS, keymap, FILES_BY_DOC, ann_by_doc, out)
+    mm.write_index(DOCS, keymap, FILES_BY_DOC, ann_by_doc, out, backend="zotero")
     idx = (out / "index.md").read_text(encoding="utf-8")
     check(idx.count("\n|") == len(DOCS) + 2, "index has a row per reference")
     check("10.1002/aic.16789" in idx, "doi in index")
 
-    mm.write_folders(FOLDERS, FOLDER_DOCS, keymap, out)
+    mm.write_folders(FOLDERS, FOLDER_DOCS, keymap, out, backend="zotero")
     folders = json.loads((out / "folders.json").read_text())
     check(folders["Substack"] == ["Bird2021Transport", "Muller2020Yield"], "folder maps to sorted keys")
     check("Substack/week 3" in folders, "nested folder path built")
 
-    md = mm.annotation_markdown(DOCS[0], keymap[mm.qualify("d1")], ANNOTATIONS)
+    md = mm.annotation_markdown(DOCS[0], keymap[mm.qualify("d1", backend="zotero")], ANNOTATIONS)
     check(md.index("p. 2") < md.index("p. 3"), "annotations sorted by page")
     check("> conversion plateaus" in md, "highlight text quoted")
     check("*(highlight, p. 2)*" in md, "textless highlight still recorded")
@@ -595,8 +567,8 @@ def main():
 
     st = {}
     fetched, skipped, failed, rep_rows = mm.harvest_attachments(
-        NoNetwork(), {"d1": [{"id": "x1", "mime_type": "application/pdf", "filehash": "h1"}]},
-        {mm.qualify("d1"): "Muller2020Yield"}, {"d1": DOCS[0]}, h_out, st, "text")
+        fetch_via(NoNetwork()), {"d1": [{"id": "x1", "mime_type": "application/pdf", "filehash": "h1"}]},
+        {mm.qualify("d1", backend="zotero"): "Muller2020Yield"}, {"d1": DOCS[0]}, h_out, st, "text", backend="zotero")
     check(fetched == 1 and failed == 0, f"local PDF extracted without a download ({fetched=}, {failed=})")
     check((h_out / "text" / "Muller2020Yield.md").exists(), "text file written")
     # These two asserted the opposite until 2026-09-29, which is how the defect
@@ -608,16 +580,16 @@ def main():
           "a re-used PDF is still there afterwards: it was not this run's to delete")
     check((h_out / "pdf").exists(),
           "and pdf/ is not removed out from under an archive")
-    check(st["files"][mm.qualify("x1")]["status"] == "ok", "state records the extraction")
+    check(st["files"][mm.qualify("x1", backend="zotero")]["status"] == "ok", "state records the extraction")
 
     # An OCR'd attachment is skipped on every later refresh, because its extract
     # exists. It must still be listed under "Read by OCR" -- on 11 Sep the first
     # hourly refresh after the OCR run emptied that section for all 108 papers,
     # because the skip branch only re-listed no-text and failed entries.
-    st["files"][mm.qualify("x1")].update(status="ocr", detail="read by OCR", pages=2, chars=1234)
+    st["files"][mm.qualify("x1", backend="zotero")].update(status="ocr", detail="read by OCR", pages=2, chars=1234)
     fetched, skipped, failed, rep_rows = mm.harvest_attachments(
-        NoNetwork(), {"d1": [{"id": "x1", "mime_type": "application/pdf", "filehash": "h1"}]},
-        {mm.qualify("d1"): "Muller2020Yield"}, {"d1": DOCS[0]}, h_out, st, "text")
+        fetch_via(NoNetwork()), {"d1": [{"id": "x1", "mime_type": "application/pdf", "filehash": "h1"}]},
+        {mm.qualify("d1", backend="zotero"): "Muller2020Yield"}, {"d1": DOCS[0]}, h_out, st, "text", backend="zotero")
     check(skipped == 1 and fetched == 0, "an OCR'd attachment is not re-read on a plain refresh")
     ocr_rows = [r for r in rep_rows if r["status"] == "ocr"]
     check(len(ocr_rows) == 1 and ocr_rows[0]["key"] == "Muller2020Yield",
@@ -628,54 +600,6 @@ def main():
     h_rep = (h_out / "extraction-report.md").read_text(encoding="utf-8")
     check("read by OCR: 1" in h_rep and "## Read by OCR" in h_rep,
           "report still counts and lists OCR'd papers after a refresh that read nothing")
-
-    print("\npagination")
-    check(mm._next_link('<https://api.mendeley.com/documents?marker=abc>; rel="next"')
-          == "https://api.mendeley.com/documents?marker=abc", "next link parsed")
-    check(mm._next_link('<https://a/1>; rel="last", <https://a/2>; rel="next"') == "https://a/2",
-          "next link found among several")
-    check(mm._next_link('<https://a/1>; rel="last"') is None, "no next link -> None")
-
-    class FakeResp:
-        def __init__(self, payload, link="", status=200):
-            self._p, self.headers, self.status_code = payload, {"Link": link}, status
-            self.ok, self.url, self.text = status < 400, "http://x", ""
-        def json(self): return self._p
-        def raise_for_status(self): pass
-
-    pages = [FakeResp([{"id": "a"}], '<https://api.mendeley.com/documents?marker=2>; rel="next"'),
-             FakeResp([{"id": "b"}])]
-    client = mm.Mendeley.__new__(mm.Mendeley)
-    client.get = lambda url, accept=None, params=None, **kw: pages.pop(0)
-    check([d["id"] for d in client.paged("/documents", "documents")] == ["a", "b"],
-          "paged() follows next links and concatenates")
-
-    # annotations must not be requested at the documents page size (Mendeley 400s)
-    seen = []
-
-    def record(url, accept=None, params=None, **kw):
-        seen.append(dict(params or {}))
-        return FakeResp([{"id": "z"}])
-
-    client.get = record
-    client.paged("/annotations", "annotations", quiet=True)
-    check(seen[0].get("limit") == 200, f"annotations requested at limit=200 (got {seen[0]})")
-    seen.clear()
-    client.paged("/documents", "documents", quiet=True)
-    check(seen[0].get("limit") == 500, "documents still requested at limit=500")
-
-    # a 400 on the first page should back the page size off, not kill the run
-    responses = [FakeResp([], status=400), FakeResp([{"id": "q"}])]
-    tried = []
-
-    def flaky(url, accept=None, params=None, **kw):
-        tried.append(dict(params or {}))
-        return responses.pop(0)
-
-    client.get = flaky
-    got = client.paged("/annotations", "annotations", quiet=True)
-    check([d["id"] for d in got] == ["q"] and tried[1]["limit"] == 50,
-          f"400 backs page size off and retries (tried {[t.get('limit') for t in tried]})")
 
     print("\nscheduled-run bookkeeping")
     import datetime as _dt
@@ -736,8 +660,8 @@ def main():
 
     # The distinction that matters: a rejected login never clears by itself and is
     # the signal to migrate; a dropped connection usually does clear.
-    check(mm.classify_failure("Refresh token rejected; re-authorizing in the browser.") == "auth",
-          "a rejected refresh token is an auth failure")
+    check(mm.classify_failure("Zotero refused the key (403).") == "auth",
+          "a refused API key is an auth failure")
     check(mm.classify_failure("ConnectionError: Max retries exceeded with url: /documents") == "network",
           "a dropped connection is a network failure")
     check(mm.classify_failure("KeyboardInterrupt: ") == "interrupted",
@@ -747,26 +671,26 @@ def main():
     # naive keyword match calls it authentication and sends a person to log in over
     # a connection that is not there.
     check(mm.classify_failure(
-        "Could not reach https://api.mendeley.com/oauth/token: ConnectionError") == "network",
-        "failing to REACH the token endpoint is a network failure, not a dead login")
+        "Could not reach https://api.zotero.org/keys/current: ConnectionError") == "network",
+        "failing to REACH the credentials endpoint is a network failure, not a dead key")
 
     # Messages the tool actually emits, taken from the tool rather than retyped
     # here -- a classifier tested only against invented strings is a classifier
-    # tested against nothing.
-    mm.NONINTERACTIVE = True
-    try:
-        mm.require_interactive("Browser authorization")
-        real_exit = ""
-    except SystemExit as exc:
-        real_exit = str(exc)
-    mm.NONINTERACTIVE = False
-    check(mm.classify_failure(real_exit) == "auth",
-          "the real scheduled-run message classifies as auth, not unknown")
-    src_mm = Path("mendeley_mirror.py").read_text(encoding="utf-8")
-    check("No documents returned" in src_mm
+    # tested against nothing. **Every AUTH_MARKER must have an emitter**: a
+    # marker for a message nothing can produce is an arm that can only ever be
+    # wrong about something else, while making the list look well tested.
+    src_z = Path("zotero.py").read_text(encoding="utf-8")
+    real_403 = "Zotero refused the key (403). Check it is valid and has read access."
+    check(real_403 in src_z and mm.classify_failure(real_403) == "auth",
+          "the real 403 message classifies as auth, not unknown")
+    src_src = Path("zotero_source.py").read_text(encoding="utf-8")
+    check("No documents returned" in src_src
           and mm.classify_failure("No documents returned. If your library is not "
-                                  "empty, try --reauth.") == "auth",
+                                  "empty, the key is no longer seeing the account.") == "auth",
           "an empty library from a non-empty account routes to the auth advice")
+    # And the guard that produces it, which is what makes that marker reachable.
+    check("if not docs:" in src_src,
+          "the refresh refuses an empty listing rather than rewriting the mirror empty")
 
     # The streak, which is the whole point of item 2: 'failed once' and 'has not
     # worked in nine days' must not read the same.
@@ -787,13 +711,13 @@ def main():
           "a new streak dates from itself, not the old one")
 
     # And the status file has to SAY it, or none of the above is visible.
-    mm.write_status(sout, False, t0, "Refresh token rejected", "auth", h3)
+    mm.write_status(sout, False, t0, "Zotero refused the key (403)", "auth", h3)
     st = (sout / "mirror-status.md").read_text(encoding="utf-8")
     check("**FAILED: authentication**" in st, "the status line names the kind of failure")
     check("3 consecutive failures" in st, "and how many in a row")
     check("2026-09-24" in st, "and since when")
-    check("ROADMAP item 1" in st and "not something to wait out" in st,
-          "an auth failure says migrate rather than wait")
+    check("not something to wait out" in st and "zotero.json" in st,
+          "an auth failure says where to put a working key, not to wait")
 
     mm.write_status(sout, False, t0, "ConnectionError", "network",
                     {"consecutive_failures": 1, "failing_since": "2026-09-24T00:00:00+00:00"})
@@ -806,14 +730,6 @@ def main():
     st_m = (sout / "mirror-status.md").read_text(encoding="utf-8")
     check("stop assuming it will" in st_m, "nine of them is")
     check(st_n != st_m, "one failure and nine do not read the same")
-
-    mm.NONINTERACTIVE = True
-    try:
-        mm.require_interactive("Browser authorization")
-        check(False, "require_interactive exits on a scheduled run")
-    except SystemExit as exc:
-        check("scheduled run" in str(exc), "require_interactive explains itself and exits")
-    mm.NONINTERACTIVE = False
 
     # 2026-09-24: namespacing made keymap.get(doc_id) miss on every document, so
     # every attachment was skipped by a guard written for the rare unkeyed record.
@@ -912,34 +828,34 @@ def main():
     two = {"d1": [{"id": "f1", "mime_type": "application/pdf", "filehash": "h1"},
                   {"id": "f2", "mime_type": "chemical/x-cif", "filehash": "h2",
                    "file_name": "structure.cif"}]}
-    bkm = {mm.qualify("d1"): "K1"}
+    bkm = {mm.qualify("d1", backend="zotero"): "K1"}
     bdoc = {"d1": DOCS[0]}
     bst = {}
-    mm.harvest_attachments(Serves(), two, bkm, bdoc, bf, bst, "text")
+    mm.harvest_attachments(fetch_via(Serves()), two, bkm, bdoc, bf, bst, "text", backend="zotero")
     check(not (bf / "pdf").exists(), "a text-mode refresh leaves no pdf/ behind")
 
     plain = Serves()
-    mm.harvest_attachments(plain, two, bkm, bdoc, bf, bst, "keep")
+    mm.harvest_attachments(fetch_via(plain), two, bkm, bdoc, bf, bst, "keep", backend="zotero")
     check(plain.n == 0,
           "keep alone downloads NOTHING once the extracts exist (the trap)")
     check(not list((bf / "pdf").glob("*")) if (bf / "pdf").exists() else True,
           "and archives nothing, while still reporting a successful run")
 
     filled = Serves()
-    mm.harvest_attachments(filled, two, bkm, bdoc, bf, bst, "keep", backfill=True)
+    mm.harvest_attachments(fetch_via(filled), two, bkm, bdoc, bf, bst, "keep", backfill=True, backend="zotero")
     got = sorted(p.name for p in (bf / "pdf").glob("*"))
     check(filled.n == 2, f"--backfill fetches the skipped attachments ({filled.n})")
     check(got == ["K1-2.cif", "K1.pdf"],
           f"archiving each under its own suffix, not all as .pdf ({got})")
 
     again = Serves()
-    mm.harvest_attachments(again, two, bkm, bdoc, bf, bst, "keep", backfill=True)
+    mm.harvest_attachments(fetch_via(again), two, bkm, bdoc, bf, bst, "keep", backfill=True, backend="zotero")
     check(again.n == 0, "a second --backfill run fetches nothing: resumable by construction")
 
     # It must not disturb the mirror it is archiving.
     before = dict(bst["files"])
     once_more = Serves()
-    mm.harvest_attachments(once_more, two, bkm, bdoc, bf, bst, "keep", backfill=True)
+    mm.harvest_attachments(fetch_via(once_more), two, bkm, bdoc, bf, bst, "keep", backfill=True, backend="zotero")
     check(bst["files"] == before, "and changes no extraction state")
 
     print("\na text refresh must not erode an archive it did not create")
@@ -954,11 +870,11 @@ def main():
     check(kept == ["K1-2.cif", "K1.pdf"], f"the archive is in place to be eroded ({kept})")
 
     # Changing the filehash is what stops the skip branch firing, which is
-    # exactly what a paper edited in Mendeley does.
+    # exactly what a paper edited in the library does.
     changed = {"d1": [dict(two["d1"][0], filehash="h1-NEW"),
                       dict(two["d1"][1], filehash="h2-NEW")]}
     erode = Serves()
-    mm.harvest_attachments(erode, changed, bkm, bdoc, bf, bst, "text")
+    mm.harvest_attachments(fetch_via(erode), changed, bkm, bdoc, bf, bst, "text", backend="zotero")
     still = sorted(p_.name for p_ in (bf / "pdf").glob("*"))
     check(still == kept, f"an archived PDF survives a text-mode reprocess ({still})")
     # This asserted `== 1` until 2026-10-01, with "the .cif only" written beside
@@ -978,7 +894,7 @@ def main():
     (stub / "pdf").mkdir(parents=True)
     (stub / "pdf" / "K1.pdf").write_bytes(b"")
     one = {"d1": [two["d1"][0]]}
-    mm.harvest_attachments(Serves(), one, bkm, bdoc, stub, {}, "text")
+    mm.harvest_attachments(fetch_via(Serves()), one, bkm, bdoc, stub, {}, "text", backend="zotero")
     check(not (stub / "pdf" / "K1.pdf").exists(),
           "but a zero-byte stub is still cleared, since it is nobody's archive")
 
@@ -993,17 +909,17 @@ def main():
 
     st2 = {}
     fetched2, _s2, _f2, _r2 = mm.harvest_attachments(
-        NoNetwork(), {"d1": [{"id": "x1", "mime_type": "application/pdf", "filehash": "h1"}]},
-        {mm.qualify("d1"): "Muller2020Yield"}, {"d1": DOCS[0]}, staged("ns"), st2, "text")
+        fetch_via(NoNetwork()), {"d1": [{"id": "x1", "mime_type": "application/pdf", "filehash": "h1"}]},
+        {mm.qualify("d1", backend="zotero"): "Muller2020Yield"}, {"d1": DOCS[0]}, staged("ns"), st2, "text", backend="zotero")
     check(fetched2 == 1,
           "a namespaced keymap resolves an API id that is bare, and extraction runs")
 
     # And the shape of the bug itself: nothing resolves, so nothing is examined.
     try:
         mm.harvest_attachments(
-            NoNetwork(), {"d1": [{"id": "x1", "mime_type": "application/pdf", "filehash": "h1"}]},
+            fetch_via(NoNetwork()), {"d1": [{"id": "x1", "mime_type": "application/pdf", "filehash": "h1"}]},
             {"stale-unqualified-d1": "Muller2020Yield"}, {"d1": DOCS[0]},
-            staged("ns2"), {}, "text")
+            staged("ns2"), {}, "text", backend="zotero")
         check(False, "a keymap that resolves nothing raises rather than reporting zeros")
     except RuntimeError as exc:
         check("not one was examined" in str(exc),
@@ -1015,10 +931,10 @@ def main():
     # the guard was written for, and it still has to work.
     st3 = {}
     f3, _s3, _f3, _r3 = mm.harvest_attachments(
-        NoNetwork(),
+        fetch_via(NoNetwork()),
         {"d1": [{"id": "x1", "mime_type": "application/pdf", "filehash": "h1"}],
          "dX": [{"id": "x9", "mime_type": "application/pdf", "filehash": "h9"}]},
-        {mm.qualify("d1"): "Muller2020Yield"}, {"d1": DOCS[0]}, staged("ns3"), st3, "text")
+        {mm.qualify("d1", backend="zotero"): "Muller2020Yield"}, {"d1": DOCS[0]}, staged("ns3"), st3, "text", backend="zotero")
     check(f3 == 1, "one unkeyed document among several is skipped, not raised over")
 
     print("\na deliberate deletion is not a gap for --backfill to fill")
@@ -1049,10 +965,10 @@ def main():
           f"comments and blank lines are not stems ({sorted(rmap)})")
 
     rm_st = {}
-    mm.harvest_attachments(Serves(), two, bkm, bdoc, rm_out, rm_st, "text")
+    mm.harvest_attachments(fetch_via(Serves()), two, bkm, bdoc, rm_out, rm_st, "text", backend="zotero")
     held = Serves()
-    mm.harvest_attachments(held, two, bkm, bdoc, rm_out, rm_st, "keep",
-                           backfill=True)
+    mm.harvest_attachments(fetch_via(held), two, bkm, bdoc, rm_out, rm_st, "keep",
+                           backfill=True, backend="zotero")
     got_rm = sorted(p_.name for p_ in (rm_out / "pdf").glob("*"))
     check(got_rm == ["K1.pdf"],
           f"--backfill archives the one that was never evacuated ({got_rm})")
@@ -1066,9 +982,9 @@ def main():
     (mm.mirror_state_dir(pre_out) / "removed.tsv").write_text(
         "K1\t2026-10-01\tthe first attachment only\n", encoding="utf-8")
     pre_st = {}
-    mm.harvest_attachments(Serves(), two, bkm, bdoc, pre_out, pre_st, "text")
-    mm.harvest_attachments(Serves(), two, bkm, bdoc, pre_out, pre_st, "keep",
-                           backfill=True)
+    mm.harvest_attachments(fetch_via(Serves()), two, bkm, bdoc, pre_out, pre_st, "text", backend="zotero")
+    mm.harvest_attachments(fetch_via(Serves()), two, bkm, bdoc, pre_out, pre_st, "keep",
+                           backfill=True, backend="zotero")
     got_pre = sorted(p_.name for p_ in (pre_out / "pdf").glob("*"))
     check(got_pre == ["K1-2.cif"],
           f"a tombstone on K1 withholds K1 and NOT K1-2 ({got_pre})")
@@ -1082,16 +998,16 @@ def main():
     (keep_out / "pdf").mkdir(parents=True, exist_ok=True)
     (keep_out / "pdf" / "K1.pdf").write_bytes(pdf_bytes)
     kst = {}
-    mm.harvest_attachments(Serves(), two, bkm, bdoc, keep_out, kst, "text")
-    mm.harvest_attachments(Serves(), two, bkm, bdoc, keep_out, kst, "keep",
-                           backfill=True)
+    mm.harvest_attachments(fetch_via(Serves()), two, bkm, bdoc, keep_out, kst, "text", backend="zotero")
+    mm.harvest_attachments(fetch_via(Serves()), two, bkm, bdoc, keep_out, kst, "keep",
+                           backfill=True, backend="zotero")
     check((keep_out / "pdf" / "K1.pdf").exists(),
           "a listed stem whose file IS present is left alone: the list "
           "withholds a fetch, it never causes a deletion")
 
     print("\nthe bytes decide what is a PDF, not the backend's opinion")
 
-    # Mendeley reported a non-PDF MIME type for Vanommeslaeghe2009Charmm -- a
+    # The backend reported a non-PDF MIME type for Vanommeslaeghe2009Charmm -- a
     # complete 20-page CGenFF paper, text layer intact -- so `"pdf" in
     # mime_type` skipped it, cached the skip, and the report never said so.
     check(mm.looks_like_pdf(pdf_bytes), "real PDF bytes are a PDF")
@@ -1134,10 +1050,10 @@ def main():
 
     lying = {"d1": [{"id": "L1", "mime_type": "application/octet-stream",
                      "filehash": "hL", "file_name": "charmm_gen.-_charmm_g"}]}
-    lkm = {mm.qualify("d1"): "Vanommeslaeghe2009Charmm"}
+    lkm = {mm.qualify("d1", backend="zotero"): "Vanommeslaeghe2009Charmm"}
     liar, lst = tmp / "liar", {}
     lf, _ls, _lx, lrep = mm.harvest_attachments(
-        ServesPdf(), lying, lkm, {"d1": DOCS[0]}, liar, lst, "text")
+        fetch_via(ServesPdf()), lying, lkm, {"d1": DOCS[0]}, liar, lst, "text", backend="zotero")
     check(lf == 1, "a PDF behind a wrong MIME type is extracted")
     check((liar / "text" / "Vanommeslaeghe2009Charmm.md").exists(),
           "and its extract exists, where the library has none today")
@@ -1157,10 +1073,10 @@ def main():
 
     notpdf = {"d1": [{"id": "P1", "mime_type": "image/png", "filehash": "hP",
                       "file_name": "equation.png"}]}
-    pkm = {mm.qualify("d1"): "Hoover1979Exact"}
+    pkm = {mm.qualify("d1", backend="zotero"): "Hoover1979Exact"}
     png, pst = tmp / "png", {}
     pf, _ps, _px, prep = mm.harvest_attachments(
-        ServesPng(), notpdf, pkm, {"d1": DOCS[0]}, png, pst, "text")
+        fetch_via(ServesPng()), notpdf, pkm, {"d1": DOCS[0]}, png, pst, "text", backend="zotero")
     check(pf == 0, "a PNG is not extracted, which was always correct")
     rows_np = [r for r in prep if r["status"] == "not-pdf"]
     check(len(rows_np) == 1 and rows_np[0]["key"] == "Hoover1979Exact",
@@ -1175,7 +1091,7 @@ def main():
     # refresh. That is how 108 OCR rows emptied out of the report in September.
     again_png = ServesPng()
     _f, sk, _x, prep2 = mm.harvest_attachments(
-        again_png, notpdf, pkm, {"d1": DOCS[0]}, png, pst, "text")
+        fetch_via(again_png), notpdf, pkm, {"d1": DOCS[0]}, png, pst, "text", backend="zotero")
     check(sk == 1 and again_png.n == 0, "a second run skips it on cached state")
     check(any(r["status"] == "not-pdf" and r["key"] == "Hoover1979Exact"
               for r in prep2),
@@ -1191,7 +1107,7 @@ def main():
           "and names each under its own heading")
     check("ONLY attachment" in nrep,
           "and says which of these rows are papers rather than figures")
-    check("still in Mendeley" not in nrep,
+    check("still in" not in nrep.split("## Not a PDF")[0],
           "and no longer promises the PDF is safe in an account that has "
           "already been downgraded")
 
@@ -1202,7 +1118,7 @@ def main():
     (reuse / "pdf" / "Vanommeslaeghe2009Charmm.-_charmm_g").write_bytes(pdf_bytes)
     net = ServesPdf()
     rf, _rs, _rx, _rr = mm.harvest_attachments(
-        net, lying, lkm, {"d1": DOCS[0]}, reuse, rst, "text")
+        fetch_via(net), lying, lkm, {"d1": DOCS[0]}, reuse, rst, "text", backend="zotero")
     check(rf == 1 and net.n == 0,
           f"an archive under its real suffix is reused, not re-fetched from an "
           f"account being retired (downloads={net.n})")
@@ -1283,7 +1199,7 @@ def main():
     # The library reports two attachments for d1 and only one for d2. Rows now,
     # not a client: the inventory was built around ONE bulk call, and what it
     # actually needs is the rows that call returns -- which both backends can
-    # produce. Decoupling it from the client is what let the Mendeley code go.
+    # produce. Decoupling it from the client is what let the retired code go.
     FILE_ROWS = [{"document_id": "d1", "mime_type": "application/pdf"},
                  {"document_id": "d1", "mime_type": "application/pdf"},
                  {"document_id": "d2", "mime_type": "application/pdf"},
@@ -1392,7 +1308,7 @@ def main():
           "and the library-wide tail counts the proof extract on its own")
 
     # The worst combination: the extract that cannot be re-fetched is the one
-    # with real page numbers, and the copy Mendeley still holds is the proof.
+    # with real page numbers, and the copy the backend still holds is the proof.
     # Shan2011How is exactly this. Losing it loses no content -- the pair is
     # 99.3% alike -- only the pagination, which is the only thing it is for.
     irr = tmp / "irreplaceable"; (irr / "text").mkdir(parents=True)
@@ -1434,6 +1350,45 @@ def main():
     b3 = getpdf.extract_body(nb / "text" / "NoBase2011How-3.md")
     check(b2 != b3, "the two bodies are not identical, so exact equality finds nothing")
     check("only copy" in report, "the sweep says why an orphan must not be deleted")
+
+    print("\nthe PDF cache keeps the files it already has")
+    # The fallback that keeps 536 MB of fetched PDFs reachable after the
+    # directory was renamed. What decides it is **where the files are**, not
+    # whether the new directory exists: `--dest` takes any path, so one run
+    # pointed at the new name would otherwise have created it, flipped the
+    # fallback off for good, and made every cached file invisible with nothing
+    # reporting it. That is the failure the fallback exists to prevent, so it
+    # must not be armed by a stray mkdir.
+    import get_pdf as _gp
+    _cachetmp = Path(tempfile.mkdtemp())
+    _real_xdg = os.environ.get("XDG_CACHE_HOME")
+    try:
+        os.environ["XDG_CACHE_HOME"] = str(_cachetmp)
+        oldpdf = _cachetmp / "mendeley-mirror" / "pdf"
+        newpdf = _cachetmp / "offprint" / "pdf"
+
+        check(_gp.cache_dir() == newpdf,
+              "with no old cache the new name is used")
+
+        oldpdf.mkdir(parents=True)
+        (oldpdf / "Muller2020Yield.pdf").write_bytes(b"%PDF-1.4")
+        check(_gp.cache_dir() == oldpdf,
+              "a non-empty cache under the old name keeps being used")
+
+        newpdf.mkdir(parents=True, exist_ok=True)
+        check(_gp.cache_dir() == oldpdf,
+              "and the new directory merely EXISTING does not orphan it")
+
+        (oldpdf / "Muller2020Yield.pdf").unlink()
+        check(_gp.cache_dir() == newpdf,
+              "emptying the old one is what ends the fallback -- a deletion, "
+              "not a permanent accommodation")
+    finally:
+        if _real_xdg is None:
+            os.environ.pop("XDG_CACHE_HOME", None)
+        else:
+            os.environ["XDG_CACHE_HOME"] = _real_xdg
+        shutil.rmtree(_cachetmp, ignore_errors=True)
 
     print("\non-demand PDF fetch (get_pdf.py)")
     (out / ".mirror").mkdir(exist_ok=True)
@@ -1495,52 +1450,11 @@ def main():
           "rather than probing candidate names")
 
     print("\ninbox closing report")
-    import inbox
+    import identify as inbox
 
-    # THE CACHE OVERWRITE. inbox.py named the cached copy after the citation key
-    # alone, so a second attachment on the same record -- Supporting Information,
-    # a corrigendum -- landed on top of the first. Nothing crashed; get_pdf.py then
-    # served the SI to anyone who asked for the article.
-    _cd = tempfile.mkdtemp()
-    try:
-        cache, inboxdir = Path(_cd) / "cache", Path(_cd) / "in"
-        cache.mkdir(); inboxdir.mkdir()
-        article = cache / "Khare2018Quantitative.pdf"
-        article.write_bytes(b"THE ARTICLE, twelve pages of it")
-
-        si = inboxdir / "si.pdf"; si.write_bytes(b"the supporting information")
-        got = inbox.cache_target(cache, "Khare2018Quantitative", si)
-        check(got.name == "Khare2018Quantitative-2.pdf",
-              f"a second attachment is suffixed, not written over the first (got {got.name})")
-        check(article.read_bytes() == b"THE ARTICLE, twelve pages of it",
-              "and the first file still holds the article")
-
-        # Re-filing the very same bytes is not a second attachment.
-        same = inboxdir / "again.pdf"; same.write_bytes(b"THE ARTICLE, twelve pages of it")
-        check(inbox.cache_target(cache, "Khare2018Quantitative", same) == article,
-              "an identical file reuses its name rather than piling up copies")
-
-        # A third distinct one keeps counting.
-        (cache / "Khare2018Quantitative-2.pdf").write_bytes(b"the supporting information")
-        third = inboxdir / "third.pdf"; third.write_bytes(b"a corrigendum")
-        check(inbox.cache_target(cache, "Khare2018Quantitative", third).name
-              == "Khare2018Quantitative-3.pdf", "and a third distinct file gets -3")
-
-        # The read side, independently: a cache hit is checked against the page
-        # count the mirror's own extract records, which needs no network.
-        import get_pdf
-        mirror = Path(_cd) / "mirror"; (mirror / "text").mkdir(parents=True)
-        (mirror / "text" / "Khare2018Quantitative.md").write_text(
-            "".join(f"<!-- p. {n} -->\nbody\n" for n in range(1, 13)), encoding="utf-8")
-        check(get_pdf.extract_pages(mirror, "Khare2018Quantitative") == 12,
-              "the extract's page markers give the expected page count")
-        check(get_pdf.extract_pages(mirror, "NeverHeardOf2020") == 0,
-              "and an unknown key gives zero rather than raising")
-
-        check(get_pdf.cache_is_the_right_paper(article, mirror, "NoExtract2020") is True,
-              "with no extract to compare against, a cache hit is served (unknowable, not wrong)")
-    finally:
-        shutil.rmtree(_cd, ignore_errors=True)
+    # `cache_target` and `closing_report` went with the retired uploader on
+    # 2026-11-13. `identify.py` keeps only the half that answers "which paper
+    # is this", which is what the live Zotero filing path imports.
 
     # A garbled text layer must be repaired here exactly as a refresh repairs it.
     # It was not, and the asymmetry was expensive: a correctly named paper could
@@ -1621,70 +1535,6 @@ def main():
     check(inbox.filename_dois("10.1016_s0032-3861(01)00634-6.pdf")
           == ["10.1016/s0032-3861(01)00634-6"],
           "the file-name path handles brackets too")
-
-    # A clean run: the refresh instruction appears, and nothing else.
-    r = inbox.closing_report(["a.pdf"], [], [], refresh_cmd="REFRESH")
-    check("REFRESH" in r, "a successful run says to refresh")
-    check("NOT filed" not in r, "a successful run reports no failures")
-
-    # A failed run must NOT tell you to go pull down text that was never sent.
-    r = inbox.closing_report([], [], [("a.pdf", "upload refused (403)")], refresh_cmd="REFRESH")
-    check("REFRESH" not in r,
-          "a run that attached nothing does not tell you to refresh")
-    check("NOT filed" in r and "a.pdf" in r and "403" in r,
-          "the failure, the file name and the reason are all reported")
-
-    # The mixed case is the dangerous one: `| tail` shows only the end, so the
-    # failure has to be the LAST thing printed, after the refresh instruction.
-    r = inbox.closing_report(["good.pdf"], [], [("bad.pdf", "boom")], refresh_cmd="REFRESH")
-    check("REFRESH" in r, "the part that worked still says to refresh")
-    lines = [ln for ln in r.strip().splitlines() if ln.strip()]
-    check(r.index("NOT filed") > r.index("REFRESH"),
-          "the failure block comes after the success line, so tail shows it")
-    check("bad.pdf" in "\n".join(lines[-3:]), "the failed file name survives a tail -3")
-
-
-    # Which refresh command gets printed is a safety question, not a cosmetic one:
-    # naming run_mirror.sh where the systemd unit exists invites a run that
-    # overlaps the timer, and two at once make Syncthing conflict files in
-    # .mirror/. Probing is injected so the result does not depend on this host.
-    class _P:
-        def __init__(self, rc, out): self.returncode, self.stdout = rc, out
-
-    unit = inbox.REFRESH_UNIT
-    have_unit = lambda *a, **k: _P(0, f"UNIT FILE                STATE\n{unit}  enabled\n")
-    check(inbox.refresh_command(which=lambda n: "/usr/bin/systemctl", run=have_unit)
-          == f"systemctl --user start {unit}",
-          "with the unit installed, it names the service, which cannot double-start")
-
-    no_unit = lambda *a, **k: _P(0, "UNIT FILE   STATE\n")
-    check(inbox.refresh_command(which=lambda n: "/usr/bin/systemctl", run=no_unit)
-          == "./run_mirror.sh",
-          "systemd present but no unit falls back to the launcher")
-
-    check(inbox.refresh_command(which=lambda n: None, run=have_unit) == "./run_mirror.sh",
-          "no systemctl at all falls back to the launcher")
-
-    def _boom(*a, **k): raise OSError("systemd is not running")
-    check(inbox.refresh_command(which=lambda n: "/usr/bin/systemctl", run=_boom)
-          == "./run_mirror.sh",
-          "a systemctl that errors must not take the whole run down with it")
-
-    check("run_mirror.sh" in inbox.closing_report(["a.pdf"], [], [],
-          refresh_cmd="./run_mirror.sh"),
-          "an injected command is what gets printed")
-
-    # Skipped files are left in the inbox too, and saying so is not an error.
-    r = inbox.closing_report(["a.pdf"], [("b.pdf", "Key2020Word already has a PDF")], [], refresh_cmd="REFRESH")
-    check("--replace" in r and "b.pdf" in r, "a skipped file is reported with the escape hatch")
-    check("NOT filed" not in r, "a skipped file is not counted as a failure")
-
-    check(inbox.closing_report([], [], [], dry_run=True) == "",
-          "a clean dry run prints no closing block")
-    r = inbox.closing_report([], [], [("a.pdf", "cannot identify: no DOI")], dry_run=True, refresh_cmd="REFRESH")
-    check("REFRESH" not in r and "a.pdf" in r,
-          "a dry run reports what it could not identify but never says to refresh")
-
     print("\ninbox: an empty download is not a scan")
     import pymupdf as _fitz
 
@@ -1734,42 +1584,34 @@ def main():
     (ibx / ".mirror" / "citekeys.json").write_text(
         json.dumps({"m1": "Doe2025Widget", "m2": "Roe2024Gadget"}), encoding="utf-8")
 
-    check(inbox.existing_document(ibx, "10.1000/gadget")[1] == "Roe2024Gadget",
+    check(inbox.existing_document(ibx, "10.1000/gadget") == "Roe2024Gadget",
           "a DOI that is in the bib still matches by DOI")
-    check(inbox.existing_document(ibx, "10.1000/gadget")[0] == "m2",
-          "the matched entry resolves to its Mendeley id")
+
+    # It returns the CITATION KEY alone. It used to return a backend id beside
+    # it, resolvable only for one backend, and both live callers discarded it --
+    # a return value that is dead for every caller is a trap for the next one.
+    check(isinstance(inbox.existing_document(ibx, "10.1000/gadget"), str),
+          "and answers with the citation key alone, not a key and a backend id")
 
     # The regression this guards: an arXiv reference with no doi field. Its PDF
     # carries a resolvable DOI, so the DOI search runs and finds nothing -- and
     # the title fallback used to be skipped entirely whenever a DOI was present,
     # reporting "new to the library" and duplicating a paper already held.
-    doc, key = inbox.existing_document(ibx, "10.48550/arxiv.2501.00001",
-                                       "A Study of Widgets: the Sequel")
+    key = inbox.existing_document(ibx, "10.48550/arxiv.2501.00001",
+                                  "A Study of Widgets: the Sequel")
     check(key == "Doe2025Widget",
           f"a DOI that matches nothing falls back to the title (got {key!r})")
-    check(doc == "m1", "the title-matched entry resolves to its Mendeley id")
 
-    check(inbox.existing_document(ibx, "10.9999/nope", "A Paper Nobody Has") == ("", ""),
+    check(inbox.existing_document(ibx, "10.9999/nope", "A Paper Nobody Has") == "",
           "a genuinely new paper is still reported as new")
-    check(inbox.existing_document(ibx, "", "On Gadgets")[1] == "Roe2024Gadget",
+    check(inbox.existing_document(ibx, "", "On Gadgets") == "Roe2024Gadget",
           "the no-DOI title path still works")
-    check(inbox.existing_document(ibx, "10.9999/nope", "A Study of Widgets")[1] == "",
+    check(inbox.existing_document(ibx, "10.9999/nope", "A Study of Widgets") == "",
           "a partial title does not match -- equality is still exact")
 
-    print("\ninbox exit status (offline: an unreadable PDF needs no network)")
-    ibox = out / "inbox"
-    ibox.mkdir(exist_ok=True)
-    (ibox / "junk.pdf").write_bytes(b"not a pdf at all")
-    r = subprocess.run([sys.executable, str(Path(__file__).parent / "inbox.py"),
-                        "--out", str(out), "--dry-run"],
-                       capture_output=True, text=True, timeout=120)
-    check(r.returncode != 0, f"a file it cannot identify exits nonzero (got {r.returncode})")
-    check("junk.pdf" in r.stdout and "NOT filed" in r.stdout,
-          "the unidentifiable file is named in the closing block")
-    tail3 = "\n".join([ln for ln in r.stdout.strip().splitlines() if ln.strip()][-3:])
-    check("junk.pdf" in tail3 or "NOT filed" in tail3,
-          f"the problem survives a tail -3 (tail was: {tail3[:80]!r})")
-    (ibox / "junk.pdf").unlink()
+    # The inbox CLI exit-status test went with `inbox.py` on 2026-11-13.
+    # `identify.py` is a module, not a command: `zotero_inbox.py` owns the
+    # closing report and its exit status, and tests them.
 
     print("\npdbxref.py: ranking the gap by demand, not by deposition size")
     import pdbxref as px
@@ -2206,7 +2048,7 @@ def main():
     shutil.rmtree(_fo, ignore_errors=True)
 
     print("\ncsl_year: the issue year, not the online one")
-    from mendeley_push import csl_year
+    from fromdoi import csl_year
 
     # The real shape of CHARMM36m's Crossref record: online Nov 2016, issue Jan 2017.
     check(csl_year({"published-online": {"date-parts": [[2016, 11, 7]]},
@@ -2229,7 +2071,7 @@ def main():
     check(csl_year({"issued": {"date-parts": [[None]]}}) is None,
           "a null date-part yields None")
 
-    print("\nHTML entities from Crossref/Mendeley")
+    print("\nHTML entities from Crossref and the backend")
     # Real case: Crossref hands back "Molecular Systems Design &amp; Engineering".
     # Escaping without decoding first left "\\&amp;", which renders the entity
     # literally in the bibliography.
@@ -2256,54 +2098,10 @@ def main():
     check(mm.html_decode("http://x/?a=1&amp;b=2") == "http://x/?a=1&b=2",
           "&amp; in a URL query string decodes")
 
-    print("\nmendeley_edit: what gets PATCHed")
-    import mendeley_edit as me
-
-    DOC = {"title": "A paper", "year": 2016, "type": "generic",
-           "source": "Nature Methods",
-           "identifiers": {"doi": "10.1038/old", "issn": "1548-7091", "pmid": "27819658"}}
-
-    # A field already equal to Mendeley's value must not be re-sent -- this is
-    # what makes a re-run after a partial failure safe.
-    patch, _ = me.plan_patch(DOC, {"year": 2016, "source": "Nature Methods"})
-    check(patch == {}, f"fields already correct are skipped (got {patch})")
-
-    patch, lines = me.plan_patch(DOC, {"year": 2017})
-    check(patch == {"year": 2017}, "a changed field is patched")
-    check(any("2016" in l for l in lines) and any("2017" in l for l in lines),
-          "the diff shows both the old and the new value")
-
-    # The rule that keeps a DOI correction from destroying other identifiers.
-    patch, _ = me.plan_patch(DOC, {"identifiers": {"doi": "10.1126/new"}})
-    check(patch["identifiers"]["doi"] == "10.1126/new", "the DOI is replaced")
-    check(patch["identifiers"]["issn"] == "1548-7091"
-          and patch["identifiers"]["pmid"] == "27819658",
-          "identifiers is MERGED -- issn and pmid survive a DOI correction")
-
-    patch, _ = me.plan_patch(DOC, {"identifiers": {"doi": "10.1038/old"}})
-    check(patch == {}, "an identifiers block that changes nothing is not sent")
-
-    # A field the document does not have yet is an addition, not a skip.
-    patch, _ = me.plan_patch(DOC, {"pages": "71--73"})
-    check(patch == {"pages": "71--73"}, "a field absent from the document is added")
-
-    # null REMOVES. The merge above protects good identifiers; without an
-    # explicit removal it also made a bad one impossible to delete, and a DOI
-    # that resolves to an unrelated paper is worse than no DOI at all.
-    patch, _ = me.plan_patch(DOC, {"identifiers": {"doi": None}})
-    check(patch["identifiers"] == {"issn": "1548-7091", "pmid": "27819658"},
-          "a null identifier is removed and the others survive")
-    patch, _ = me.plan_patch(DOC, {"identifiers": {"doi": None, "isbn": "978"}})
-    check(patch["identifiers"] == {"issn": "1548-7091", "pmid": "27819658", "isbn": "978"},
-          "removal and addition compose in one edit")
-    patch, _ = me.plan_patch(DOC, {"identifiers": {"doi": None, "issn": None, "pmid": None}})
-    check(patch == {"identifiers": {}}, "removing every identifier sends an empty object")
-    patch, _ = me.plan_patch(DOC, {"identifiers": {"arxiv": None}})
-    check(patch == {}, "removing an identifier the document does not have is a no-op")
-
-    patch, _ = me.plan_patch({"identifiers": {}}, {"identifiers": {"doi": "10.1/x"}})
-    check(patch == {"identifiers": {"doi": "10.1/x"}},
-          "merging into an empty identifiers block works")
+    # `mendeley_edit.py` and its identifiers-merge tests were deleted on
+    # 2026-11-13. `zotero_edit.py` is the live writer; its own merge is over
+    # `creators`, because Zotero PATCHes scalars as a partial merge and that
+    # is the one field where the guarantee stops. Tested further down.
 
     # Lin1999Effect: the footer is followed by a Wiley licence block of constant
     # length, so the printed page number sits ~410 characters from the end of
@@ -2646,7 +2444,7 @@ def main():
     print("\nzotero_attach makes Zotero describe the file it is given")
 
     # Vanommeslaeghe2009Charmm: application/octet-stream for a complete PDF,
-    # under Mendeley's mangled filename. Both crossed the migration intact.
+    # under the mangled filename it was imported with. Both crossed intact.
     bad = {"key": "V1", "version": 42,
            "data": {"linkMode": "imported_file",
                     "filename": "2010-CHARMM_general_force_field_biolo.-_charmm_g",
@@ -2713,7 +2511,7 @@ def main():
         "Everything in this folder is current as of the run above.\n",
         encoding="utf-8")
     info = {"retired_at": "2026-10-02T14:00:00+00:00",
-            "reason": "Mendeley retired; Zotero is the remote",
+            "reason": "the old backend retired; Zotero is the remote",
             "last_ok": "2026-09-30 16:21 UTC", "successor": "Zotero"}
     mm.write_retired_status(frz, info)
     frozen = (frz / "mirror-status.md").read_text(encoding="utf-8")
@@ -2731,7 +2529,7 @@ def main():
 
     check(mm.load_retired(frz) == {}, "a mirror with no marker is not retired")
     mm.save_json(mm.retired_marker(frz), info)
-    check(mm.load_retired(frz)["reason"].startswith("Mendeley retired"),
+    check(mm.load_retired(frz)["reason"].startswith("the old backend retired"),
           "and the marker is what a later run reads to refuse")
 
     print("\nzotero_edit: creators is the list that gets replaced wholesale")
@@ -2744,7 +2542,7 @@ def main():
 
     # The whole point. Zotero's PATCH is a top-level partial merge, so DOI and
     # ISSN are safe without any help -- but creators is a LIST, and sending one
-    # replaces the list, editor included. Same risk mendeley_edit.py guards
+    # replaces the list, editor included. The one field where Zotero's
     # `identifiers` against, one level down.
     patch, lines = ze.plan_patch(item, {"creators": [{"lastName": "Shan", "firstName": "J."}]})
     check([c["lastName"] for c in patch["creators"]] == ["Shan", "Ed"],
@@ -2791,25 +2589,26 @@ def main():
           f"an unknown field name stops the run ({rc_f.stderr.strip()[:70]})")
 
     # "the format ports unchanged" was claimed in this repo on 2026-10-02 and
-    # was wrong. The library session's mendeley_edit-shaped file was rejected on
-    # its first record -- correctly -- but a refusal that does not say what to
-    # write instead is a dead end, and the claim was the kind someone acts on
-    # with --yes.
+    # was wrong. A file written in the MIRROR's field vocabulary -- the names
+    # anyone reads off library.bib -- was rejected on its first record, which is
+    # correct; but a refusal that does not say what to write instead is a dead
+    # end, and the claim was the kind someone acts on with --yes.
     rc_m = _ze("z.plan_patch({'title': 'T'}, {'authors': []})")
     check(rc_m.returncode != 0 and "Zotero wants creators" in rc_m.stderr,
-          f"a Mendeley field name is named as one, with its translation "
+          f"the mirror's field name is named as one, with its translation "
           f"({rc_m.stderr.strip()[:70]})")
     rc_y = _ze("z.plan_patch({'title': 'T'}, {'year': 2001})")
     check(rc_y.returncode != 0 and "Zotero wants date" in rc_y.stderr,
           "and so is year -> date")
 
-    # The worst of the shape mistakes: Mendeley's person dict would be accepted
-    # as a creator with empty names, and Zotero would store blank authors -- an
-    # edit that looks successful and destroys the field it meant to repair.
+    # The worst of the shape mistakes: the mirror's person dict -- what
+    # fromdoi.py produces and bib_entry consumes -- would be accepted as a
+    # creator with empty names, and Zotero would store blank authors: an edit
+    # that looks successful and destroys the field it meant to repair.
     rc_c = _ze("z.plan_patch({'creators': []}, "
                "{'creators': [{'first_name': 'J.', 'last_name': 'Shan'}]})")
     check(rc_c.returncode != 0 and "firstName/lastName" in rc_c.stderr,
-          f"Mendeley's person shape is refused, not stored as empty names "
+          f"the mirror's person shape is refused, not stored as empty names "
           f"({rc_c.stderr.strip()[:70]})")
     ok_shape, _l = ze.plan_patch({"creators": []},
                                  {"creators": [{"firstName": "J.", "lastName": "Shan"}]})
@@ -2820,7 +2619,7 @@ def main():
 
     # CLAUDE.md names this as the rule a second backend will be tempted to
     # break. A Zotero run that used BACKEND would namespace every Zotero id as
-    # a Mendeley one, miss all 2,739 existing entries, and assign brand-new
+    # the legacy one, miss all 2,739 existing entries, and assign brand-new
     # keys over the top of keys already cited in manuscripts.
     zdocs = [{"id": "ZKEY1", "type": "journal", "title": "A paper", "year": 2001,
               "source": "A Journal",
@@ -2833,15 +2632,19 @@ def main():
     check(len(km) == 1,
           f"and no second key is minted for the same paper ({sorted(km)})")
 
-    # The failure it prevents, shown rather than asserted in prose.
+    # The failure it prevents, shown rather than asserted in prose: the SAME
+    # records, read under a different backend's name, match nothing and mint a
+    # whole second set of keys. Until 2026-11-13 a caller reached this by
+    # omitting the argument; now the only way is to name the wrong backend, and
+    # naming it is a thing a reviewer can see.
     mm.save_json(kpath, {"zotero:ZKEY1": "Shan2001Existing"})
-    wrong = mm.assign_citekeys(zdocs, kpath)          # defaults to mendeley
+    wrong = mm.assign_citekeys(zdocs, kpath, backend="mendeley")
     check(wrong.get("mendeley:ZKEY1") and len(wrong) == 2,
-          f"with the default backend the same record gets a SECOND key "
+          f"naming the wrong backend gives the same record a SECOND key "
           f"({sorted(wrong)})")
 
     # qualify_map is deliberately NOT given the backend: a bare id means
-    # Mendeley's by definition, whatever run reads the file.
+    # the legacy backend's by definition, whatever run reads the file.
     bare = tmp / "bare-keys.json"
     mm.save_json(bare, {"abc123": "Old2001Key"})
     migrated = mm.assign_citekeys([], bare, backend="zotero")
@@ -2881,7 +2684,7 @@ def main():
     check(item["date"] == "2017", "the year is the issue year, as a date string")
     check(item["creators"][0] == {"creatorType": "author", "firstName": "J.",
                                   "lastName": "Huang"},
-          f"creators are Zotero-shaped, not Mendeley-shaped ({item['creators'][0]})")
+          f"creators are Zotero-shaped, not mirror-shaped ({item['creators'][0]})")
     check(item["DOI"] == "10.1021/acs.jctc.1a" and item["ISSN"] == "1549-9618",
           "identifiers are separate top-level fields here")
     check(dropped == [], f"and nothing was dropped ({dropped})")
@@ -3035,7 +2838,7 @@ def main():
           "with no range there is nothing to veto, so an offset stands")
 
     print("\nstem_conflict: the file name against the DOI the text gives")
-    import inbox as _ib
+    import identify as _ib
 
     # A browser names a downloaded file after the WHOLE DOI, prefix included.
     # The guard compared such a stem against only the DOI's suffix -- the part
@@ -3135,7 +2938,7 @@ def main():
     check(zi.zotero_key_for(zdir, "Shan2001Influence") == "ZK9",
           "a citation key resolves through citekeys.json to the ZOTERO half")
     check(zi.zotero_key_for(zdir, "Nothing2001Here") == "",
-          "and an unknown key resolves to nothing, rather than to the Mendeley id")
+          "and an unknown key resolves to nothing, rather than to a foreign id")
 
     # What it must refuse. Each of these is a library that is WRONG rather than
     # a library that is missing something.
@@ -3219,7 +3022,7 @@ def main():
         msg_ = {"title": ["A brand new paper"]}
 
         zi.identify = lambda _p: (msg_, "10.1234/new", "first pages")
-        zi.existing_document = lambda *_a, **_k: ("", "")
+        zi.existing_document = lambda *_a, **_k: ""
         plan_n, why_n = zi.plan_one(zdir, real, "", "", {}, True)
         check(plan_n == {"create": "10.1234/new"} and "NEW record" in why_n,
               f"a DOI no record holds becomes a record to create ({plan_n})")
@@ -3235,7 +3038,7 @@ def main():
 
         # And the same DOI once the mirror has caught up resolves the ordinary
         # way, so the Zotero lookup never overrides library.bib.
-        zi.existing_document = lambda *_a, **_k: ("", "New2024Paper")
+        zi.existing_document = lambda *_a, **_k: "New2024Paper"
         plan_c, _ = zi.plan_one(zdir, real, "", "",
                                 {"10.1234/new": "PUSHED01"}, True)
         check(plan_c == {"citekey": "New2024Paper"},
@@ -3244,7 +3047,7 @@ def main():
         # The negative library asked for: identification refused, so nothing is
         # created. The refusal has to short-circuit the create branch, not be
         # weighed against it.
-        zi.existing_document = lambda *_a, **_k: ("", "")
+        zi.existing_document = lambda *_a, **_k: ""
         zi.identify = lambda _p: (None, "", "the first page does not match the "
                                             "title that DOI resolves to")
         plan_r, why_r = zi.plan_one(zdir, real, "", "", {}, True)
@@ -3446,7 +3249,7 @@ def main():
     check(pat["institution"] == "Drexel", "and its assignee is the institution")
 
     # An unmapped type degrades to generic, which TYPE_MAP renders @misc --
-    # where an unrecognized Mendeley type already went. It must not raise.
+    # where an unrecognized incoming type already went. It must not raise.
     odd = zs.item_to_doc({"key": "K5", "data": {"itemType": "podcast", "title": "P"}})
     check(odd["type"] == "generic", f"an unmapped item type degrades ({odd['type']})")
 
@@ -3477,7 +3280,7 @@ def main():
     check(zs.extra_with("PMID: 999", "PMID", "12345") == "PMID: 999",
           "an existing label is left alone, so a re-run does not double the line")
 
-    # 45 of the frozen bib's 201 isbn values are ISSNs Mendeley mislabeled.
+    # 45 of the frozen bib's 201 isbn values are ISSNs the old import mislabeled.
     # Restoring those as ISBN would make a known defect permanent because it
     # appears in a file we trust.
     check(zs.looks_like_issn("1520-6106") and not zs.looks_like_isbn("1520-6106"),
@@ -3618,15 +3421,15 @@ def main():
     skept = io.StringIO()
     with contextlib.redirect_stdout(skept):
         _sf, _ss, _sx, srep = mm.harvest_attachments(
-            NoNetwork(), sfiles, {mm.qualify("d1"): "Weeks1971Role"},
-            {"d1": DOCS[0]}, sdir, sst, "text")
+            fetch_via(NoNetwork()), sfiles, {mm.qualify("d1", backend="zotero"): "Weeks1971Role"},
+            {"d1": DOCS[0]}, sdir, sst, "text", backend="zotero")
     check((sdir / "text" / "Weeks1971Role.md").exists(),
           "an OCR'd extract SURVIVES a plain re-extract that reads nothing")
     check("repulsive forces" in (sdir / "text" / "Weeks1971Role.md").read_text(encoding="utf-8"),
           "with its text intact, not truncated or rewritten")
-    check(sst["files"][mm.qualify("s1")]["status"] == "ocr",
+    check(sst["files"][mm.qualify("s1", backend="zotero")]["status"] == "ocr",
           f"and the state records it as ocr, so index.md does not say the paper "
-          f"has no extract ({sst['files'][mm.qualify('s1')]['status']})")
+          f"has no extract ({sst['files'][mm.qualify('s1', backend="zotero")]['status']})")
     check("extracts were KEPT" in skept.getvalue(),
           f"and the RUN says so on an ordinary refresh -- that notice was nested "
           f"under the backfill branch and had never printed outside one "
@@ -3644,8 +3447,8 @@ def main():
     (edir / "pdf" / "Weeks1971Role.pdf").write_bytes(scan_bytes)
     (edir / "text" / "Weeks1971Role.md").write_text(only_head, encoding="utf-8")
     est = {}
-    mm.harvest_attachments(NoNetwork(), sfiles, {mm.qualify("d1"): "Weeks1971Role"},
-                           {"d1": DOCS[0]}, edir, est, "text")
+    mm.harvest_attachments(fetch_via(NoNetwork()), sfiles, {mm.qualify("d1", backend="zotero"): "Weeks1971Role"},
+                           {"d1": DOCS[0]}, edir, est, "text", backend="zotero")
     check(not (edir / "text" / "Weeks1971Role.md").exists(),
           "a header-only extract is still removed, so a genuine no-text scan "
           "is reported rather than hidden behind an empty file")
@@ -3662,28 +3465,28 @@ def main():
     ofiles = {"d1": [{"id": "o1", "mime_type": "application/pdf", "filehash": "ho"}]}
 
     # Without --ocr the verdict stands: nothing to gain from re-reading.
-    plain_state = {"files": {mm.qualify("o1"): {"filehash": "ho", "status": "no-text",
+    plain_state = {"files": {mm.qualify("o1", backend="zotero"): {"filehash": "ho", "status": "no-text",
                                                 "stem": "Weeks1971Role"}}}
     _pf, ps, _px, _pr = mm.harvest_attachments(
-        NoNetwork(), ofiles, {mm.qualify("d1"): "Weeks1971Role"},
-        {"d1": DOCS[0]}, odir, plain_state, "text")
+        fetch_via(NoNetwork()), ofiles, {mm.qualify("d1", backend="zotero"): "Weeks1971Role"},
+        {"d1": DOCS[0]}, odir, plain_state, "text", backend="zotero")
     check(ps == 1, f"a plain run still skips a known no-text scan ({ps})")
 
     # With --ocr it does not: this run carries a reader the last one lacked.
     _ocr_orig = mm.ocr_pdf_text
     mm.ocr_pdf_text = lambda data: ("the structure of simple liquids " * 20, 640)
-    ocr_state = {"files": {mm.qualify("o1"): {"filehash": "ho", "status": "no-text",
+    ocr_state = {"files": {mm.qualify("o1", backend="zotero"): {"filehash": "ho", "status": "no-text",
                                               "stem": "Weeks1971Role"}}}
     try:
         of, os_, _ox, orep = mm.harvest_attachments(
-            NoNetwork(), ofiles, {mm.qualify("d1"): "Weeks1971Role"},
-            {"d1": DOCS[0]}, odir, ocr_state, "text", ocr=True)
+            fetch_via(NoNetwork()), ofiles, {mm.qualify("d1", backend="zotero"): "Weeks1971Role"},
+            {"d1": DOCS[0]}, odir, ocr_state, "text", ocr=True, backend="zotero")
     finally:
         mm.ocr_pdf_text = _ocr_orig
     check(of == 1 and os_ == 0,
           f"--ocr RE-EXAMINES a no-text scan: a status is the verdict of the "
           f"reader that produced it ({of} extracted, {os_} skipped)")
-    check(ocr_state["files"][mm.qualify("o1")]["status"] == "ocr",
+    check(ocr_state["files"][mm.qualify("o1", backend="zotero")]["status"] == "ocr",
           "and the state records that a stronger reader succeeded")
     check((odir / "text" / "Weeks1971Role.md").exists()
           and "ocr: true" in (odir / "text" / "Weeks1971Role.md").read_text(encoding="utf-8"),
@@ -3691,17 +3494,17 @@ def main():
 
     # not-pdf is deliberately NOT retried: OCR does not help a video file, and
     # re-reading those every run would be motion.
-    np_state = {"files": {mm.qualify("o1"): {"filehash": "ho", "status": "not-pdf",
+    np_state = {"files": {mm.qualify("o1", backend="zotero"): {"filehash": "ho", "status": "not-pdf",
                                              "stem": "Weeks1971Role"}}}
     _nf, ns, _nx, _nr = mm.harvest_attachments(
-        NoNetwork(), ofiles, {mm.qualify("d1"): "Weeks1971Role"},
-        {"d1": DOCS[0]}, odir, np_state, "text", ocr=True)
+        fetch_via(NoNetwork()), ofiles, {mm.qualify("d1", backend="zotero"): "Weeks1971Role"},
+        {"d1": DOCS[0]}, odir, np_state, "text", ocr=True, backend="zotero")
     check(ns == 1, f"--ocr does not retry a not-pdf attachment ({ns})")
 
     print("\na failed extraction is unfinished work, not a result")
 
     # 2026-10-02, the real one: 2,732 attachments were recorded `failed` because
-    # pymupdf was missing. text/<key>.md still existed from the Mendeley era and
+    # pymupdf was missing. text/<key>.md still existed from the old backend and
     # the filehash matched, so the next run read every one as "unchanged" and
     # skipped it. The re-extraction silently did nothing, and it surfaced only
     # because two OTHER attachments failed outright and tripped the status.
@@ -3712,42 +3515,42 @@ def main():
     # The stale extract from a previous backend's run: present, and not evidence.
     (fdir / "text" / "Muller2020Yield.md").write_text("old extract\n", encoding="utf-8")
     one_file = {"d1": [{"id": "x1", "mime_type": "application/pdf", "filehash": "h1"}]}
-    fst = {"files": {mm.qualify("x1"): {"filehash": "h1", "status": "failed",
+    fst = {"files": {mm.qualify("x1", backend="zotero"): {"filehash": "h1", "status": "failed",
                                         "detail": "No module named 'pymupdf'"}}}
     got_f, got_s, _gx, _gr = mm.harvest_attachments(
-        NoNetwork(), one_file, {mm.qualify("d1"): "Muller2020Yield"},
-        {"d1": DOCS[0]}, fdir, fst, "text")
+        fetch_via(NoNetwork()), one_file, {mm.qualify("d1", backend="zotero"): "Muller2020Yield"},
+        {"d1": DOCS[0]}, fdir, fst, "text", backend="zotero")
     check(got_f == 1 and got_s == 0,
           f"a `failed` entry is RE-EXTRACTED, not counted unchanged "
           f"({got_f} extracted, {got_s} skipped)")
     check("old extract" not in (fdir / "text" / "Muller2020Yield.md").read_text(encoding="utf-8"),
           "and the stale extract is replaced rather than taken as proof of work")
-    check(fst["files"][mm.qualify("x1")]["status"] == "ok",
+    check(fst["files"][mm.qualify("x1", backend="zotero")]["status"] == "ok",
           "with the state corrected, so the next run can skip it honestly")
 
     # An unrecognized status is not a result either. A failure status added
     # later must default to being retried, not to being skipped.
-    ust = {"files": {mm.qualify("x1"): {"filehash": "h1", "status": "quarantined"}}}
+    ust = {"files": {mm.qualify("x1", backend="zotero"): {"filehash": "h1", "status": "quarantined"}}}
     (fdir / "text" / "Muller2020Yield.md").write_text("old\n", encoding="utf-8")
     got_u, got_us, _ux, _ur = mm.harvest_attachments(
-        NoNetwork(), one_file, {mm.qualify("d1"): "Muller2020Yield"},
-        {"d1": DOCS[0]}, fdir, ust, "text")
+        fetch_via(NoNetwork()), one_file, {mm.qualify("d1", backend="zotero"): "Muller2020Yield"},
+        {"d1": DOCS[0]}, fdir, ust, "text", backend="zotero")
     check(got_u == 1 and got_us == 0,
           f"an unknown status is re-examined, because DONE_STATUSES lists what "
           f"IS done rather than what is not ({got_u}, {got_us})")
 
     # And the ordinary case still skips, or every refresh would re-extract 2,700
     # papers for nothing.
-    okst = {"files": {mm.qualify("x1"): {"filehash": "h1", "status": "ok",
+    okst = {"files": {mm.qualify("x1", backend="zotero"): {"filehash": "h1", "status": "ok",
                                          "stem": "Muller2020Yield"}}}
     _ok_f, ok_s, _ox, _or_ = mm.harvest_attachments(
-        NoNetwork(), one_file, {mm.qualify("d1"): "Muller2020Yield"},
-        {"d1": DOCS[0]}, fdir, okst, "text")
+        fetch_via(NoNetwork()), one_file, {mm.qualify("d1", backend="zotero"): "Muller2020Yield"},
+        {"d1": DOCS[0]}, fdir, okst, "text", backend="zotero")
     check(ok_s == 1, f"an `ok` entry with its extract present still skips ({ok_s})")
 
     print("\nZotero annotations hang off the attachment, not the record")
 
-    a_hl = zs.annotation_to_mendeley({"data": {
+    a_hl = zs.annotation_to_mirror({"data": {
         "itemType": "annotation", "annotationType": "highlight",
         "annotationText": "a passage", "annotationPageLabel": "12",
         "annotationSortIndex": "00011|000450|00200"}})
@@ -3759,28 +3562,28 @@ def main():
           "and the sort offset becomes the y the renderer sorts on")
 
     # No label: pageIndex is zero-based and counts the cover, so it needs +1.
-    a_nolabel = zs.annotation_to_mendeley({"data": {
+    a_nolabel = zs.annotation_to_mirror({"data": {
         "itemType": "annotation", "annotationType": "highlight",
         "annotationText": "x", "annotationSortIndex": "00011|000450|00200"}})
     check(a_nolabel["positions"][0]["page"] == 12,
           f"with no label the zero-based index is incremented "
           f"({a_nolabel['positions'][0]['page']})")
 
-    a_note = zs.annotation_to_mendeley({"data": {
+    a_note = zs.annotation_to_mirror({"data": {
         "itemType": "annotation", "annotationType": "note",
         "annotationComment": "my own thought", "annotationPageLabel": "3",
         "annotationSortIndex": "00002|000010|00010"}})
     check(a_note["type"] == "note" and a_note["text"] == "my own thought",
           "a note carries the comment, which is the reader's own words")
 
-    a_both = zs.annotation_to_mendeley({"data": {
+    a_both = zs.annotation_to_mirror({"data": {
         "itemType": "annotation", "annotationType": "highlight",
         "annotationText": "quoted", "annotationComment": "disagree",
         "annotationSortIndex": "00000|000001|00001"}})
     check("quoted" in a_both["text"] and "disagree" in a_both["text"],
           f"a highlight WITH a comment keeps both ({a_both['text']!r})")
 
-    a_empty = zs.annotation_to_mendeley({"data": {"itemType": "annotation",
+    a_empty = zs.annotation_to_mirror({"data": {"itemType": "annotation",
                                                   "annotationType": "image"}})
     check(a_empty["type"] == "note" and a_empty["positions"][0]["page"] == 0,
           "and an image annotation with nothing in it degrades rather than raising")
@@ -3800,7 +3603,7 @@ def main():
     rfiles = {"d1": [{"id": "r1", "mime_type": "application/pdf", "filehash": "hr"}]}
 
     def old_entry():
-        return {"files": {mm.qualify("r1"): {"filehash": "hr", "status": "ok",
+        return {"files": {mm.qualify("r1", backend="zotero"): {"filehash": "hr", "status": "ok",
                                              "stem": "Muller2020Yield",
                                              "rules": 1}}}
 
@@ -3810,8 +3613,8 @@ def main():
     st_default = old_entry()
     with contextlib.redirect_stdout(buf):
         _df, ds, _dx, _dr = mm.harvest_attachments(
-            NoNetwork(), rfiles, {mm.qualify("d1"): "Muller2020Yield"},
-            {"d1": DOCS[0]}, rdir, st_default, "text")
+            fetch_via(NoNetwork()), rfiles, {mm.qualify("d1", backend="zotero"): "Muller2020Yield"},
+            {"d1": DOCS[0]}, rdir, st_default, "text", backend="zotero")
     check(ds == 1, f"an older-rules entry still skips by default ({ds})")
     check("older extraction rules" in buf.getvalue() and "--reassess" in buf.getvalue(),
           "but the run SAYS how many and what to pass -- the staleness is "
@@ -3825,8 +3628,8 @@ def main():
     fresh = io.StringIO()
     with contextlib.redirect_stdout(fresh):
         nf, ns, _nx, _nr = mm.harvest_attachments(
-            NoNetwork(), rfiles, {mm.qualify("d1"): "Muller2020Yield"},
-            {"d1": DOCS[0]}, rdir, {}, "text")
+            fetch_via(NoNetwork()), rfiles, {mm.qualify("d1", backend="zotero"): "Muller2020Yield"},
+            {"d1": DOCS[0]}, rdir, {}, "text", backend="zotero")
     check(nf == 1 and ns == 0, f"a new attachment is extracted ({nf}, {ns})")
     check("older extraction rules" not in fresh.getvalue(),
           f"and is NOT reported as produced under older rules -- it was not "
@@ -3836,34 +3639,34 @@ def main():
     # means extracts left on disk, not entries that happened to be old when the
     # question was asked.
     moved = io.StringIO()
-    st_moved = {"files": {mm.qualify("r1"): {"filehash": "hr", "status": "ok",
+    st_moved = {"files": {mm.qualify("r1", backend="zotero"): {"filehash": "hr", "status": "ok",
                                              "stem": "SomeOther2020Key",
                                              "rules": 1}}}
     with contextlib.redirect_stdout(moved):
         mm.harvest_attachments(
-            NoNetwork(), rfiles, {mm.qualify("d1"): "Muller2020Yield"},
-            {"d1": DOCS[0]}, rdir, st_moved, "text")
+            fetch_via(NoNetwork()), rfiles, {mm.qualify("d1", backend="zotero"): "Muller2020Yield"},
+            {"d1": DOCS[0]}, rdir, st_moved, "text", backend="zotero")
     check("older extraction rules" not in moved.getvalue(),
           "nor one re-extracted because its stem moved -- it is not left on disk")
 
     # --reassess is what acts on it.
     st_re = old_entry()
     rf, rs, _rx, _rr = mm.harvest_attachments(
-        NoNetwork(), rfiles, {mm.qualify("d1"): "Muller2020Yield"},
-        {"d1": DOCS[0]}, rdir, st_re, "text", reassess=True)
+        fetch_via(NoNetwork()), rfiles, {mm.qualify("d1", backend="zotero"): "Muller2020Yield"},
+        {"d1": DOCS[0]}, rdir, st_re, "text", reassess=True, backend="zotero")
     check(rf == 1 and rs == 0,
           f"--reassess re-reads an entry produced under older rules ({rf}, {rs})")
-    check(st_re["files"][mm.qualify("r1")]["rules"] == mm.EXTRACT_RULES,
+    check(st_re["files"][mm.qualify("r1", backend="zotero")]["rules"] == mm.EXTRACT_RULES,
           "and the entry records the rules it was reached under, so the next "
           "bump can tell it apart again")
 
     # A current-rules entry is not disturbed even by --reassess.
-    st_cur = {"files": {mm.qualify("r1"): {"filehash": "hr", "status": "ok",
+    st_cur = {"files": {mm.qualify("r1", backend="zotero"): {"filehash": "hr", "status": "ok",
                                            "stem": "Muller2020Yield",
                                            "rules": mm.EXTRACT_RULES}}}
     _cf, cs, _cx, _cr = mm.harvest_attachments(
-        NoNetwork(), rfiles, {mm.qualify("d1"): "Muller2020Yield"},
-        {"d1": DOCS[0]}, rdir, st_cur, "text", reassess=True)
+        fetch_via(NoNetwork()), rfiles, {mm.qualify("d1", backend="zotero"): "Muller2020Yield"},
+        {"d1": DOCS[0]}, rdir, st_cur, "text", reassess=True, backend="zotero")
     check(cs == 1, f"a current-rules entry is left alone even by --reassess ({cs})")
 
     print("\na scan whose cover page carries all the text")
@@ -3927,8 +3730,8 @@ def main():
     mm.ocr_pdf_text = lambda data: ("the article body recovered " * 100, 2700)
     try:
         jf, _js, _jx, _jr = mm.harvest_attachments(
-            NoNetwork(), jfiles, {mm.qualify("d1"): "Kirkpatrick1983Optimization"},
-            {"d1": DOCS[0]}, jst, {}, "text", ocr=True)
+            fetch_via(NoNetwork()), jfiles, {mm.qualify("d1", backend="zotero"): "Kirkpatrick1983Optimization"},
+            {"d1": DOCS[0]}, jst, {}, "text", ocr=True, backend="zotero")
     finally:
         mm.ocr_pdf_text = _ocr_was
     got = (jst / "text" / "Kirkpatrick1983Optimization.md").read_text(encoding="utf-8")
@@ -3991,25 +3794,25 @@ def main():
         "the OTHER paper's text\n", encoding="utf-8")
     sfiles = {"d1": [{"id": "s1", "mime_type": "application/pdf", "filehash": "hh"}]}
     # The state says this attachment was last written under a DIFFERENT stem.
-    sst = {"files": {mm.qualify("s1"): {"filehash": "hh", "status": "ok",
+    sst = {"files": {mm.qualify("s1", backend="zotero"): {"filehash": "hh", "status": "ok",
                                         "stem": "Hirota2000Effect-2"}}}
     gf, gs, _gx, _gr = mm.harvest_attachments(
-        NoNetwork(), sfiles, {mm.qualify("d1"): "Hirota2000Effect"},
-        {"d1": DOCS[0]}, sdir, sst, "text")
+        fetch_via(NoNetwork()), sfiles, {mm.qualify("d1", backend="zotero"): "Hirota2000Effect"},
+        {"d1": DOCS[0]}, sdir, sst, "text", backend="zotero")
     check(gf == 1 and gs == 0,
           f"an attachment whose STEM moved is re-extracted, not skipped "
           f"({gf} extracted, {gs} skipped)")
     check("OTHER paper" not in (sdir / "text" / "Hirota2000Effect.md").read_text(encoding="utf-8"),
           "so the wrong extract is replaced rather than left under the right name")
-    check(sst["files"][mm.qualify("s1")]["stem"] == "Hirota2000Effect",
+    check(sst["files"][mm.qualify("s1", backend="zotero")]["stem"] == "Hirota2000Effect",
           "and the state records the stem it actually wrote")
 
     # Unchanged stem still skips, or every refresh re-extracts the library.
-    sst2 = {"files": {mm.qualify("s1"): {"filehash": "hh", "status": "ok",
+    sst2 = {"files": {mm.qualify("s1", backend="zotero"): {"filehash": "hh", "status": "ok",
                                          "stem": "Hirota2000Effect"}}}
     _f2, s2, _x2, _r2 = mm.harvest_attachments(
-        NoNetwork(), sfiles, {mm.qualify("d1"): "Hirota2000Effect"},
-        {"d1": DOCS[0]}, sdir, sst2, "text")
+        fetch_via(NoNetwork()), sfiles, {mm.qualify("d1", backend="zotero"): "Hirota2000Effect"},
+        {"d1": DOCS[0]}, sdir, sst2, "text", backend="zotero")
     check(s2 == 1, f"an unchanged stem still skips ({s2})")
 
     # An entry with NO recorded stem must be re-examined, not skipped. 0.25.0
@@ -4021,14 +3824,14 @@ def main():
     # asserting its own defect.
     (sdir / "text" / "Hirota2000Effect.md").write_text("the OTHER paper\n",
                                                         encoding="utf-8")
-    sst3 = {"files": {mm.qualify("s1"): {"filehash": "hh", "status": "ok"}}}
+    sst3 = {"files": {mm.qualify("s1", backend="zotero"): {"filehash": "hh", "status": "ok"}}}
     f3, s3, _x3, _r3 = mm.harvest_attachments(
-        NoNetwork(), sfiles, {mm.qualify("d1"): "Hirota2000Effect"},
-        {"d1": DOCS[0]}, sdir, sst3, "text")
+        fetch_via(NoNetwork()), sfiles, {mm.qualify("d1", backend="zotero"): "Hirota2000Effect"},
+        {"d1": DOCS[0]}, sdir, sst3, "text", backend="zotero")
     check(f3 == 1 and s3 == 0,
           f"an entry with no recorded stem cannot be vouched for, so it is "
           f"re-extracted ({f3} extracted, {s3} skipped)")
-    check(sst3["files"][mm.qualify("s1")]["stem"] == "Hirota2000Effect",
+    check(sst3["files"][mm.qualify("s1", backend="zotero")]["stem"] == "Hirota2000Effect",
           "and it gains a stem, so it is vouched for from then on")
 
     print("\na Zotero refresh, end to end, offline")
@@ -4089,11 +3892,11 @@ def main():
 
     rout = tmp / "zrefresh"
     rstate = mm.mirror_state_dir(rout)
-    # The key already exists, written by zotero_migrate in September precisely
+    # The key already exists, written by zotero in September precisely
     # so that no key moves on the first Zotero refresh.
     mm.save_json(rstate / "citekeys.json", {"zotero:ZK1": "Shan2001Influence"})
     mm.save_json(rstate / "retired.json", {"retired_at": "2026-10-02T00:00:00+00:00",
-                                           "reason": "Mendeley retired"})
+                                           "reason": "the old backend retired"})
     (rout / "pdf").mkdir(parents=True, exist_ok=True)
     (rout / "pdf" / "Shan2001Influence.pdf").write_bytes(pdf_bytes)
 
@@ -4123,7 +3926,7 @@ def main():
           "index.md is rebuilt")
     check(not (rstate / "retired.json").exists(),
           "the frozen marker is cleared: a Zotero refresh is precisely the thing "
-          "that stops 'frozen as a Mendeley mirror' being true")
+          "that stops 'frozen against a dead backend' being true")
     status = (rout / "mirror-status.md").read_text(encoding="utf-8")
     check("FROZEN" not in status and "**ok**" in status,
           f"and the standing staleness notice is replaced by a real run\n{status[:120]}")
@@ -4325,7 +4128,7 @@ def main():
           f"an entry whose attachment is not listed is stale ({st_list})")
     check("mendeley:old1" not in st_list,
           "and the OTHER backend's entries are never stale by this test -- they "
-          "are the frozen Mendeley half of the map and nothing lists them")
+          "are the frozen legacy half of the map and nothing lists them")
     check(zs.stale_state_entries(live_files, {}, "zotero") == [],
           "an empty state has nothing stale in it")
 
@@ -4458,7 +4261,7 @@ def main():
     fstate = mm.mirror_state_dir(fout)
     mm.save_json(fstate / "citekeys.json", {"zotero:ZK1": "Shan2001Influence"})
     mm.save_json(fstate / "retired.json", {"retired_at": "2026-10-02T00:00:00+00:00",
-                                           "reason": "Mendeley retired"})
+                                           "reason": "the old backend retired"})
     (fout / "pdf").mkdir(parents=True, exist_ok=True)
     (fout / "pdf" / "Shan2001Influence.pdf").write_bytes(pdf_bytes)
 
@@ -4762,7 +4565,7 @@ def main():
     # "did not survive extraction" line makes a fabrication read as the more
     # rigorous of the two. Rejected, not labeled.
     import refs as _R
-    import inbox as _ib2
+    import identify as _ib2
     check({"dataset", "component", "peer-review"} <= _ib2.NOT_A_PAPER,
           "a Crossref title search skips datasets: one returned the PDB entry "
           "10.2210/pdb1grl/pdb for a paper at 0.94 title similarity")
@@ -5126,7 +4929,7 @@ def main():
           "one and a bare count sends them to a dry run to find out")
 
     # The failure the alarm was written for. A Zotero run that qualified its
-    # ids as Mendeley's would mint `mendeley:<zotero key>` beside the
+    # ids under another backend's name would mint `<other>:<zotero key>` beside the
     # `zotero:<zotero key>` already in the map -- nothing else produces that
     # collision, and detecting it needs no threshold.
     b2 = {"zotero:9868BT9D": "Godinezleon2026Cyclodextrin"}
@@ -5314,11 +5117,11 @@ def main():
         dep = re.search(r"dependencies\s*=\s*\[([^\]]*)\]", head.group(1))
         declared = set(re.findall(r'"([^"]+)"', dep.group(1) if dep else ""))
 
-        # What it actually needs: a direct import, or mendeley_mirror's own
+        # What it actually needs: a direct import, or mirror's own
         # requests.
         #
         # pymupdf used to be judged by a direct import alone, on the grounds
-        # that mendeley_mirror imports it lazily so it is not transitive. That
+        # that mirror imports it lazily so it is not transitive. That
         # was true while only scripts importing it directly ever reached the
         # PDF stack, and it became FALSE the moment zotero_source.py called
         # harvest_attachments. The header passed this check, uv installed only
@@ -5328,7 +5131,7 @@ def main():
         # reaches it.
         body = src[head.end():]
         wants = set()
-        if re.search(r"^\s*import requests", body, re.M) or "from mendeley_mirror import" in body:
+        if re.search(r"^\s*import requests", body, re.M) or "from mirror import" in body:
             wants.add(PINS["requests"])
         # Two ways a script ends up needing the PDF stack, and this got it
         # wrong three times before getting it right.
@@ -5340,7 +5143,7 @@ def main():
         #      than from a list of module names, because a list goes stale and
         #      a graph does not.
         #   2. It calls something that imports pymupdf LAZILY, inside a
-        #      function. mendeley_mirror does that, so the call site owns the
+        #      function. mirror does that, so the call site owns the
         #      dependency and nothing in the import graph can show it.
         #
         # The errors so far: judging by a direct import alone missed

@@ -6,17 +6,16 @@
 """
 zotero_push.py -- add one reference to Zotero, from a DOI or an arXiv id.
 
-The counterpart of `mendeley_push.py`, and the last of the four gaps the library
-session found after the cutover. For a paper with no PDF behind it yet: the
+The last of the four gaps the library session found after the cutover. For a paper with no PDF behind it yet: the
 record goes in, and `zotero_inbox.py` attaches the file later if one arrives.
 
     uv run --script zotero_push.py --doi 10.1088/2632-2153/ae4b07
     uv run --script zotero_push.py --arxiv 2507.07887 --yes
 
-Resolution is `mendeley_push.py`'s and is reused unchanged -- `from_doi` goes
-through doi.org content negotiation, so it answers for DataCite DOIs that
-`api.crossref.org` returns 404 for, and `from_arxiv` handles the preprint case.
-Those were never Mendeley-specific; only the create half was.
+Resolution lives in `fromdoi.py` and is shared with `zotero_inbox.py` --
+`from_doi` goes through doi.org content negotiation, so it answers for DataCite
+DOIs that `api.crossref.org` returns 404 for, and `from_arxiv` handles the
+preprint case. Neither was ever backend-specific; only the create half is.
 
 **`csl_year()` decides the year, and that is not a detail.** CSL `issued` is the
 earliest date a work appeared, which for an Advance Access paper is the online
@@ -55,15 +54,15 @@ import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from mendeley_mirror import DEFAULT_OUT, __version__  # noqa: E402
-from mendeley_push import from_arxiv, from_doi  # noqa: E402
-from inbox import existing_document  # noqa: E402
-from zotero_migrate import Zotero, load_zotero_credentials  # noqa: E402
+from mirror import DEFAULT_OUT, __version__  # noqa: E402
+from fromdoi import from_arxiv, from_doi  # noqa: E402
+from identify import existing_document  # noqa: E402
+from zotero import Zotero, load_zotero_credentials  # noqa: E402
 
 ZOTERO_API = "https://api.zotero.org"
 
 # The inverse of `zotero_source.ITEM_TYPES`. Several Zotero types collapse into
-# one Mendeley type on the way in, so coming back out needs a canonical choice
+# one mirror type on the way in, so coming back out needs a canonical choice
 # per type rather than a reversal of the dict.
 TO_ZOTERO_TYPE = {
     "journal": "journalArticle",
@@ -119,7 +118,7 @@ def item_template(item_type: str) -> dict:
 
 
 def doc_to_zotero(doc: dict, template: dict) -> tuple[dict, list]:
-    """A Mendeley-shaped document as a Zotero item. Returns `(item, dropped)`.
+    """A mirror-shaped document as a Zotero item. Returns `(item, dropped)`.
 
     `dropped` names every value the item type has nowhere to put. It is
     returned rather than discarded because that is exactly what Zotero would do
@@ -141,7 +140,7 @@ def doc_to_zotero(doc: dict, template: dict) -> tuple[dict, list]:
         #
         # One pass, not a loop: `html_decode`'s docstring already settles that
         # `&amp;amp;` should come back as the literal `&amp;` it encodes.
-        # mendeley_mirror has done this on the way OUT since the BibTeX writer
+        # mirror has done this on the way OUT since the BibTeX writer
         # was written; what was missing is the way in.
         if isinstance(value, str):
             value = html.unescape(value)
@@ -226,7 +225,7 @@ def main() -> int:
     if doi:
         print(f"  doi {doi}")
 
-    _mid, citekey = existing_document(args.out, doi, title)
+    citekey = existing_document(args.out, doi, title)
     if citekey:
         print(f"\n  ! the library already has this as {citekey}. Not creating a "
               "second record -- that is two citation keys for one paper, and "

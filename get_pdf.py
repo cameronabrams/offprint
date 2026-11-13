@@ -25,9 +25,9 @@ deposited structure, read a figure, or check a table.
    the case: `zotero_inbox.py` uploads to Zotero and the archive catches up on
    the next refresh, so between the two it exists only in Zotero.
 
-The Mendeley path is gone. It was retired with the account on 2026-10-02, and a
-fallback that always fails is worse than none -- it turns "this paper is not in
-the archive" into an authentication error.
+The retired backend's path is gone. It went with the account on 2026-10-02,
+and a fallback that always fails is worse than none -- it turns "this paper is
+not in the archive" into an authentication error.
 
     uv run --script get_pdf.py Muller2020Yield
     uv run --script get_pdf.py --search "packed bed"      # find the key first
@@ -51,10 +51,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
-    from mendeley_mirror import DEFAULT_OUT, load_json, mirror_state_dir
-    from zotero_migrate import Zotero, load_zotero_credentials
+    from mirror import DEFAULT_OUT, load_json, mirror_state_dir
+    from zotero import Zotero, load_zotero_credentials
 except ImportError:
-    sys.exit("get_pdf.py must sit in the same folder as mendeley_mirror.py")
+    sys.exit("get_pdf.py must sit in the same folder as mirror.py")
 
 import requests
 
@@ -64,9 +64,26 @@ def cache_dir() -> Path:
         base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
     else:
         base = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
-    d = base / "mendeley-mirror" / "pdf"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    # Prefer the tool's own name; keep using the directory the cache was built
+    # under for as long as anything is in it. **This is not cosmetic.** 536 MB
+    # across 251 files sits under the old name, many of them behind paywalls
+    # that cannot be fetched again, and a hard switch would not error -- it
+    # would find an empty cache and re-download in silence.
+    #
+    # **The question is where the files ARE, not whether the new directory
+    # exists.** A first version asked `not new.is_dir()`, and `--dest` takes an
+    # arbitrary path: one run pointed at `<cache>/offprint/pdf` would have
+    # created it, flipped the fallback off permanently, and made every one of
+    # those files invisible -- the exact failure the fallback is here to
+    # prevent, armed by a directory nobody meant as a decision. `library`
+    # caught it. Reading the old directory instead means the flip happens when
+    # and only when it is emptied, which is the end this is for: a deletion,
+    # not a permanent accommodation.
+    new, old = base / "offprint" / "pdf", base / "mendeley-mirror" / "pdf"
+    if old.is_dir() and any(old.iterdir()):
+        return old
+    new.mkdir(parents=True, exist_ok=True)
+    return new
 
 
 def archive_index(pdf_dir: Path) -> dict:
@@ -90,7 +107,8 @@ def archive_index(pdf_dir: Path) -> dict:
 
 
 def zotero_files(z: Zotero) -> list:
-    """Every attachment in the library, shaped like Mendeley's `/files` rows.
+    """Every attachment in the library, shaped like the `/files` rows the
+    refresh already consumes.
 
     One bulk call, which is what `attachment_inventory` was built around: asking
     per document is the difference between a sweep somebody repeats and a sweep
@@ -123,7 +141,7 @@ def search_index(out: Path, needle: str) -> list[tuple[str, str]]:
     """Grep the mirror's index for a title, author, or DOI fragment."""
     index = out / "index.md"
     if not index.exists():
-        sys.exit(f"No index at {index} -- run mendeley_mirror.py first.")
+        sys.exit(f"No index at {index} -- run mirror.py first.")
     hits = []
     for line in index.read_text(encoding="utf-8").splitlines():
         if not line.startswith("| `"):
@@ -469,14 +487,14 @@ def main() -> int:
 
     keymap = load_json(mirror_state_dir(out) / "citekeys.json", {})
     if not keymap:
-        sys.exit("No citation-key map found -- run mendeley_mirror.py first.")
+        sys.exit("No citation-key map found -- run mirror.py first.")
     # Stored ids are namespaced, and only the live backend's may be sent to the
     # live backend: another service's id would 404 at best, and at worst match a
     # different paper.
     by_key = {key: ident.split(":", 1)[1] for ident, key in keymap.items()
               if ident.startswith("zotero:")}
     if not by_key:
-        sys.exit("citekeys.json holds no zotero: entries -- run zotero_migrate.py.")
+        sys.exit("citekeys.json holds no zotero: entries -- run zotero.py.")
 
     if args.attachments:
         z = Zotero(*load_zotero_credentials())
@@ -517,7 +535,7 @@ def main() -> int:
         # The archive, before the network. **It is empty as of 2026-10-02**:
         # Cameron deleted all 2,740 files once every attachment was verified
         # present in Zotero per record, on the grounds that it was a transit
-        # buffer for the Mendeley -> Zotero round trip and never a durable
+        # buffer for the backend migration and never a durable
         # store. So this branch no longer fires on this library, and is kept
         # because it costs one dict lookup and is exactly right for a machine
         # that does hold an archive, or for one rebuilt later.

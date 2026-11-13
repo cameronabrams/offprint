@@ -42,7 +42,7 @@ Two classes come out, and both are **candidates, not verdicts**:
 
 Agreement is exact after folding diacritics; nothing here scores similarity.
 `literature` tried similarity three times on this library and it failed three
-times, and `zotero_migrate.py` settled 3 of 2,739 pairs that way. A surname that
+times, and `zotero.py` settled 3 of 2,739 pairs that way. A surname that
 agrees only on its last whitespace-separated token — `van der Waals` against
 `Waals` — is listed under its own heading rather than quietly counted as
 agreement, because a false agreement hides a defect and a false mismatch only
@@ -67,8 +67,8 @@ import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from mendeley_mirror import DEFAULT_OUT, __version__, ascii_fold  # noqa: E402
-from zotero_migrate import parse_bib  # noqa: E402
+from mirror import DEFAULT_OUT, __version__, ascii_fold  # noqa: E402
+from zotero import parse_bib  # noqa: E402
 
 CROSSREF = "https://api.crossref.org/works"
 UA = f"offprint/{__version__} (https://github.com/cameronabrams/offprint; mailto:cfa22@drexel.edu)"

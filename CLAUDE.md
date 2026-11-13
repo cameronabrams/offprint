@@ -15,19 +15,19 @@ refresh; those belong to the session that owns the library.
 ## The one structural rule
 
 Scripts never locate data relative to themselves. `DEFAULT_OUT` in
-`mendeley_mirror.py` is an absolute path (`~/Sync/library`, which resolves on
+`mirror.py` is an absolute path (`~/Sync/library`, which resolves on
 Windows too), and every entry point takes `--out`. That is what lets the clone
 sit anywhere while the library sits in a synced folder. Don't introduce a
 `Path(__file__).parent / "text"` or a bare relative path — it will work in
 testing and break for everyone whose clone is not inside their library.
 
 `Path(__file__).parent` on `sys.path` is fine, and is how the four satellite
-scripts import `mendeley_mirror` as a module.
+scripts import `mirror` as a module.
 
 ## The second structural rule: stored ids are namespaced, live ids are not
 
 Ids that **persist** — the keys of `citekeys.json` and of `state.json`'s `files`
-— are written `mendeley:<id>`. Ids that arrive in an **API response** and live
+— are written `<backend>:<id>`. Ids that arrive in an **API response** and live
 only for the run — `docs_by_id`, `files_by_doc`, `folder_docs` — are bare. That
 asymmetry is deliberate: the stored maps have to survive a second backend, and
 the in-memory ones are rebuilt every run and never meet one.
@@ -43,26 +43,28 @@ So: `keymap` and `state["files"]` are indexed through `qualify()`, always;
 wrong id for another backend's.
 
 **The Zotero backend landed on 2026-10-02 and this is where it was handled.**
-`BACKEND` is still `"mendeley"`, and every function that qualifies a stored id
-now takes a `backend` parameter rather than reading that constant:
+Every function that qualifies a stored id — `qualify`, `local_id`,
 `assign_citekeys`, `write_bibtex`, `write_index`, `write_folders` and
-`harvest_attachments`. A Zotero run that used the constant would namespace every
-Zotero id as a Mendeley one, miss all 2,739 existing entries, and mint 2,739 new
-citation keys over the top of keys already cited in manuscripts — silently, and
-indistinguishably from a first run. `test_mirror.py` asserts both halves: the
-right backend keeps the existing key, and the default backend produces the
-second one.
+`harvest_attachments` — takes a **required** `backend` parameter. It used to
+default to a module constant, and on 2026-11-13 the default was removed
+entirely: a run that namespaced one service's ids under another's name would
+miss every existing entry and mint a brand-new citation key for every record,
+over keys already cited in manuscripts, silently, and indistinguishably from a
+first run. **A parameter that must be named cannot be defaulted wrongly**, and
+that is a stronger guarantee than any amount of threading it carefully.
+`test_mirror.py` asserts both halves: the right backend keeps the existing key,
+and naming the wrong one produces a second.
 
 **`qualify_map` is deliberately NOT given the backend.** It migrates *bare* ids,
-and a bare id means Mendeley's by definition, whatever run reads the file. A
+and a bare id means `LEGACY_BACKEND`'s by definition, whatever run reads the file. A
 test covers that too, because it looks exactly like an omission.
 
-Since 2026-09-30 `citekeys.json` holds both halves — 2,739 `mendeley:<id>` and
+Since 2026-09-30 `citekeys.json` holds both halves — 2,739 legacy `<backend>:<id>` and
 2,739 `zotero:<key>` entries pointing at the same 2,739 citation keys. Two things
 follow. `taken` in `assign_citekeys` is built from **values** and is deliberately
 namespace-blind, so a key spoken for by either half is spoken for; don't "fix"
 that by filtering to one backend, or a Zotero record will be handed a key a
-Mendeley record already owns. And the map is append-only — nothing in the tool
+the other half already owns. And the map is append-only — nothing in the tool
 removes an entry — so a key cited in a manuscript keeps resolving after its
 record is deleted. The consequence for anyone pruning by hand is in
 `docs/reference.md`: both halves or neither, because dropping one leaves the key
@@ -70,7 +72,7 @@ reserved and the surviving line pointing at nothing in `library.bib`.
 
 **A dependency belongs to whoever reaches it, and there are two ways to reach
 one.** A module-level `import pymupdf` in a module you import is *yours* —
-`inbox.py:60` is at column 0, so importing one function from it costs the whole
+`identify.py`'s `import pymupdf` is at column 0, so importing one function from it costs the whole
 dependency whatever that function touches. A lazy import inside a function is
 the *caller's*, which no import graph can show. `test_mirror.py` checks both by
 reading the graph and recursing, after getting this wrong three times in one
@@ -93,12 +95,14 @@ Two habits that came out of the same failure, and are cheaper than the debugging
 |---|---|---|
 | the clone | all code | replaceable; `git pull` is the update mechanism **for other machines** |
 | `<out>/.mirror/` | `citekeys.json`, `state.json`, `removed.tsv`, `pairings.tsv`, `inbox-plan.json`, `mirror.log` | travels with the library, so every machine agrees what a citation key means and nobody re-extracts 2500 PDFs |
-| `~/.config/mendeley-mirror` (`%LOCALAPPDATA%` on Windows) | app ID, secret, tokens | per-machine on purpose: a public repo and a synced library both stay free of credentials |
-| `~/.cache/mendeley-mirror/pdf` | fetched PDFs | outside the library so grabbing one doesn't sync it everywhere |
+| `~/.config/offprint` (`%LOCALAPPDATA%` on Windows) | the Zotero API key | per-machine on purpose: a public repo and a synced library both stay free of credentials |
+| `~/.cache/offprint/pdf` | fetched PDFs | outside the library so grabbing one doesn't sync it everywhere. The directory named for the retired backend is still read while anything is in it: 536 MB across 251 files is, and a hard switch would re-download in silence rather than erroring |
 
 Moving any of those three out of its column breaks something real. The state
-directory in particular is load-bearing: `mirror_state_dir()` still carries a
-migration from the old credential-directory location.
+directory in particular is load-bearing. It used to carry a migration out of the
+credential directory, where `citekeys.json` and `state.json` lived before
+2026-09-24; that was removed on 2026-11-13, because `.mirror/` travels inside
+the synced folder itself, so any machine that has the library at all has them.
 
 ## What other people's files depend on
 
@@ -170,19 +174,22 @@ code as it stood when Python read the file, so editing during one is safe for
 that run and silently changes the next. The 09-24 namespacing was announced with 45 minutes
 to spare and the library session found a consumer of `citekeys.json` that the
 repo could not see: a procedure in its own notes that would have started
-handing Mendeley a namespaced id and getting a 404, months later, with nothing
+handing the backend a namespaced id and getting a 404, months later, with nothing
 left to connect the two.
 
 ## Entry points
 
-`mendeley_mirror.py` is the refresh and the module everything else imports.
-`get_pdf.py`, `refs.py`, `inbox.py`, `mendeley_push.py`, `mendeley_edit.py`,
-`finding.py`, `pdbrefs.py`, `pdbxref.py`, `doixref.py`, `zotero_migrate.py`,
-`zotero_source.py`, `zotero_attach.py`, `zotero_edit.py`, `zotero_inbox.py` and
-`whatbreaks.py` are separate CLIs that reuse its `Mendeley` client,
-`config_dir()`, and `DEFAULT_OUT`. `finding.py --replay` re-checks every record in `findings/` against its extract
+`mirror.py` is the module everything else imports, and `zotero_source.py
+--refresh` is the refresh that drives it.
+`get_pdf.py`, `refs.py`,
+`finding.py`, `pdbrefs.py`, `pdbxref.py`, `doixref.py`, `citemap.py`,
+`zotero_source.py`, `zotero_attach.py`, `zotero_edit.py`, `zotero_inbox.py`,
+`zotero_push.py`, `zotero_delete.py` and
+`whatbreaks.py` are separate CLIs that reuse its generators and `DEFAULT_OUT`.
+`identify.py`, `fromdoi.py` and `zotero.py` are modules, not CLIs: the two
+halves of filing a paper, and the read-only Zotero client. `finding.py --replay` re-checks every record in `findings/` against its extract
 and writes nothing. `finding.py`, `pdbrefs.py` and `whatbreaks.py`
-touch neither Mendeley nor the network; `pdbxref.py` queries RCSB and
+touch neither the backend nor the network; `pdbxref.py` queries RCSB and
 `doixref.py` queries Crossref, both public and unauthenticated, and neither
 writes anything — `doixref.py` caches to `~/.cache/offprint/` precisely so that
 a read-only audit never touches the library.
@@ -196,22 +203,53 @@ has changed before, so check it rather than assuming it.
 
 ## Direction of travel
 
-Since 2026-10-02 **Zotero is the remote and Mendeley is retired**, so the three
-`mendeley_*` writers have no live account to write to and `~/Sync/library` is a
-frozen snapshot — `--retire` makes it say so. The rules below still describe how
-they work, because the next backend's writers are built in their image and
-`mendeley_edit.py`'s three properties are the reason `zotero_edit.py` has three
-of its own.
+**Zotero is the remote.** A previous backend was retired on 2026-10-02 and its
+code — the OAuth client, its refresh, and its three writers — was deleted on
+2026-11-13, along with every mention of its name that was not a fact about files
+already on disk. Three such facts remain and are listed at the end of this
+section.
 
-The refresh is strictly one-way: Mendeley to disk. A bad run can lose mirrored
-files but cannot touch the library. Five scripts break that on purpose —
-`inbox.py` attaches files to references and can create them, `mendeley_push.py`
-POSTs a new reference, `mendeley_edit.py` PATCHes fields on a reference that
-already exists, and `zotero_attach.py` uploads the archive into Zotero. The three
-Mendeley ones are interactive by default; `--dry-run` is the safe thing to run and
-to show someone, and `--yes` is for a run a person has already approved, not a way
-past a prompt. **All four act on someone's real library, and this session is not
-the one that runs them.**
+The refresh is strictly one-way: Zotero to disk. A bad run can lose mirrored
+files but cannot touch the library. Five scripts break that on purpose, and all
+five are `zotero_*`: `zotero_inbox.py` attaches a file and can create the record
+under it, `zotero_push.py` creates a record, `zotero_edit.py` PATCHes fields on
+one that exists, `zotero_attach.py` uploads the archive, and
+`zotero_delete.py` removes a record. **All five act on someone's real library,
+and this session is not the one that runs them.**
+
+### The retired backend's name, where it survives on purpose
+
+The expunge of 2026-11-13 was total in the code and the prose. What is left is
+**data already written**, and each of these is a fact about files on disk rather
+than a choice this repo is still making. Do not "finish the job" on any of them
+without doing the migration that goes with it:
+
+- **`KNOWN_BACKENDS` and `LEGACY_BACKEND` in `mirror.py`.** `citekeys.json`
+  holds 2,739 `mendeley:` entries and `state.json` 2,745, in Cameron's live
+  library. `split_id` has to keep parsing them, and a bare id has to keep
+  reading as the backend that wrote it. Dropping either makes those entries
+  unreadable, and the citation keys behind them are in manuscripts.
+- **`~/.cache/mendeley-mirror/pdf` in `get_pdf.py`.** 536 MB across 251 files,
+  many behind paywalls that cannot simply be fetched again. `cache_dir()`
+  prefers `~/.cache/offprint/pdf` and falls back to the old name **while
+  anything is in it**. A hard switch would not error; it would find an empty
+  cache and re-download in silence.
+
+  **The test is where the files are, not whether the new directory exists.**
+  The first version asked `not new.is_dir()`, and `--dest` takes an arbitrary
+  path — one run pointed at the new name would have created it, flipped the
+  fallback off permanently, and orphaned the lot. Reading the old directory
+  instead means the flip happens when and only when it is emptied. `library`
+  caught that, having first caught the directory itself: the announcement
+  called `~/.config/mendeley-mirror` dead, which it is, and the *cache* is a
+  different path holding real bytes.
+- **The published docs URL in `README.md`**, and the systemd unit name
+  `mendeley-mirror.service`. Neither is in this repo's gift: renaming a Read the
+  Docs project breaks every link already pointing at it, and the unit was
+  installed by hand in `~/.config/systemd/user/` and is `disabled` deliberately.
+
+Two of the three end the same way the `~/Sync/mendeley` fallback did — as a
+deletion once nothing is left on the old name, not as a permanent accommodation.
 
 `zotero_attach.py` is dry-run by default instead, because a per-file prompt
 across 2,740 files is not a safeguard. It never creates an attachment item: where
@@ -222,27 +260,29 @@ another paper's citation key, silently.
 
 It also PATCHes each attachment's `filename` and `contentType` to match the
 archived file. **That is the second thing in this repo that can destroy correct
-metadata**, so it carries the same three properties as `mendeley_edit.py`:
+metadata**, so it carries the same three properties `zotero_edit.py` does:
 Zotero's PATCH is a partial merge so unnamed fields survive, only differing
 fields are sent so a re-run writes nothing, and a content type is never invented
 — bytes that are not a PDF keep the type the item declares. A 412 is a
 concurrent edit: report it and leave the item alone. Never re-read and retry,
 which would overwrite the edit that caused the conflict.
 
-`zotero_edit.py` is `mendeley_edit.py` for the live backend, and **the dangerous
-field moved**. Mendeley kept DOI, ISSN and PMID in one nested object its PATCH
-replaced wholesale, which is why `identifiers` is merged by hand there. Zotero's
-PATCH is a top-level partial merge, so those are separate fields and that hazard
-is gone — and it reappears in `creators`, a list that a PATCH replaces entire,
-editors included. So an edit replaces only the creator types it mentions and
-keeps the ones it does not. Don't "simplify" that into assigning `creators`
-directly; it drops an editor the first time someone fixes an author list.
+**`zotero_edit.py`'s dangerous field is `creators`.** Zotero's PATCH is a
+top-level partial merge — unnamed fields survive — so sending a DOI cannot
+disturb the ISSN beside it and no scalar needs protecting. The guarantee stops
+one level down: `creators` is a list, and a PATCH replaces a list entire,
+editors included. So the single most likely edit anyone makes, fixing an author
+list, is the one that would silently drop an editor. An edit replaces only the
+creator types it mentions and keeps the ones it does not. Don't "simplify" that
+into assigning `creators` directly.
 
-**Its edits file is not `mendeley_edit.py`'s**, whatever the similarity
-suggests: `authors` is `creators`, `first_name`/`last_name` are
+**Its edits file is not written in the mirror's vocabulary**, and that is the
+mistake to expect, because `library.bib` and `index.md` are where someone reads
+the record before deciding to fix it: `authors` is `creators`,
+`first_name`/`last_name` are
 `firstName`/`lastName`, and the identifiers are separate top-level fields. This
 repo claimed otherwise on 2026-10-02 and the claim reached a peer about to run
-`--yes`. Mendeley's field names and person shape are both refused by name now,
+`--yes`. The mirror's field names and person shape are both refused by name now,
 with the translation in the error.
 
 Its third property is new and belongs to this backend: **an unknown field name
@@ -254,7 +294,7 @@ wearing the clothes of a successful edit.
 **`zotero_inbox.py` creates both kinds of Zotero item**, a child attachment
 and — since 0.29.0 — the record under it when none exists. It reuses `inbox.py`'s
 identification pipeline unchanged, which was always backend-agnostic; only the
-create-and-upload half was Mendeley's.
+create-and-upload half was the old backend's.
 
 Separating the two creates was deliberate and was reversed deliberately, which
 is worth reading before re-separating them. The separation guarded against a
@@ -263,7 +303,7 @@ second record for a paper already held — but the check behind it read
 an hour earlier was invisible to it anyway. The separation cost two full
 refreshes per paper and closed nothing. `zotero_doi_index()` asks **Zotero**
 before creating, which is what actually closes it and is what `inbox.py` always
-did for Mendeley. Four refusals keep the create narrow: no record without a
+has always had to do. Four refusals keep the create narrow: no record without a
 DOI (a title match may attach, never mint — the metadata would be guesswork),
 never bytes a record already holds (md5, checked before anything is created),
 never a PDF with no readable text, never a guess at which record. `--no-create`
@@ -290,18 +330,18 @@ lives in `zotero_attach.py` for exactly that reason: adding a write method there
 would retire a guarantee every other caller is relying on. `zotero_edit.py`
 imports that client rather than growing a second one.
 
-**`mendeley_edit.py` is the one to be most careful with**, because it is the only
+**`zotero_edit.py` is the one to be most careful with**, because it is the only
 one that can *destroy* correct metadata rather than merely add wrong metadata.
-Two properties exist to limit that and should not be removed: `identifiers` is
-merged rather than substituted, so fixing a DOI cannot silently drop an ISSN or
-PMID; and a field already equal to Mendeley's value is skipped, so a re-run after
-a partial failure is safe. A third exists to make it complete: **an explicit
-`null` removes a field**, because the merge alone left a wrong identifier
-undeletable, and a DOI resolving to an unrelated paper is worse than no DOI.
-Mendeley's PATCH replaces the whole `identifiers` object rather than merging it
-server-side — verified against a live record — which is what makes removal work.
-Edits are keyed by citation key and resolved through `citekeys.json`, so a key
-the mirror has never seen is an error, never a no-op.
+Three properties limit that and should not be removed. `creators` is merged by
+type rather than substituted, so fixing an author list cannot silently drop an
+editor — the server merges everything else, which is why this is the only field
+that needs it. A value already equal to Zotero's is skipped, so a re-run after a
+partial failure is safe. And **an explicit `null` clears a field** — an empty
+string for a scalar, an empty list for `creators` — because a merge that
+protects good data also makes bad data undeletable, and a DOI resolving to an
+unrelated paper is worse than no DOI. Edits are keyed by citation key and
+resolved through `citekeys.json`, so a key the mirror has never seen is an
+error, never a no-op.
 
 Fixing a year does not renumber anything: `assign_citekeys` assigns a key once
 per document id and keeps it. Expect `Abrams2013Enhanced` to carry `year = 2014`
@@ -312,13 +352,11 @@ and leave it that way — the key is a handle, the year field is the claim.
 Publishers block automated downloads, so fetching a paywalled PDF stays a human
 job. That is a boundary, not a limitation to engineer around — don't script a way
 past a paywall. The two acquisition paths that write to the live account are
-`inbox.py` (a PDF the human saved into `<out>/inbox/`) and `mendeley_push.py` (a
-reference with no PDF behind it).
+`zotero_inbox.py` (a PDF the human saved into `<out>/inbox/`) and
+`zotero_push.py` (a reference with no PDF behind it).
 
-`zotero_push.py` is the live one; `inbox.py` and `mendeley_push.py` are its
-retired Mendeley counterparts, and `zotero_inbox.py` files a PDF onto a record
-that already exists. All take the **issue** year through `csl_year()`, never
-Crossref's `issued`.
+Both take the **issue** year through `csl_year()`, which lives in `fromdoi.py`
+with the rest of the metadata half, never Crossref's `issued`.
 `issued` is the date a work first appeared *online*, so an Advance Access paper
 arrives a year early — that is how CHARMM36m was filed as 2016 and cited that way
 in a manuscript before anyone noticed. If you add another acquisition path, call
@@ -651,7 +689,7 @@ not, so it would never fire again. **The fix is to test the cause the message
 names**, and exactly two things are provable from what the run holds:
 
 - **The same bare id under a second backend's prefix.** A Zotero run qualifying
-  its ids as Mendeley's mints `mendeley:<zotero key>` beside the
+  its ids under another backend's name mints `<other>:<zotero key>` beside the
   `zotero:<zotero key>` already in the map. Nothing else produces that
   collision, and detecting it needs no threshold — which is why no threshold is
   used. Scale was the tempting proxy and is the wrong one: "a lot of mints"

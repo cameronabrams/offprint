@@ -116,8 +116,13 @@ annotations and findings all work on a generic document/file/annotation shape.
       may not be needed at all: with file sync off the API returns **404** for
       `/items/<key>/file`, which is the measurement that settles the backend
       shape — records from the API, PDFs from local disk.
-- [ ] Abstract the client behind the small interface the rest of the code
+- [x] Abstract the client behind the small interface the rest of the code
       already implies: list documents, list files, fetch file, list annotations.
+      **Done 2026-11-13.** `harvest_attachments` takes a
+      `fetch(file_id) -> bytes` and no client at all — that function is the
+      entire backend interface, and it is required rather than defaulted, so a
+      caller cannot reach a backend it did not name. The retired client went
+      with it.
 
       **CORRECTED 2026-10-02. The first version of this item said Zotero holds
       no attachment bytes at all, and it was wrong by 39%.** The claim rested on
@@ -145,9 +150,11 @@ annotations and findings all work on a generic document/file/annotation shape.
       the sole supply. `<out>/pdf/` was the copy that was not behind a service
       — until 2026-10-02, when Cameron deleted it; see item 19. The durability
       argument was his to make and he made it differently.
-- [ ] Decide what "primary" means for the writing scripts (`inbox.py`,
-      `mendeley_push.py`, `mendeley_edit.py`). They may only ever target one
-      account; pointing them at the wrong one is the expensive mistake.
+- [x] Decide what "primary" means for the writing scripts. **Closed
+      2026-11-13 by deletion rather than by decision**: there is one account,
+      every writer is a `zotero_*` one, and the three that could have pointed
+      at a second are gone. If a second backend ever lands, this question
+      returns and the answer is not inherited from here.
 - [ ] **Decide whether the first Zotero refresh re-extracts everything.** It
       will by default, and that is not a small default. `state.json` is keyed by
       attachment *file* id; Zotero's ids are not Mendeley's, so every attachment
@@ -597,9 +604,10 @@ layout change under a frozen version; this is the same failure arriving through 
 script nobody counted as producing output. `zotero_attach.py` now prints
 `offprint <version>` in its header and takes `--version`.
 
-- [ ] The three Mendeley writing scripts have the same property and not the same
-      problem — they are interactive and single-record, and nobody keeps their
-      logs. Worth giving them `--version` anyway if a batch mode ever lands.
+- [x] The retired backend's three writers had the same property and not the
+      same problem — interactive, single-record, and nobody kept their logs.
+      Moot since 2026-11-13: they were deleted. Every surviving writer prints
+      `offprint <version>` and takes `--version`.
 
 ### The 132 stranded files are the library session's job, and it now has the tool
 
@@ -749,9 +757,11 @@ library session is holding, with no destination:
       Zotero was the right and only target — there was never a version of this
       where correcting Mendeley would have helped.
 
-- [ ] **A Zotero-backed `mendeley_mirror.py`** — item 1, now the live question
-      rather than the contingency it was written as. **Started 2026-10-02**,
-      with `zotero_source.py`: see below.
+- [x] **A Zotero-backed refresh** — item 1, which was written as a contingency
+      and became the live question. **Started 2026-10-02** with
+      `zotero_source.py`; **finished 2026-11-13**, when the retired refresh was
+      deleted and `mendeley_mirror.py` became `mirror.py`: the generators, with
+      no backend of their own.
 
 ## 13. The Zotero-backed refresh — started, and verifiable before it is wired up
 
@@ -4057,6 +4067,78 @@ is the kind of sentence this repo keeps being wrong about.
 A re-run is cheap with the Crossref cache warm. It is `library`'s to run and
 Cameron's to approve, and it is recorded here because until now it existed only
 in a conversation.
+
+### The retired backend's name is gone from the repo — 0.52.0
+
+Cameron, 2026-11-13: *"can we not just completely expunge all mention of
+mendeley everywhere in this repo?"* The answer was mostly yes, and the survey
+found that the obvious move would have broken the live filing path.
+
+**Two of the three Mendeley-named files were live code wearing a dead backend's
+name.** `zotero_inbox.py` imports `identify`, `existing_document`, `has_content`
+and `title_of` from `inbox.py`, and `from_doi` from `mendeley_push.py` — and
+`from_doi` is where `csl_year()` lives, the thing that stops an Advance Access
+paper being filed under its online year. A `git rm mendeley_*` would have taken
+the CHARMM36m guard with it. So the split was by what the code *does*:
+
+| was | became | what went |
+|---|---|---|
+| `mendeley_mirror.py` | `mirror.py` | the OAuth flow, the API client, the refresh `main()`/`run()`, `--retire`/`--backfill`/`--attachments` |
+| `inbox.py` | `identify.py` | the upload half; the identification half is what two live scripts import |
+| `mendeley_push.py` | `fromdoi.py` | its `main()`; `from_doi`/`from_arxiv`/`csl_year` are shared by both record creators |
+| `mendeley_edit.py` | — | deleted; `zotero_edit.py` replaced it on 2026-10-02 |
+| `zotero_migrate.py` | `zotero.py` | the one-time pairing (`match`, `Row`, the row builders); the read-only client and `parse_bib` stay |
+
+**The best thing to come out of it was removing a default, not a name.**
+`qualify`, `local_id` and `assign_citekeys` took `backend: str = BACKEND`, where
+`BACKEND = "mendeley"`. Every live caller passed it explicitly and this file
+documented at length that they must. It is now **required**, with no default at
+all: a parameter that must be named cannot be defaulted wrongly, which is a
+stronger guarantee than threading it carefully. `qualify_map` takes no backend
+and a test asserts that it refuses one, because a bare id belongs to whoever
+wrote it and that can never be a backend added later.
+
+**Deleting the old refresh would have silently dropped a guard.** It refused an
+empty document listing — *"No documents returned. If your library is not empty,
+try --reauth"* — and `zotero_source.py` never had one, so an empty listing would
+have rebuilt `library.bib` and `index.md` with nothing in them and reported a
+successful run. The guard moved rather than going with the code. The
+`AUTH_MARKERS` list was the same shape from the other side: most of its entries
+were an OAuth vocabulary nothing could emit any more, and **a marker for a
+message nothing produces is a classifier arm that can only ever be wrong about
+something else**, while making the list look well tested. Every marker now has
+an emitter, and a test reads two of them out of the source rather than retyping
+them.
+
+**Three mentions survive on purpose**, listed in CLAUDE.md: the `mendeley:`
+namespace (2,739 citekeys entries and 2,745 state entries in the live library,
+which `split_id` must keep parsing), `~/.cache/mendeley-mirror/pdf` (536 MB
+across 251 files, many behind paywalls — a hard switch would find an empty cache
+and re-download in silence rather than erroring), and the published docs URL
+plus the installed systemd unit name, neither of which is this repo's to rename.
+
+**`library` caught that one twice, and the second catch was the real one.**
+First the directory: the announcement called `~/.config/mendeley-mirror` dead,
+which it is, and they pointed out the *cache* is a different path holding real
+bytes. Then the guard. The fallback read `not new.is_dir()`, and
+`~/.cache/offprint/` already exists here — so the day anything created a `pdf/`
+beside `filed/`, including one `get_pdf.py --dest` pointed at it, the fallback
+would have flipped off permanently and every cached file would have gone
+invisible with nothing reporting it. **That is the failure the fallback exists
+to prevent, armed by a directory nobody meant as a decision.** It now asks
+whether the old directory has files in it, so the flip happens when and only
+when it is emptied.
+
+They also caught the number: 575 MB / 298 files is the whole cache tree, which
+includes `rejected/`, `removed/` and OCR logs. `pdf/` is 536 MB / 251 files, and
+the first number had been written into a code comment where it reads as fact —
+this file's own rule that a count says what it is a count OF, broken in the act
+of documenting a count.
+
+**What is NOT expunged is this file's history.** Entries above describe a
+migration whose subject was Mendeley; rewriting them would make the record false
+rather than clean. Four open items that named deleted scripts were closed. The
+word stays where it names something that actually happened.
 
 ## Deliberately not doing
 

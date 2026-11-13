@@ -9,10 +9,10 @@ Keeps a plain-folder copy of your reference library so that Claude — or LaTeX,
 or `grep`, or anything else — can read it without needing the reference manager
 itself.
 
-**The backend is Zotero.** It was Mendeley until 2026-10-02, and the Mendeley
-path is still here but is retired: `zotero_source.py --refresh` is the refresh
-now. The point of the split is that the mirror outlives whichever service it
-came from — `library.bib`, `text/`, `annotations/` and `pdf/` are a complete
+**The backend is Zotero**, and `zotero_source.py --refresh` is the refresh.
+A previous backend was retired on 2026-10-02 and its code was removed on
+2026-11-13. The point of the split is that the mirror outlives whichever service
+it came from — `library.bib`, `text/`, `annotations/` and `pdf/` are a complete
 corpus that needs no account to read.
 
 The tool and the library it writes are two separate directories. This repo is
@@ -23,8 +23,8 @@ offprint/                      ← this repo, clone it where you like
 │
 │   the refresh
 ├── zotero_source.py       read Zotero and rebuild the mirror (--refresh)
-├── mendeley_mirror.py     the Mendeley refresh, retired — and still the module
-│                          every other script imports its generators from
+├── mirror.py              the mirror itself: the generators, the extraction and
+│                          the id namespacing every other script imports
 │
 │   reading the library
 ├── get_pdf.py             pull one paper's real PDF when the text isn't enough
@@ -42,13 +42,14 @@ offprint/                      ← this repo, clone it where you like
 ├── zotero_inbox.py        file a PDF you downloaded onto the record it belongs to
 ├── zotero_delete.py       remove a record or a byte-less attachment
 ├── zotero_push.py         add one reference to Zotero, from a DOI or arXiv id
-├── inbox.py               file PDFs you saved into inbox/ (Mendeley, retired)
-├── mendeley_push.py       add one reference to Mendeley (retired)
-├── mendeley_edit.py       correct fields in Mendeley (retired)
+│
+│   shared halves of filing a paper
+├── identify.py            which paper is this PDF, and does the library have it
+├── fromdoi.py             build a record from a DOI or an arXiv id
+├── zotero.py              the read-only Zotero client and its credentials
 │
 │   one-offs and plumbing
-├── zotero_migrate.py      pair every Mendeley record with its Zotero item
-├── run_mirror.sh/.bat     launchers for the Mendeley refresh
+├── run_mirror.sh/.bat     launchers for the refresh
 ├── install_schedule.bat   register/remove the hourly background refresh
 ├── refresh_quiet.bat/.vbs what that scheduled task actually runs
 └── test_mirror.py         offline tests: pure functions plus a stubbed API
@@ -56,8 +57,10 @@ offprint/                      ← this repo, clone it where you like
 
 The mirror itself is everything the refresh writes. It defaults to
 `~/Sync/library` (`%USERPROFILE%\Sync\library` on Windows); `--out` sends it
-anywhere else. It was `~/Sync/mendeley` until 2026-10-02 and both names still
-resolve, because there is one clone and no pull step: a machine renamed later,
+anywhere else. It had a different name until 2026-10-02; both resolved for as
+long as any machine might still have the old one, and the fallback was removed
+on 2026-11-13 once none did. There is one clone and no pull step, which is why
+a rename gets an overlap at all: a machine renamed later,
 or not at all, keeps working. Every file in it is generated — edit in Zotero,
 not here.
 
@@ -73,7 +76,7 @@ Sync/library/                  ← the library, and only the library
 ├── CLAUDE.md              orientation for a Claude session opened on this folder
 ├── library.bib            every reference, stable citation keys
 ├── index.md               one row per reference (key, year, author, title, doi)
-├── folders.json           your Mendeley collections -> citation keys
+├── folders.json           your collections -> citation keys
 ├── text/                  Muller2020Yield.md — extracted full text, page-marked
 ├── annotations/           Muller2020Yield.md — your highlights and notes, by page
 ├── inbox/                 drop zone for PDFs you saved by hand

@@ -16,15 +16,19 @@ cache; then `<out>/pdf/`, if this machine holds an archive — served *in place*
 since that directory belongs to the mirror; then Zotero.
 
 On Cameron's library the middle one is empty: the archive was a transit buffer
-for the Mendeley → Zotero migration and was deleted on 2026-10-02 once every
+for the migration between backends and was deleted on 2026-10-02 once every
 attachment had been verified present in Zotero. So in practice a miss goes to
-Zotero. `mendeley_mirror.py --attachments keep --backfill` rebuilds an archive
-if one is ever wanted again.
+Zotero. The flags that rebuilt an archive wholesale went with the retired
+refresh on 2026-11-13, so if one is ever wanted again it is rebuilt a paper at
+a time, by `get_pdf.py` itself.
 
-Fetched PDFs are cached *outside* the mirror (`~/.cache/mendeley-mirror/pdf`, or
-`%LOCALAPPDATA%\mendeley-mirror\pdf` — that directory kept its old name
-deliberately, since moving a cache costs something and buys nothing), so
-grabbing one to look at a figure does not push it to every synced machine.
+Fetched PDFs are cached *outside* the mirror (`~/.cache/offprint/pdf`, or
+`%LOCALAPPDATA%\offprint\pdf`), so grabbing one to look at a figure does not
+push it to every synced machine. A cache directory named for the retired backend
+is still read while anything is in it: 536 MB across 251 files live under the
+old name, many of them behind paywalls that cannot simply be fetched again, and a
+hard switch would not error — it would find an empty cache and re-download in
+silence.
 Unknown keys, cache hits and archived papers are all handled before any network
 call, so a typo never reaches an account.
 

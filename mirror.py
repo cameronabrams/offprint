@@ -4,40 +4,36 @@
 # dependencies = ["requests>=2.31", "pymupdf>=1.24"]
 # ///
 """
-mendeley_mirror.py -- mirror a Mendeley library to a plain folder.
+mirror.py -- the mirror itself: what a library turns into on disk.
 
-Run it with uv and the dependency below is installed automatically into a
-cached, throwaway environment:  uv run --script mendeley_mirror.py
+Not a CLI. This is the module every other script here imports, and it holds
+everything that is true of the mirror whatever backend fills it: citation-key
+assignment, the id namespacing, BibTeX and index generation, text extraction
+with its page markers, annotation rendering, and the status files.
 
-Produces, in the output directory:
+`zotero_source.py --refresh` is the entry point that drives it.
+
+It produces, in the output directory:
 
     library.bib          BibTeX for the whole library, with stable citation keys
     index.md             one-line-per-reference index (fast to grep / skim)
-    folders.json         Mendeley collections -> citation keys
+    folders.json         collections -> citation keys
     text/<citekey>.md    full text extracted from the PDF, with page markers
-    annotations/<citekey>.md   your highlights and sticky notes, by page
+    annotations/<citekey>.md   highlights and sticky notes, by page
     extraction-report.md what came out empty, and why that is probably so
 
 By default each attachment is downloaded, its text extracted, and the PDF then
-discarded -- Mendeley remains the place to actually read papers. `--attachments
-keep` keeps the PDFs as well; `--attachments none` skips them entirely.
+discarded: **the extract is the durable artifact and all that survives**, which
+is why extraction is deterministic.
 
-Credentials and tokens live OUTSIDE the output folder, in
-%LOCALAPPDATA%\\mendeley-mirror (Windows) or ~/.config/mendeley-mirror (POSIX),
-so a synced output folder never carries your secrets.
-
-First run walks you through OAuth in a browser.  Later runs are silent.
-
-Usage:
-    python mendeley_mirror.py                  # full mirror
-    python mendeley_mirror.py --no-pdfs        # metadata + annotations only
-    python mendeley_mirror.py --out D:/refs    # override output directory
-    python mendeley_mirror.py --reauth         # forget tokens, log in again
+It holds no credentials and opens no connection of its own. `harvest_attachments`
+takes a `fetch(file_id) -> bytes` and that is the entire backend interface --
+the one place in this file that knows which service is being read.
 """
 
 from __future__ import annotations
 
-__version__ = "0.51.1"
+__version__ = "0.52.0"
 """The tool's version, and the only place it is written down.
 
 It exists so a mirror can say what produced it. Extraction behavior has changed
@@ -51,8 +47,6 @@ Bump it in the same commit as the behavior it describes; nothing generates it.
 """
 
 
-import argparse
-import base64
 import json
 from collections import Counter
 import os
@@ -62,10 +56,7 @@ import sys
 import time
 import html
 import unicodedata
-import urllib.parse
-import webbrowser
 from datetime import datetime, timezone
-from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 try:
@@ -73,46 +64,24 @@ try:
 except ImportError:  # pragma: no cover
     sys.exit(
         "This script needs 'requests'. Either run it through uv, which installs\n"
-        "it for you --   uv run --script mendeley_mirror.py   -- or install it\n"
+        "it for you --   uv run --script zotero_source.py   -- or install it\n"
         "into the interpreter you are using:   pip install requests"
     )
 
-API = "https://api.mendeley.com"
-AUTHORIZE_URL = f"{API}/oauth/authorize"
-TOKEN_URL = f"{API}/oauth/token"
-DEFAULT_REDIRECT = "http://localhost:8888/callback"
-
-# Documented page-size ceilings differ per collection; annotations reject 500.
-PAGE_LIMITS = {"documents": 500, "files": 500, "folders": 500, "annotations": 200}
-
-ACCEPT = {
-    "documents": "application/vnd.mendeley-document.1+json",
-    "files": "application/vnd.mendeley-file.1+json",
-    "annotations": "application/vnd.mendeley-annotation.1+json",
-    "folders": "application/vnd.mendeley-folder.1+json",
-}
 
 def _default_out() -> Path:
-    """Where the library lives, preferring its new name and accepting the old.
+    """Where the library lives.
 
-    Renamed `~/Sync/mendeley` -> `~/Sync/library` on 2026-10-02, because the
-    directory had outlived the service it was named after: nothing in it is
-    Mendeley's any more and the backend is Zotero.
-
-    **Both are accepted, and that is not politeness.** There is one clone and no
-    pull step, so a hard switch would break every tool in the window between
-    saving this file and the `mv` — and Cameron's two Windows laptops share the
-    folder over Syncthing and will be renamed at some other time, or not at all.
-    A machine mid-migration keeps working either way.
-
-    Same pattern as `zotero_config_dir()`, and the same end: when nothing is
-    left on the old name this becomes a deletion rather than a migration.
+    The directory was renamed to `~/Sync/library` on 2026-10-02, and the old
+    name was accepted alongside it for as long as any machine might still have
+    it. It lives inside the synced folder, so every machine agreed within one
+    sync; the fallback was removed on 2026-11-13 once none was left. That is
+    the end the dual-name period was for -- a deletion, not a permanent
+    accommodation.
     """
-    new, old = Path.home() / "Sync" / "library", Path.home() / "Sync" / "mendeley"
+    new = Path.home() / "Sync" / "library"
     if new.is_dir():
         return new
-    if old.is_dir():
-        return old
     return new          # a fresh install gets the new name
 
 
@@ -121,7 +90,6 @@ DEFAULT_OUT = _default_out()
 # Set by --quiet, for scheduled runs: no progress spam, no prompts that would
 # block forever with nobody at the keyboard.
 QUIET = False
-NONINTERACTIVE = False
 LOG: list = []
 
 
@@ -138,26 +106,12 @@ def progress(msg: str) -> None:
         print(msg, end="\r", flush=True)
 
 
-def require_interactive(what: str) -> None:
-    if NONINTERACTIVE:
-        sys.exit(
-            f"{what} needs a person at the keyboard, and this is a scheduled run.\n"
-            "Run mendeley_mirror.py by hand once to sort it out."
-        )
 
 
 # --------------------------------------------------------------------------
 # credential storage
 # --------------------------------------------------------------------------
 
-def config_dir() -> Path:
-    if os.name == "nt":
-        base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
-    else:
-        base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
-    d = base / "mendeley-mirror"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
 
 
 def mirror_state_dir(out: Path) -> Path:
@@ -166,16 +120,15 @@ def mirror_state_dir(out: Path) -> Path:
     Citation keys and per-file extraction state live beside the mirrored files
     so that a synced folder carries them between machines: the Linux box then
     agrees with the Windows box about what `Muller2020Yield` means, and does not
-    re-download 2500 PDFs to rebuild text it already has. Credentials stay
-    machine-local, in config_dir().
+    re-download 2500 PDFs to rebuild text it already has.
+
+    Until 2026-11-13 this also copied both files out of the old per-machine
+    credential directory, where they lived before 2026-09-24. That migration is
+    done on every machine that syncs, because `.mirror/` travels inside the
+    synced folder itself -- so a machine that has the library at all has them.
     """
     d = out / ".mirror"
     d.mkdir(parents=True, exist_ok=True)
-    for name in ("citekeys.json", "state.json"):
-        old, new = config_dir() / name, d / name
-        if old.exists() and not new.exists():  # migrate from the old location
-            new.write_text(old.read_text(encoding="utf-8"), encoding="utf-8")
-            note(f"  moved {name} into the mirror so other machines share it")
     return d
 
 
@@ -198,243 +151,17 @@ def save_json(path: Path, obj):
             pass
 
 
-def get_app_config(force_prompt: bool = False) -> dict:
-    path = config_dir() / "config.json"
-    cfg = load_json(path, {})
-    if force_prompt or not cfg.get("client_id") or not cfg.get("client_secret"):
-        require_interactive("Entering app credentials")
-        print("\nApp credentials.  Register at https://dev.mendeley.com/myapps.html")
-        print(f"The app's Redirection URL must be exactly:  {DEFAULT_REDIRECT}\n")
-        print("The application ID is the short NUMBER shown next to the app in the")
-        print("list (e.g. 21534) -- not the app name and not the secret.\n")
-        cfg["client_id"] = input("Application ID (number): ").strip()
-        cfg["client_secret"] = input("Application secret: ").strip()
-        redirect = input(f"Redirection URL [{DEFAULT_REDIRECT}]: ").strip()
-        cfg["redirect_uri"] = redirect or DEFAULT_REDIRECT
-        save_json(path, cfg)
-        print(f"\nSaved to {path}\n")
-    cfg.setdefault("redirect_uri", DEFAULT_REDIRECT)
-
-    if not cfg["client_id"].isdigit():
-        print(f"\n  ! The application ID on file is {cfg['client_id']!r}, which is not a")
-        print("    number. Mendeley application IDs are numeric; this is the single")
-        print("    most common cause of 'Client authentication failed'.")
-        print("    Re-run with --reconfigure to correct it.\n")
-    return cfg
 
 
-# --------------------------------------------------------------------------
-# OAuth 2.0 authorization-code flow over a loopback redirect
-# --------------------------------------------------------------------------
-
-class _CallbackHandler(BaseHTTPRequestHandler):
-    code = None
-    error = None
-    state = None
-
-    def do_GET(self):  # noqa: N802
-        query = urllib.parse.urlparse(self.path).query
-        params = urllib.parse.parse_qs(query)
-        _CallbackHandler.code = (params.get("code") or [None])[0]
-        _CallbackHandler.error = (params.get("error") or [None])[0]
-        _CallbackHandler.state = (params.get("state") or [None])[0]
-        body = (
-            b"<html><body style='font-family:sans-serif;padding:3em'>"
-            b"<h2>Mendeley mirror</h2><p>Authorized. You can close this tab and "
-            b"return to the terminal.</p></body></html>"
-        )
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, *args):  # silence the default stderr logging
-        pass
 
 
-def _basic_auth(cfg: dict) -> str:
-    raw = f"{cfg['client_id']}:{cfg['client_secret']}".encode("utf-8")
-    return "Basic " + base64.b64encode(raw).decode("ascii")
 
 
-AUTH_HELP = """
-Mendeley showed an error instead of the authorization prompt. Its wording is
-unhelpfully generic; in practice it is nearly always one of these:
-
-  1. The application ID is not the numeric ID from the app list.
-  2. The Redirection URL registered at dev.mendeley.com/myapps.html is not
-     character-for-character equal to the one above -- a trailing slash, https
-     instead of http, or a different port is enough to break it.
-  3. The app was only half-registered: no secret was ever generated, or the
-     form was not submitted.
-
-Fix the registration, then re-run with  --reconfigure  to re-enter the values.
-"""
 
 
-def interactive_authorize(cfg: dict) -> dict:
-    require_interactive("Browser authorization")
-    parsed = urllib.parse.urlparse(cfg["redirect_uri"])
-    port = parsed.port or 80
-    state = base64.urlsafe_b64encode(os.urandom(9)).decode("ascii")
-    params = {
-        "client_id": cfg["client_id"],
-        "redirect_uri": cfg["redirect_uri"],
-        "response_type": "code",
-        "scope": "all",
-        "state": state,
-    }
-    url = AUTHORIZE_URL + "?" + urllib.parse.urlencode(params)
-    print("Authorizing with these values -- they must match your registered app:")
-    print(f"  application ID : {cfg['client_id']}")
-    print(f"  redirect URL   : {cfg['redirect_uri']}")
-    print(f"  secret         : {'set, ' + str(len(cfg['client_secret'])) + ' chars' if cfg.get('client_secret') else 'MISSING'}")
-    print(f"\nOpening your browser. If it does not open, paste this in:\n{url}\n")
-    webbrowser.open(url)
-
-    server = HTTPServer(("localhost", port), _CallbackHandler)
-    server.timeout = 20
-    deadline = time.time() + 300
-    while _CallbackHandler.code is None and _CallbackHandler.error is None:
-        if time.time() > deadline:
-            server.server_close()
-            print(AUTH_HELP)
-            sys.exit("Timed out waiting for the browser redirect.")
-        server.handle_request()
-    server.server_close()
-
-    if _CallbackHandler.error:
-        print(AUTH_HELP)
-        sys.exit(f"Authorization failed: {_CallbackHandler.error}")
-    if _CallbackHandler.state != state:
-        sys.exit("State mismatch on the redirect; aborting rather than trusting it.")
-
-    try:
-        resp = requests.post(
-            TOKEN_URL,
-            data={
-                "grant_type": "authorization_code",
-                "code": _CallbackHandler.code,
-                "redirect_uri": cfg["redirect_uri"],
-                # sent in the body as well as the header: harmless, and it rescues
-                # setups where the Authorization header is stripped in transit
-                "client_id": cfg["client_id"],
-                "client_secret": cfg["client_secret"],
-            },
-            headers={
-                "Authorization": _basic_auth(cfg),
-                "Content-Type": "application/x-www-form-urlencoded",
-            },
-            timeout=30,
-        )
-    except requests.RequestException as exc:
-        sys.exit(f"Could not reach {TOKEN_URL}: {exc}")
-    if resp.status_code != 200:
-        print(f"\nToken exchange failed ({resp.status_code}): {resp.text[:500]}")
-        print(AUTH_HELP)
-        sys.exit(1)
-    return _store_tokens(resp.json())
 
 
-def _store_tokens(tok: dict) -> dict:
-    tok["expires_at"] = time.time() + float(tok.get("expires_in", 3600)) - 60
-    save_json(config_dir() / "tokens.json", tok)
-    return tok
 
-
-def refresh_tokens(cfg: dict, tok: dict) -> dict:
-    resp = requests.post(
-        TOKEN_URL,
-        data={
-            "grant_type": "refresh_token",
-            "refresh_token": tok["refresh_token"],
-            "redirect_uri": cfg["redirect_uri"],
-        },
-        headers={"Authorization": _basic_auth(cfg)},
-        timeout=30,
-    )
-    if resp.status_code != 200:
-        note("Refresh token rejected; re-authorizing in the browser.")
-        return interactive_authorize(cfg)  # exits with guidance on a scheduled run
-    new = resp.json()
-    new.setdefault("refresh_token", tok["refresh_token"])
-    return _store_tokens(new)
-
-
-class Mendeley:
-    """Thin authenticated client with pagination and 401/429 handling."""
-
-    def __init__(self, cfg: dict, tokens: dict):
-        self.cfg = cfg
-        self.tokens = tokens
-        self.session = requests.Session()
-
-    def _auth_header(self) -> dict:
-        if time.time() >= self.tokens.get("expires_at", 0):
-            self.tokens = refresh_tokens(self.cfg, self.tokens)
-        return {"Authorization": f"Bearer {self.tokens['access_token']}"}
-
-    def get(self, url: str, accept: str | None = None, params=None, **kw):
-        for attempt in range(5):
-            headers = self._auth_header()
-            if accept:
-                headers["Accept"] = accept
-            resp = self.session.get(url, headers=headers, params=params, timeout=60, **kw)
-            if resp.status_code == 401 and attempt == 0:
-                self.tokens = refresh_tokens(self.cfg, self.tokens)
-                continue
-            if resp.status_code == 429:
-                wait = int(resp.headers.get("Retry-After", 5)) * (attempt + 1)
-                note(f"  rate limited, waiting {wait}s")
-                time.sleep(wait)
-                continue
-            if resp.status_code >= 500:
-                time.sleep(2 ** attempt)
-                continue
-            return resp
-        resp.raise_for_status()
-        return resp
-
-    def paged(self, path: str, kind: str, params=None, quiet: bool = False) -> list:
-        """Follow RFC 5988 Link: rel="next" until the collection is exhausted."""
-        out, url = [], API + path
-        params = dict(params or {})
-        params.setdefault("limit", PAGE_LIMITS.get(kind, 200))
-        while url:
-            resp = self.get(url, accept=ACCEPT.get(kind), params=params)
-            if resp.status_code == 400 and params and params.get("limit", 0) > 50:
-                # some collections cap page size below the documented maximum;
-                # back off rather than losing the whole run
-                params["limit"] //= 4
-                note(f"  {kind}: server rejected that page size, retrying at "
-                     f"limit={params['limit']}")
-                continue
-            if not resp.ok:
-                raise RuntimeError(
-                    f"{kind}: {resp.status_code} from {resp.url}\n  {resp.text[:300]}"
-                )
-            batch = resp.json()
-            if not isinstance(batch, list):
-                batch = [batch]
-            out.extend(batch)
-            url = _next_link(resp.headers.get("Link", ""))
-            params = None  # the next-link already carries the query string
-            if not quiet:
-                progress(f"  {kind}: {len(out)}")
-        if not quiet:
-            note(f"  {kind}: {len(out)}      ")
-        return out
-
-
-def _next_link(link_header: str) -> str | None:
-    for part in link_header.split(","):
-        section = part.split(";")
-        if len(section) < 2:
-            continue
-        if 'rel="next"' in section[1].replace(" ", "").replace("'", '"'):
-            return section[0].strip().strip("<>")
-    return None
 
 
 # --------------------------------------------------------------------------
@@ -491,7 +218,8 @@ def make_citekey(doc: dict, taken: set) -> str:
 # identifier namespaces
 #
 # Every id this tool stores is qualified with the backend it came from, so that
-# `mendeley:abc` and `zotero:abc` cannot collide and nothing has to guess which
+# `zotero:abc` and a second service's `abc` cannot collide and nothing has to
+# guess which
 # service a stored id belongs to. It costs nothing while there is one backend
 # and is impossible to retrofit safely once there are two: a citation key is
 # assigned once per id and never changes, so an unqualified map that starts
@@ -499,30 +227,46 @@ def make_citekey(doc: dict, taken: set) -> str:
 # cited in manuscripts and are file names under findings/.
 # --------------------------------------------------------------------------
 
-BACKEND = "mendeley"                      # the only source that exists today
+# The namespaces that appear in stored maps. "mendeley" is here because 2,739
+# citation keys and 2,745 state entries on disk carry it, not because anything
+# can still talk to that service: it is a fact about files, and removing it
+# would make every one of those entries unreadable.
 KNOWN_BACKENDS = ("mendeley", "zotero")
+
+# What a BARE id means. Ids were unqualified until 2026-09-24, and every one
+# written before that date came from the one backend that existed then. This is
+# the only place that assumption lives.
+LEGACY_BACKEND = "mendeley"
 
 
 def is_qualified(ident: str) -> bool:
-    """True for 'mendeley:abc'. False for a bare id, and for 'http://x' -- a
+    """True for 'zotero:abc'. False for a bare id, and for 'http://x' -- a
     colon alone does not make a namespace, only a known backend before one does."""
     head, sep, _rest = ident.partition(":")
     return bool(sep) and head in KNOWN_BACKENDS
 
 
-def qualify(raw_id: str, backend: str = BACKEND) -> str:
-    """'abc' -> 'mendeley:abc'. Idempotent, so it is safe to apply twice."""
+def qualify(raw_id: str, backend: str) -> str:
+    """'abc' -> 'zotero:abc'. Idempotent, so it is safe to apply twice.
+
+    **`backend` is required and has no default.** It used to default to the
+    module constant, and the whole hazard of this file was a run that let it:
+    namespacing one service's ids under another's name misses every existing
+    entry and mints a fresh citation key over the top of one already cited in a
+    manuscript, silently. A parameter that must be named cannot be defaulted
+    wrongly.
+    """
     return raw_id if is_qualified(raw_id) else f"{backend}:{raw_id}"
 
 
 def split_id(ident: str) -> tuple[str, str]:
-    """('mendeley', 'abc'). A bare id is read as this backend's, which is what
+    """('zotero', 'abc'). A bare id is read as `LEGACY_BACKEND`'s, which is what
     makes every map written before namespacing still readable."""
     head, sep, rest = ident.partition(":")
-    return (head, rest) if sep and head in KNOWN_BACKENDS else (BACKEND, ident)
+    return (head, rest) if sep and head in KNOWN_BACKENDS else (LEGACY_BACKEND, ident)
 
 
-def local_id(ident: str, backend: str = BACKEND) -> str | None:
+def local_id(ident: str, backend: str) -> str | None:
     """The raw id if it belongs to `backend`, else None.
 
     The None is the point. A script that talks to one service must refuse a key
@@ -533,8 +277,13 @@ def local_id(ident: str, backend: str = BACKEND) -> str | None:
     return raw if source == backend else None
 
 
-def qualify_map(d: dict, backend: str = BACKEND) -> tuple[dict, int]:
+def qualify_map(d: dict) -> tuple[dict, int]:
     """Namespace the keys of a stored map, returning (map, how many changed).
+
+    **It takes no backend, and that is deliberate**: it migrates *bare* ids, and
+    a bare id means `LEGACY_BACKEND`'s by definition, whatever run is reading
+    the file. Passing a backend here would let a later one claim ids it never
+    wrote. A test covers this, because it looks exactly like an omission.
 
     Order is preserved so a migrated file diffs against its predecessor line for
     line, and the migration is idempotent: running it on an already-qualified
@@ -542,33 +291,29 @@ def qualify_map(d: dict, backend: str = BACKEND) -> tuple[dict, int]:
     """
     out, moved = {}, 0
     for k, v in d.items():
-        q = qualify(k, backend)
+        q = qualify(k, LEGACY_BACKEND)
         if q != k:
             moved += 1
         out[q] = v
     return out, moved
 
 
-def assign_citekeys(docs: list, keymap_path: Path,
-                    backend: str = BACKEND) -> dict:
+def assign_citekeys(docs: list, keymap_path: Path, backend: str) -> dict:
     """Keys, once assigned to a document id, never change between runs.
 
-    `backend` is threaded rather than taken from the module constant, because
-    the constant is `"mendeley"` and a Zotero run that used it would namespace
-    every Zotero id as a Mendeley one -- miss every existing entry, and assign
-    2,739 brand-new keys over the top of keys already cited in manuscripts.
-    That is the failure the repo's CLAUDE.md names as the one a second backend
-    will be tempted to cause.
+    `backend` is named by the caller and cannot be defaulted. A run that
+    namespaced its ids under the wrong name would miss every existing entry and
+    assign thousands of brand-new keys over the top of keys already cited in
+    manuscripts and used as file names under `findings/` -- silently, and
+    indistinguishably from a first run.
 
-    `qualify_map` below is NOT given the backend, and that is deliberate: it
-    migrates *bare* ids, and a bare id means Mendeley's by definition, whatever
-    run is reading the file.
+    `qualify_map` below is NOT given the backend. See its docstring.
     """
     keymap, migrated = qualify_map(load_json(keymap_path, {}))
     if migrated:
         # Key text is untouched -- only the id it hangs on changes -- so every
         # citation already in a manuscript still resolves to the same paper.
-        note(f"  namespaced {migrated} citation-key ids as {BACKEND}:<id>")
+        note(f"  namespaced {migrated} citation-key ids as {LEGACY_BACKEND}:<id>")
     taken = set(keymap.values())
     # Deterministic order for first assignment, so a fresh run is reproducible.
     for doc in sorted(docs, key=lambda d: (str(d.get("created", "")), d["id"])):
@@ -661,7 +406,7 @@ def format_pages(s: str) -> str:
 def html_decode(s: str) -> str:
     """Undo HTML entities before anything else looks at the string.
 
-    Crossref and Mendeley hand back journal names, titles and URLs with HTML
+    Crossref and the backend hand back journal names, titles and URLs with HTML
     entities in them -- "Molecular Systems Design &amp; Engineering" is a real
     example. Escaping that for LaTeX without decoding it first turns the "&"
     into "\\&" and leaves the "amp;" sitting there, so the bibliography renders
@@ -766,7 +511,7 @@ def bib_entry(doc: dict, key: str, include_abstract: bool = True) -> str:
     add("pages", format_pages(doc.get("pages") or "") or None)
     add("publisher", tex_escape(doc.get("publisher")) if doc.get("publisher") else None)
     if entry_type == "phdthesis":
-        # Mendeley has ONE thesis type and does not say which degree. TYPE_MAP
+        # There is ONE thesis type and it does not say which degree. TYPE_MAP
         # renders it @phdthesis, and a style then prints "PhD thesis" -- a claim
         # the source never made. Deserno1999Efficient is chapter 3 of someone
         # else's dissertation and carried it. `type` overrides that label in the
@@ -800,7 +545,7 @@ def bib_entry(doc: dict, key: str, include_abstract: bool = True) -> str:
     if source and not source_placed:
         notes.append(tex_escape(source))
     if not doc.get("title"):
-        notes.append(f"Untitled Mendeley record (document id {doc.get('id', '?')})")
+        notes.append(f"Untitled record (document id {doc.get('id', '?')})")
     if notes:
         add("note", ". ".join(notes))
 
@@ -813,11 +558,11 @@ def bib_entry(doc: dict, key: str, include_abstract: bool = True) -> str:
 
 
 def write_bibtex(docs: list, keymap: dict, out: Path, include_abstract: bool,
-                 backend: str = BACKEND) -> None:
+                 backend: str) -> None:
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     chunks = [
-        f"% Mendeley library mirror -- generated {stamp}",
-        f"% {len(docs)} references. Do not edit by hand; edit in Mendeley and re-run.",
+        f"% Library mirror -- generated {stamp}",
+        f"% {len(docs)} references. Do not edit by hand; edit in the library and re-run.",
         "",
     ]
     for doc in sorted(docs, key=lambda d: keymap[qualify(d["id"], backend)].lower()):
@@ -832,7 +577,7 @@ def write_bibtex(docs: list, keymap: dict, out: Path, include_abstract: bool,
 # --------------------------------------------------------------------------
 
 def write_index(docs: list, keymap: dict, files_by_doc: dict, ann_by_doc: dict,
-                out: Path, backend: str = BACKEND) -> None:
+                out: Path, backend: str) -> None:
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     lines = [
         "# Library index",
@@ -850,7 +595,7 @@ def write_index(docs: list, keymap: dict, files_by_doc: dict, ann_by_doc: dict,
         if (out / "text" / f"{key}.md").exists():
             has_text = "yes"
         elif files_by_doc.get(doc["id"]):
-            has_text = "no"  # Mendeley has a file, but no text came out of it
+            has_text = "no"  # there is a file, but no text came out of it
         else:
             has_text = ""
         lines.append(
@@ -862,7 +607,7 @@ def write_index(docs: list, keymap: dict, files_by_doc: dict, ann_by_doc: dict,
 
 
 def write_folders(folders: list, folder_docs: dict, keymap: dict, out: Path,
-                  backend: str = BACKEND) -> None:
+                  backend: str) -> None:
     by_id = {f["id"]: f for f in folders}
 
     def full_name(f):
@@ -920,7 +665,7 @@ def annotation_markdown(doc: dict, key: str, annotations: list) -> str:
         text = (a.get("text") or "").strip()
         kind = a.get("type", "annotation")
         if kind == "highlight" and not text:
-            # Mendeley returns coordinates for highlights but not always the
+            # The backend returns coordinates for highlights but not always the
             # highlighted text; the location is still worth recording.
             body.append(f"- *(highlight, p. {page})*")
         elif kind == "highlight":
@@ -948,8 +693,8 @@ def load_removed(out: Path) -> dict:
     Five files removed on 2026-10-01 are the case this was written for.
 
     Keyed by STEM (`<citekey>` or `<citekey>-N`), not by attachment id: the
-    citation key is the one handle that survives a change of backend, and
-    Zotero's ids are not Mendeley's.
+    citation key is the one handle that survives a change of backend, and no
+    two backends share an id.
 
     Format is `stem<TAB>date<TAB>reason`, `#` comments and blank lines ignored.
     Only the first field is required, and any non-blank line yields a stem, so
@@ -1019,7 +764,7 @@ PDF_MAGIC = b"%PDF-"
 def looks_like_pdf(data: bytes) -> bool:
     """Is this a PDF by its bytes? The backend's MIME type does not decide.
 
-    `mime_type` is the backend's opinion and it is sometimes wrong. Mendeley
+    `mime_type` is the backend's opinion and it is sometimes wrong. One backend
     reported a non-PDF type for `Vanommeslaeghe2009Charmm` -- a complete
     20-page CGenFF paper with an intact text layer -- and the attachment was
     skipped, cached as skipped, and never mentioned in extraction-report.md.
@@ -1392,7 +1137,7 @@ def ocr_pdf_text(data: bytes, dpi: int = 300) -> tuple[str, int]:
     except ImportError as exc:  # a clear message beats a traceback in a refresh
         raise RuntimeError(
             "OCR needs rapidocr-onnxruntime; run with "
-            "'uv run --with rapidocr-onnxruntime --script mendeley_mirror.py --ocr'"
+            "'uv run --with rapidocr-onnxruntime --script mirror.py --ocr'"
         ) from exc
 
     reader = RapidOCR()
@@ -1491,7 +1236,7 @@ def text_document(doc: dict, key: str, body: str, pages: int, chars: int,
     front += [
         f"*Cite as `{key}`; page markers below are the PDF's own "
         "pagination. Equations and table structure do not survive extraction — "
-        "check the PDF in Mendeley before quoting either.*",
+        "check the PDF itself before quoting either.*",
         "",
     ]
     return "\n".join(front) + body + "\n"
@@ -1560,32 +1305,19 @@ def write_extraction_report(rows: list, out: Path, extracted: int) -> None:
     (out / "extraction-report.md").write_text("\n".join(lines), encoding="utf-8")
 
 
-def mendeley_fetch(client: Mendeley):
-    """The default way to get an attachment's bytes: Mendeley's file endpoint.
-
-    Factored out so the harvest can be pointed at another source. This is the
-    "locate bytes" half of the backend interface ROADMAP item 1 describes, and
-    it is the only part of `harvest_attachments` that knows which service it is
-    talking to.
-    """
-    def fetch(file_id: str) -> bytes:
-        # The download endpoint answers 303 with a signed URL; the
-        # Authorization header must NOT be forwarded to that host.
-        resp = client.get(f"{API}/files/{file_id}", accept="*/*",
-                          allow_redirects=False)
-        if resp.status_code in (301, 302, 303, 307):
-            resp = requests.get(resp.headers["Location"], timeout=180)
-        resp.raise_for_status()
-        return resp.content
-    return fetch
 
 
-def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
+def harvest_attachments(fetch, files_by_doc: dict, keymap: dict,
                         docs_by_id: dict, out: Path, state: dict, mode: str,
-                        state_path: Path | None = None, ocr: bool = False,
-                        backfill: bool = False, fetch=None,
-                        backend: str = BACKEND, reassess: bool = False) -> tuple:
+                        backend: str, state_path: Path | None = None,
+                        ocr: bool = False, backfill: bool = False,
+                        reassess: bool = False) -> tuple:
     """Download each attachment, extract its text, and (by default) discard it.
+
+    `fetch(file_id) -> bytes` is the whole backend interface: it is the only
+    part of this function that knows which service it is talking to, and it is
+    required rather than defaulted, so a caller cannot reach a backend it did
+    not name.
 
     `backfill` is for getting the PDFs themselves onto disk, which a plain
     `--attachments keep` does NOT do on a library that is already mirrored. The
@@ -1610,8 +1342,7 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
     if migrated:
         # Not cosmetic: an unqualified file id from a second backend would collide
         # here and skip an extraction as "already done".
-        note(f"  namespaced {migrated} attachment ids as {BACKEND}:<id>")
-    fetch = fetch or mendeley_fetch(client)
+        note(f"  namespaced {migrated} attachment ids as {LEGACY_BACKEND}:<id>")
     kept = stale_rules = 0
     qual = lambda raw: qualify(raw, backend)
     fetched = skipped = failed = reused = unresolved = archived = 0
@@ -1643,7 +1374,7 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                 # What counts as DONE is the stored status, not the presence of
                 # a text file. Those came apart on 2026-10-02: 2,732 attachments
                 # were recorded `failed` (pymupdf missing), and because
-                # `text/<key>.md` still existed from the Mendeley era and the
+                # `text/<key>.md` still existed from the previous backend and the
                 # filehash matched, the next run read every one as "unchanged"
                 # and skipped it. A failed extraction became indistinguishable
                 # from a finished one, and the re-extraction silently did
@@ -1870,7 +1601,8 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                                            "detail": f"{chars} characters across {pages} pages"})
                         document = text_document(doc, stem, body, pages, chars,
                                                  ocr=from_ocr,
-                                                 attachment=local_id(qual(f["id"]))
+                                                 attachment=local_id(qual(f["id"]),
+                                                                     backend)
                                                  or f.get("id", ""))
                         # Belt and braces. clean_page_text has already stripped
                         # these per page; if any reach here, something built text
@@ -1903,7 +1635,7 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                         # download, which is worth clearing.
                         #
                         # The comment that used to sit here read "the text is the
-                        # artifact; Mendeley keeps the PDF". True when written.
+                        # artifact; the backend keeps the PDF". True when written.
                         # The account it says that about expires, and `<out>/pdf/`
                         # is the answer to that -- so the line quietly ate one
                         # archived PDF for every attachment that changed.
@@ -2080,21 +1812,23 @@ def write_log(mirror_dir: Path) -> None:
 # A rejected login and a dropped connection both end the run, and until now both
 # printed the same thing. They mean opposite things: one clears by itself, the
 # other never does and is the signal to migrate.
+# Phrases that mean the credentials, not the connection. Several of these were
+# an OAuth vocabulary until 2026-11-13 -- "refresh token rejected", "state
+# mismatch", "timed out waiting for the browser redirect" -- and they went with
+# the flow that produced them. A marker for a message nothing can emit is not
+# harmless: it is a classifier arm that can only ever be wrong about something
+# else, and it makes the list look better tested than it is.
 AUTH_MARKERS = (
-    "refresh token rejected",
-    "token exchange failed",
-    "authorization failed",
-    "state mismatch",
-    "needs a person at the keyboard",
-    "timed out waiting for the browser redirect",
-    "invalid_grant",
-    "invalid_client",
+    "refused the key",
+    "no zotero credentials",
+    "needs both api_key and user_id",
+    "invalid key",
+    "403",
     "401",
-    # An empty library from an account that is not empty means the credentials are
-    # no longer seeing the account. The token still works; what it reaches is gone.
-    # This is the shape a downgraded or lapsed account takes, so it routes to the
-    # same advice as a rejected login rather than to "unknown".
-    "try --reauth",
+    # An empty library from an account that is not empty means the credentials
+    # are no longer seeing the account. The key still works; what it reaches is
+    # gone. That is the shape a lapsed or downgraded account takes, so it routes
+    # to the same advice as a rejected key rather than to "unknown".
     "no documents returned",
 )
 NETWORK_MARKERS = (
@@ -2111,9 +1845,9 @@ NETWORK_MARKERS = (
 
 
 def classify_failure(detail: str) -> str:
-    """'auth', 'network', 'interrupted' or 'other', from the message main() records.
+    """'auth', 'network', 'interrupted' or 'other', from the message a run records.
 
-    Order matters. "Could not reach https://api.mendeley.com/oauth/token" is a
+    Order matters. "Could not reach https://api.zotero.org/keys/..." is a
     NETWORK failure that happens to name the token endpoint, and reading it as an
     authentication problem would send a person to re-authorize over a connection
     that is not there. So the network markers are tested first, and they are
@@ -2225,12 +1959,13 @@ def failure_advice(kind: str, streak: int) -> list[str]:
     """What the reader should do about it, which is different for each kind."""
     if kind == "auth":
         return [
-            "**This is an authentication failure, not a network problem.** The saved",
-            "tokens were not accepted. Nothing here will update until a person runs",
-            "`mendeley_mirror.py` by hand and logs in again.",
+            "**This is an authentication failure, not a network problem.** The stored",
+            "API key was not accepted. Nothing here will update until a person puts a",
+            "working key in `~/.config/offprint/zotero.json` and runs",
+            "`zotero_source.py --refresh` by hand.",
             "",
-            "If logging in by hand also fails, API access itself is gone. That is the",
-            "signal to migrate, not something to wait out — see ROADMAP item 1.",
+            "If a freshly issued key also fails, API access itself is gone. That is the",
+            "signal to move the library, not something to wait out.",
         ]
     if kind == "network":
         out = ["This looks like a network failure rather than a rejected login, so it",
@@ -2304,225 +2039,7 @@ def write_status(out: Path, ok: bool, started: datetime, error: str = "",
 # main
 # --------------------------------------------------------------------------
 
-def main() -> int:
-    global QUIET, NONINTERACTIVE
-    ap = argparse.ArgumentParser(description="Mirror a Mendeley library to a folder.")
-    ap.add_argument("--out", type=Path, default=DEFAULT_OUT, help=f"output directory (default: {DEFAULT_OUT})")
-    ap.add_argument("--attachments", choices=["text", "keep", "none"], default="text",
-                    help="text: extract text and discard the PDF (default); "
-                         "keep: also keep the PDF; none: skip attachments entirely")
-    ap.add_argument("--ocr", action="store_true",
-                    help="read scanned attachments with OCR when they have no text "
-                         "layer; the extract is marked ocr: true, because OCR is a "
-                         "machine's guess at the characters and not the paper's words")
-    ap.add_argument("--no-pdfs", action="store_true",
-                    help=argparse.SUPPRESS)  # old spelling of --attachments none
-    ap.add_argument("--retire", metavar="REASON", nargs="?", const="the backend was retired",
-                    help="declare this mirror frozen: rewrite mirror-status.md as a "
-                         "standing staleness notice and refuse further refreshes. "
-                         "Undone by deleting .mirror/retired.json")
-    ap.add_argument("--successor", metavar="WHERE",
-                    help="with --retire, where the live library now is")
-    ap.add_argument("--backfill", action="store_true",
-                    help="with --attachments keep: also download attachments whose "
-                         "text is already extracted, so every file lands in "
-                         "<out>/pdf/. A plain keep run archives nothing on a "
-                         "library that is already mirrored. Resumable; re-run it "
-                         "and it fetches only what is still missing")
-    ap.add_argument("--no-annotations", action="store_true", help="skip annotation export")
-    ap.add_argument("--no-abstracts", action="store_true", help="omit abstracts from library.bib")
-    ap.add_argument("--reauth", action="store_true", help="discard saved tokens and log in again")
-    ap.add_argument("--reconfigure", action="store_true",
-                    help="re-enter the application ID, secret, and redirect URL")
-    ap.add_argument("--version", action="version", version=f"offprint {__version__}")
-    ap.add_argument("--quiet", action="store_true",
-                    help="for scheduled runs: no progress output, never prompt, "
-                         "log to .mirror/mirror.log")
-    args = ap.parse_args()
-    # Validated here, not inside run(): a usage error is not a failed refresh,
-    # and letting it reach the failure path would write **FAILED** to the status
-    # file and bump the consecutive-failure streak over a typo.
-    if args.backfill and (args.no_pdfs or args.attachments != "keep"):
-        ap.error("--backfill needs --attachments keep: it archives the files, "
-                 "and the other modes discard them")
-
-    QUIET = NONINTERACTIVE = args.quiet
-    out = args.out.expanduser()
-    out.mkdir(parents=True, exist_ok=True)
-    started = datetime.now(timezone.utc)
-    mirror_dir = mirror_state_dir(out)
-
-    if args.retire is not None:
-        prev = ""
-        status = out / "mirror-status.md"
-        if status.exists():
-            m = re.search(r"last successful run: (\S+ \S+ \S+)",
-                          status.read_text(encoding="utf-8"))
-            if m:
-                prev = m.group(1)
-        info = {"retired_at": datetime.now(timezone.utc).isoformat(),
-                "reason": args.retire, "last_ok": prev or "unknown",
-                "successor": args.successor or "", "by": f"offprint {__version__}"}
-        save_json(retired_marker(out), info)
-        write_retired_status(out, info)
-        note(f"mirror declared frozen: {out/'mirror-status.md'} now says so, and a "
-             f"refresh from this clone will refuse to run.")
-        note("Undo by deleting " + str(retired_marker(out)))
-        return 0
-
-    retired = load_retired(out)
-    if retired:
-        # A refusal rather than a failure: a retired mirror is a decision, and
-        # writing **FAILED** over the standing notice would replace the one
-        # sentence this folder still needs with a transient one.
-        note(f"This mirror was declared frozen on "
-             f"{retired.get('retired_at', '')[:10]}: {retired.get('reason', '')}")
-        note("Refusing to refresh. Delete "
-             f"{retired_marker(out)} if that was wrong.")
-        return 0
-
-    lock = acquire_lock(mirror_dir)
-    if lock is None:
-        write_log(mirror_dir)
-        return 0  # not an error: the other run is doing the work
-
-    def failed(detail: str) -> None:
-        kind = classify_failure(detail)
-        note(f"refresh failed ({KIND_NAMES[kind]}): {detail}")
-        health = record_health(mirror_dir, False, kind)
-        if health["consecutive_failures"] > 1:
-            note(f"  this is failure {health['consecutive_failures']} in a row, "
-                 f"since {health.get('failing_since', '?')}")
-        write_status(out, False, started, detail, kind, health)
-        write_log(mirror_dir)
-        lock.unlink(missing_ok=True)
-
-    try:
-        rc = run(args, out, mirror_dir)
-    except SystemExit as exc:  # sys.exit() from the auth paths
-        failed(str(exc))
-        raise
-    except BaseException as exc:  # includes Ctrl-C: record it, then re-raise
-        failed(f"{type(exc).__name__}: {exc}")
-        raise
-    if rc == 0:
-        write_status(out, True, started, health=record_health(mirror_dir, True))
-    else:
-        # run() returned non-zero without raising: it already said why in the log
-        # run() has already said why in the log; carry its last word into the
-        # status file, or the reader gets an exit code and nothing else.
-        failed(f"the refresh reported failures (exit {rc}). {LOG[-1] if LOG else ''}".strip())
-        return rc
-    write_log(mirror_dir)
-    lock.unlink(missing_ok=True)
-    return rc
 
 
-def run(args, out: Path, mirror_dir: Path) -> int:
-    cfg = get_app_config(force_prompt=args.reconfigure)
-    tokens_path = config_dir() / "tokens.json"
-    if (args.reauth or args.reconfigure) and tokens_path.exists():
-        tokens_path.unlink()
-    tokens = load_json(tokens_path, {})
-    if not tokens.get("access_token"):
-        tokens = interactive_authorize(cfg)
-
-    client = Mendeley(cfg, tokens)
-    state_path = mirror_dir / "state.json"
-    state = load_json(state_path, {})
-
-    note(f"Mirroring your Mendeley library into {out}")
-    docs = client.paged("/documents", "documents", {"view": "all"})
-    if not docs:
-        note("No documents returned. If your library is not empty, try --reauth.")
-        return 1
-
-    files = client.paged("/files", "files")
-    files_by_doc: dict = {}
-    for f in files:
-        files_by_doc.setdefault(f.get("document_id"), []).append(f)
-
-    # Everything past this point is optional: a library of a few thousand
-    # references is a long fetch, and one failing collection should not throw
-    # away the documents and files already in hand.
-    annotations = []
-    if not args.no_annotations:
-        try:
-            annotations = client.paged("/annotations", "annotations")
-        except Exception as exc:
-            note(f"  ! annotations unavailable, continuing without them: {exc}")
-    ann_by_doc: dict = {}
-    for a in annotations:
-        ann_by_doc.setdefault(a.get("document_id"), []).append(a)
-
-    folders, folder_docs = [], {}
-    try:
-        folders = client.paged("/folders", "folders")
-        for i, f in enumerate(folders, 1):
-            progress(f"  folder {i}/{len(folders)}: {f.get('name', '?')[:40]}")
-            rows = client.paged(f"/folders/{f['id']}/documents", "documents", quiet=True)
-            folder_docs[f["id"]] = [r["id"] for r in rows]
-        note(f"  folders: {len(folders)}")
-    except Exception as exc:
-        note(f"  ! folders unavailable, continuing without them: {exc}")
-
-    keymap = assign_citekeys(docs, mirror_dir / "citekeys.json")
-    docs_by_id = {d["id"]: d for d in docs}
-
-    write_bibtex(docs, keymap, out, include_abstract=not args.no_abstracts)
-    write_folders(folders, folder_docs, keymap, out)
-
-    if not args.no_annotations:
-        ann_dir = out / "annotations"
-        ann_dir.mkdir(parents=True, exist_ok=True)
-        written = 0
-        for doc_id, anns in ann_by_doc.items():
-            doc = docs_by_id.get(doc_id)
-            if not doc:
-                continue
-            key = keymap[qualify(doc_id)]
-            (ann_dir / f"{key}.md").write_text(
-                annotation_markdown(doc, key, anns), encoding="utf-8"
-            )
-            written += 1
-        note(f"  annotations written for {written} documents")
-
-    mode = "none" if args.no_pdfs else args.attachments
-    if mode != "none":
-        pending = sum(len(v) for v in files_by_doc.values())
-        verb = "extracting text from" if mode == "text" else "downloading"
-        note(f"  {verb} up to {pending} attachments (unchanged ones are skipped)")
-        if not QUIET:
-            note("  interrupt with Ctrl-C any time -- progress is kept and resumed next run")
-        fetched, skipped, failed, report = harvest_attachments(
-            client, files_by_doc, keymap, docs_by_id, out, state, mode, state_path,
-            ocr=args.ocr, backfill=args.backfill)
-        write_extraction_report(report, out, fetched)
-        note(f"  text: {fetched} extracted, {skipped} unchanged, {failed} failed")
-        read_by_ocr = sum(1 for r in report if r["status"] == "ocr")
-        if read_by_ocr:
-            note(f"  {read_by_ocr} scanned attachments read by OCR -- marked ocr: true")
-        no_text = sum(1 for r in report if r["status"] == "no-text")
-        if no_text:
-            note(f"  {no_text} attachments had no text layer; see extraction-report.md")
-        not_pdf = sum(1 for r in report if r["status"] == "not-pdf")
-        if not_pdf:
-            note(f"  {not_pdf} attachments were not PDFs and were not extracted; "
-                 "see extraction-report.md")
-
-    # written last, so its "text" column reflects what is actually on disk
-    write_index(docs, keymap, files_by_doc, ann_by_doc, out)
-
-    state["last_run"] = datetime.now(timezone.utc).isoformat()
-    state["mirror_version"] = __version__
-    save_json(state_path, state)
-
-    note(f"Done. {len(docs)} references in {out / 'library.bib'}")
-    return 0
 
 
-if __name__ == "__main__":
-    try:
-        sys.exit(main())
-    except KeyboardInterrupt:
-        sys.exit(130)

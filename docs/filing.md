@@ -2,15 +2,16 @@
 
 
 ```{note}
-**`zotero_inbox.py` is the live one**, since the cutover of 2026-10-02:
+**The commands, in one place:**
 
     uv run --script zotero_inbox.py              # dry run over <out>/inbox/
     uv run --script zotero_inbox.py --yes
     uv run --script zotero_inbox.py --key Abrams2013Enhanced paper.pdf --yes
 
-It reuses the identification described on this page unchanged — that half was
-never Mendeley-specific. What differs is the other half: it **creates an
-attachment** on a record that already exists, and since 0.29.0 **the record
+Identification — everything on this page about working out which paper a file
+is — lives in `identify.py` and was never backend-specific. What
+`zotero_inbox.py` adds is the other half: it **creates an attachment** on a
+record that already exists, and since 0.29.0 **the record
 under it** when the paper has a DOI and nothing in Zotero holds it. A paper
 identified by title alone is reported, not added: a title match is enough to
 attach to a record a human already made, not to mint one. `--no-create`
@@ -31,7 +32,10 @@ approving it.
 The archive lags by one refresh for a newly filed paper: the bytes go to Zotero,
 and `<out>/pdf/` gets its copy when the next refresh fetches them back.
 ```
-Two paths into Mendeley: a PDF you downloaded by hand, and a reference with no PDF behind it. Both write to your live account, and both ask before they do.
+
+Two paths into the library: a PDF you downloaded by hand, and a reference with
+no PDF behind it. Both write to your live account, and both are dry-run by
+default.
 
 ## Filing PDFs you downloaded yourself
 
@@ -42,15 +46,16 @@ stays a human job. Uploading it afterwards does not.
 Save the PDF into `inbox/` under whatever name the publisher gave it, then:
 
 ```
-uv run --script inbox.py --dry-run    # what it thinks each PDF is
-uv run --script inbox.py              # file them
+uv run --script zotero_inbox.py --dry-run    # what it thinks each PDF is
+uv run --script zotero_inbox.py --yes        # file exactly what that listed
 ```
 
-It works out which paper each file is, attaches it to the matching Mendeley
-reference — creating the reference from the DOI if it is new — and moves the
-file into the PDF cache outside the mirror, so it does not sync to every
-machine. Run the refresh afterwards and the text appears in `text/` like any
-other paper. Your part is one Save As; Mendeley never has to be opened.
+It works out which paper each file is, attaches it to the matching Zotero
+record — creating the record from the DOI if it is new — and moves the file out
+of the inbox into the cache outside the mirror, so finished work does not sync
+to every machine. Run the refresh afterwards and the text appears in `text/`
+like any other paper. Your part is one Save As; Zotero never has to be
+opened.
 
 Identification tries the file name, the PDF's embedded metadata, a DOI printed
 on the first two pages, and finally a Crossref search on the first page's text.
@@ -66,7 +71,7 @@ lookups go through doi.org rather than one agency's API.
 
 Some things have no DOI to be identified by at all — DTIC and NTIS reports,
 theses, conference proceedings. For those, drop a JSON file next to the PDF
-with the same stem, holding the fields Mendeley needs:
+with the same stem, holding the fields a record needs:
 
 ```json
 { "type": "report",
@@ -89,18 +94,18 @@ The folder syncs, so you can drop a PDF on the Windows desktop and file it from
 anywhere. Nothing is uploaded until you confirm.
 
 
-## Adding a paper to Mendeley
+## Adding a paper with no PDF behind it
 
-The mirror is one-way. `mendeley_push.py` adds a single reference to Mendeley
-itself from an arXiv ID or a DOI:
+The mirror is one-way. `zotero_push.py` adds a single reference to Zotero itself
+from an arXiv ID or a DOI:
 
 ```
-uv run --script mendeley_push.py --arxiv 2507.07887
-uv run --script mendeley_push.py --doi 10.1088/2632-2153/ae4b07
-uv run --script mendeley_push.py --arxiv 2507.07887 --dry-run   # look first
+uv run --script zotero_push.py --arxiv 2507.07887              # dry run
+uv run --script zotero_push.py --doi 10.1088/2632-2153/ae4b07
+uv run --script zotero_push.py --arxiv 2507.07887 --yes        # create it
 ```
 
-It touches nothing in the mirror. The document is POSTed to Mendeley, and the
+It touches nothing in the mirror. The record is created in Zotero, and the
 next refresh brings it back down like any other reference — with a citation key,
 extracted text if you later attach a PDF, and a row in `index.md`.
 
@@ -110,4 +115,6 @@ and a real year instead of a stub to fix up by hand later. "Real year" means the
 so for an Advance Access paper it is a year early. Both writers prefer
 `published-print`, falling back to `issued` only for work that was never printed —
 a preprint, a data set, a born-digital journal. arXiv preprints go in
-as `type: journal` with `source: arXiv`, because Mendeley has no preprint type.
+as `type: journal` with `source: arXiv`, because the mirror's document shape
+has no preprint type and journal + source is the convention the whole library
+already uses.

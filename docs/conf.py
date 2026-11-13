@@ -7,9 +7,9 @@
 import pathlib as _pathlib
 import re as _re
 
-# The version lives in mendeley_mirror.py and is read, never restated: a second
+# The version lives in mirror.py and is read, never restated: a second
 # copy in this file would be one more thing to forget on a release.
-_src = (_pathlib.Path(__file__).parent.parent / "mendeley_mirror.py").read_text(encoding="utf-8")
+_src = (_pathlib.Path(__file__).parent.parent / "mirror.py").read_text(encoding="utf-8")
 release = version = _re.search(r'^__version__ = "([^"]+)"', _src, _re.M).group(1)
 
 project = "offprint"
@@ -22,7 +22,7 @@ extensions = [
 ]
 
 # The docs are prose about a handful of standalone scripts, not an API
-# reference: mendeley_mirror.py declares its dependencies in a PEP 723 header
+# reference: every script here declares its dependencies in a PEP 723 header
 # and is run with `uv run --script`, so it is not importable in a docs build
 # without installing them. Nothing here uses autodoc.
 

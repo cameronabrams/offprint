@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["requests>=2.31"]   # transitive: mendeley_mirror imports it for DEFAULT_OUT
+# dependencies = ["requests>=2.31"]   # transitive: mirror imports it for DEFAULT_OUT
 # ///
 """
 finding.py -- record what was asked of a paper and where the answer is.
@@ -53,7 +53,8 @@ the part that makes it citable: PRX prints `021039-2`, a topical review prints
 `R863`. `read_folio` is the one place that reads those forms, and the derivation,
 the confirmer and the --journal-page check all go through it.
 
-This script never touches Mendeley and never writes outside `<out>/findings/`.
+This script touches no backend and no network, and never writes outside
+`<out>/findings/`.
 """
 
 from __future__ import annotations
@@ -69,7 +70,7 @@ from typing import NamedTuple
 sys.path.insert(0, str(Path(__file__).parent))
 
 try:
-    from mendeley_mirror import DEFAULT_OUT, __version__
+    from mirror import DEFAULT_OUT, __version__
 except ImportError as exc:  # pragma: no cover
     sys.exit(f"finding.py must sit beside the other mirror scripts ({exc})")
 
@@ -201,7 +202,7 @@ def normalize(s: str) -> str:
     # A bad glyph map drops control characters into the extract where a symbol
     # was: Kucerka 2005 carries "30\x01C" for "30 degrees C". Those must not
     # decide whether a quote is on the page, so they go the way of the
-    # zero-width joiners -- same classes mendeley_mirror strips, plus Cc.
+    # zero-width joiners -- same classes mirror strips, plus Cc.
     # ...but newline and tab are Cc too, and they are word separators, not junk:
     # dropping them joins the words either side and defeats a real quote.
     s = "".join(ch for ch in s

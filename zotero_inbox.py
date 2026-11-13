@@ -6,8 +6,8 @@
 """
 zotero_inbox.py -- file a PDF you downloaded into the Zotero record it belongs to.
 
-`inbox.py` does this for Mendeley and is retired with it. The identification
-half of that script is backend-agnostic and is reused here unchanged: reading a
+The identification half of this job is backend-agnostic and lives in
+`identify.py`, which this script reuses unchanged: reading a
 DOI out of the filename, the PDF metadata and the first page, resolving it
 through Crossref, checking the result actually matches the page in front of you,
 and finding the record already in `library.bib`. What this adds is the Zotero
@@ -33,8 +33,8 @@ Cameron two full refreshes per paper (one to mint the citation key, one to
 extract the text, ~13 minutes each) and did not actually close the hole: a
 record pushed an hour ago was equally invisible.
 
-`zotero_doi_index` closes it properly by asking **Zotero** before creating, the
-way `inbox.py` always did for Mendeley. With that in place the separation was
+`zotero_doi_index` closes it properly by asking **Zotero** before creating,
+the way the backend itself has always had to be asked. With that in place the separation was
 buying nothing, and `--no-create` keeps the old refusal for anyone who wants it.
 
 Four refusals, each because the alternative is a library that is wrong rather
@@ -85,12 +85,12 @@ import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from mendeley_mirror import (DEFAULT_OUT, __version__, load_json,  # noqa: E402
+from mirror import (DEFAULT_OUT, __version__, load_json,  # noqa: E402
                              looks_like_pdf, mirror_state_dir, save_json)
-from inbox import existing_document, has_content, identify, title_of  # noqa: E402
-from mendeley_push import from_doi  # noqa: E402
+from identify import existing_document, has_content, identify, title_of  # noqa: E402
+from fromdoi import from_doi  # noqa: E402
 from zotero_attach import ZoteroWriter, storage_attachments  # noqa: E402
-from zotero_migrate import Zotero, load_zotero_credentials, norm_doi  # noqa: E402
+from zotero import Zotero, load_zotero_credentials, norm_doi  # noqa: E402
 from zotero_push import (TO_ZOTERO_TYPE, create_item, doc_to_zotero,  # noqa: E402
                          item_template)
 
@@ -133,9 +133,8 @@ def zotero_doi_index(z: Zotero) -> dict:
     `library.bib` only knows what the last refresh saw, and the whole point of
     this change is to file a paper without waiting for a refresh -- so the
     record this script creates today is invisible to the check that would stop
-    it creating a second one tomorrow. `inbox.py` had exactly this function for
-    Mendeley and exactly this reasoning; it was never the Mendeley-specific
-    half.
+    it creating a second one tomorrow. Asking the backend rather than the mirror
+    is the only thing that closes it, and it always was.
 
     It is also what makes a record pushed by `zotero_push.py` since the last
     refresh findable at all: it has no citation key yet, so `library.bib`
@@ -258,7 +257,7 @@ def plan_one(out: Path, path: Path, forced_key: str, forced_item: str,
     # The first-page title check inside `identify` has already run; nothing
     # below relaxes it, and nothing below runs if it refused.
     label = f"{how}: {doi or title_of(msg)[:60]}"
-    _mid, citekey = existing_document(out, doi, title_of(msg))
+    citekey = existing_document(out, doi, title_of(msg))
     if citekey:
         return {"citekey": citekey}, label
     hit = (doi_index or {}).get(norm_doi(doi)) if doi else ""
@@ -283,8 +282,8 @@ def filed_dir() -> Path:
     archive namespace, so dropping files there the refresh did not put there
     invites a later run to reason about them.
 
-    This is what `inbox.py` did for Mendeley, and the cache column in
-    CLAUDE.md's table exists for exactly this reason: fetched PDFs live
+    The cache column in CLAUDE.md's table exists for exactly this reason:
+    fetched PDFs live
     outside the library so that having one does not sync it everywhere.
     """
     return Path.home() / ".cache" / "offprint" / "filed"

@@ -38,7 +38,7 @@ Expect false negatives, not false positives: "not found" means "not found by
 these rules", not "definitely not in the library".
 
 The mirror is one-way and this script only reads it; nothing here is written
-back to Mendeley.
+back to the library.
 """
 
 from __future__ import annotations
@@ -56,9 +56,9 @@ import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
-    from mendeley_mirror import DEFAULT_OUT
+    from mirror import DEFAULT_OUT
 except ImportError:
-    sys.exit("refs.py must sit in the same folder as mendeley_mirror.py")
+    sys.exit("refs.py must sit in the same folder as mirror.py")
 
 CROSSREF = "https://api.crossref.org/works/"
 UA = "offprint refs.py (mailto:cfa22@drexel.edu)"

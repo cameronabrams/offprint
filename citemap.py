@@ -92,7 +92,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from mendeley_mirror import DEFAULT_OUT, __version__, save_json  # noqa: E402
+from mirror import DEFAULT_OUT, __version__, save_json  # noqa: E402
 from refs import (Ref, crossref_refs, list_quality, looks_glued,  # noqa: E402
                   match_refs, read_library, text_refs)
 

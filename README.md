@@ -6,9 +6,9 @@ Keeps a plain-folder copy of your reference library so that Claude — or LaTeX,
 or `grep`, or anything else — can read it without needing the reference manager
 itself.
 
-**The backend is Zotero.** It was Mendeley until 2026-10-02, and the Mendeley
-path is still here but is retired: `zotero_source.py --refresh` is the refresh
-now. The point of the split is that the mirror outlives whichever service it
+**The backend is Zotero**, and `zotero_source.py --refresh` is the refresh. A
+previous backend was retired on 2026-10-02 and its code was removed on
+2026-11-13. The point of the split is that the mirror outlives whichever service it
 came from — `library.bib`, `text/`, `annotations/` and `pdf/` are a complete
 corpus that needs no account to read.
 
@@ -20,8 +20,8 @@ offprint/                      ← this repo, clone it where you like
 │
 │   the refresh
 ├── zotero_source.py       read Zotero and rebuild the mirror (--refresh)
-├── mendeley_mirror.py     the Mendeley refresh, retired — and still the module
-│                          every other script imports its generators from
+├── mirror.py              the mirror itself: the generators, the extraction and
+│                          the id namespacing every other script imports
 │
 │   reading the library
 ├── get_pdf.py             pull one paper's real PDF when the text isn't enough
@@ -39,13 +39,14 @@ offprint/                      ← this repo, clone it where you like
 ├── zotero_inbox.py        file a PDF you downloaded onto the record it belongs to
 ├── zotero_delete.py       remove a record or a byte-less attachment
 ├── zotero_push.py         add one reference to Zotero, from a DOI or arXiv id
-├── inbox.py               file PDFs you saved into inbox/ (Mendeley, retired)
-├── mendeley_push.py       add one reference to Mendeley (retired)
-├── mendeley_edit.py       correct fields in Mendeley (retired)
+│
+│   shared halves of filing a paper
+├── identify.py            which paper is this PDF, and does the library have it
+├── fromdoi.py             build a record from a DOI or an arXiv id
+├── zotero.py              the read-only Zotero client and its credentials
 │
 │   one-offs and plumbing
-├── zotero_migrate.py      pair every Mendeley record with its Zotero item
-├── run_mirror.sh/.bat     launchers for the Mendeley refresh
+├── run_mirror.sh/.bat     launchers for the refresh
 ├── install_schedule.bat   register/remove the hourly background refresh
 ├── refresh_quiet.bat/.vbs what that scheduled task actually runs
 └── test_mirror.py         offline tests: pure functions plus a stubbed API
@@ -53,9 +54,8 @@ offprint/                      ← this repo, clone it where you like
 
 The mirror itself is everything the refresh writes. It defaults to
 `~/Sync/library` (`%USERPROFILE%\Sync\library` on Windows); `--out` sends it
-anywhere else. It was `~/Sync/mendeley` until 2026-10-02 and both names still
-resolve, because there is one clone and no pull step: a machine renamed later,
-or not at all, keeps working. Every file in it is generated — edit in Zotero,
+anywhere else. It had a different name until 2026-10-02; both resolved until
+2026-11-13, by which time no machine was left on the old one. Every file in it is generated — edit in Zotero,
 not here.
 
 **One exception, added deliberately: `findings/`.** It is the only hand-written
@@ -70,7 +70,7 @@ Sync/library/                  ← the library, and only the library
 ├── CLAUDE.md              orientation for a Claude session opened on this folder
 ├── library.bib            every reference, stable citation keys
 ├── index.md               one row per reference (key, year, author, title, doi)
-├── folders.json           your Mendeley collections -> citation keys
+├── folders.json           your collections -> citation keys
 ├── text/                  Muller2020Yield.md — extracted full text, page-marked
 ├── annotations/           Muller2020Yield.md — your highlights and notes, by page
 ├── inbox/                 drop zone for PDFs you saved by hand (see below)
@@ -108,18 +108,19 @@ sit.
 
 ## Full documentation
 
-**<https://mendeley-mirror.readthedocs.io>** — the published URL still carries
-the old project name, which is a slug rather than a claim.
+**<https://mendeley-mirror.readthedocs.io>** — the published URL carries the
+old project name. It is a slug, not a claim: renaming a Read the Docs project
+breaks every link already pointing at it, so this one outlives the name.
 
 | page | what it covers |
 |---|---|
 | Getting started | registering the app, authorizing, a second machine, where credentials live |
 | What the mirror contains | what a refresh writes, and how to tell a usable extract from one that only looks usable |
 | Reading a paper you have | `get_pdf.py` when you need the page itself, `refs.py` for what a paper cites |
-| Adding papers | `inbox.py` for a PDF you downloaded, `mendeley_push.py` for a reference with no PDF — both Mendeley-only and retired |
+| Adding papers | `zotero_inbox.py` for a PDF you downloaded, `zotero_push.py` for a reference with no PDF |
 | Findings | recording what was asked of a paper and where the answer sat |
 | Structures | which papers cite which PDB entries, and which cited structures have no paper here |
-| Correcting a reference | `zotero_edit.py` and `mendeley_edit.py`, and the properties that keep them from destroying good metadata |
+| Correcting a reference | `zotero_edit.py`, and the properties that keep it from destroying good metadata |
 | Keeping it fresh | scheduling a refresh, and the rule that there is never more than one at a time |
 | How it is run | why the clone and the library are separate, where state lives, and who may write |
 | Reference | every command-line option, the tests, and the small print |
@@ -128,9 +129,10 @@ the old project name, which is a slug rather than a claim.
 
 A refresh is one-way: the service to disk. A bad run can lose mirrored files
 but cannot touch your library — edit in Zotero, re-run, done. Five scripts write
-back, each by hand: `zotero_edit.py` corrects fields, `zotero_attach.py` uploads
-the mirrored PDFs, and `inbox.py`, `mendeley_push.py` and `mendeley_edit.py` did
-the same against Mendeley before it was retired.
+back, each by hand and each dry-run by default: `zotero_edit.py` corrects
+fields, `zotero_attach.py` uploads the mirrored PDFs, `zotero_inbox.py` files a
+PDF you downloaded, `zotero_push.py` adds a reference, and `zotero_delete.py`
+removes one.
 
 **`zotero_edit.py` deserves the most care**, because it is the only one that can
 destroy correct metadata rather than merely add wrong metadata. Three properties

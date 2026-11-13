@@ -12,8 +12,8 @@ change at all and the thing that changes is where documents come from.
 
 **It can be verified before it is integrated, which is why it was built first.**
 `~/Sync/library/library.bib` is a frozen, known-good rendering of the same
-2,739 records produced by the Mendeley path, and `citekeys.json` holds a
-verified bijection between the two backends' ids. So this module can regenerate
+2,739 records produced by the previous backend's path, and `citekeys.json`
+holds a verified bijection between the two backends' ids. So this module can regenerate
 every entry from Zotero and diff it against that file:
 
     uv run --script zotero_source.py --compare
@@ -26,8 +26,8 @@ produced by an independent path over the same library.
 `zotero:<itemKey>` entry for all 2,739 keys, so `assign_citekeys` finds each key
 already assigned and keeps it — which is the whole reason the ids were
 namespaced on 2026-09-24 before any key was assigned from a second source. The
-backend must therefore be passed explicitly rather than taken from
-`mendeley_mirror.BACKEND`, whose default is still `"mendeley"`. The repo's
+backend must therefore be named by the caller; `mirror.qualify` takes no
+default for it, precisely so this cannot be got wrong by omission. The repo's
 CLAUDE.md names this as the rule a second backend will be tempted to break.
 """
 
@@ -45,7 +45,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from mendeley_mirror import (DEFAULT_OUT, KNOWN_BACKENDS, __version__,  # noqa: E402
+from mirror import (DEFAULT_OUT, KNOWN_BACKENDS, __version__,  # noqa: E402
                              assign_citekeys,
                              bib_entry, harvest_attachments, load_json,
                              annotation_markdown, local_id, mirror_state_dir,
@@ -54,13 +54,13 @@ from mendeley_mirror import (DEFAULT_OUT, KNOWN_BACKENDS, __version__,  # noqa: 
                              save_json, write_bibtex, write_extraction_report,
                              write_folders, write_index, write_status)
 from zotero_attach import load_pairings  # noqa: E402
-from zotero_migrate import Zotero, load_zotero_credentials, parse_bib, year_of  # noqa: E402
+from zotero import Zotero, load_zotero_credentials, parse_bib, year_of  # noqa: E402
 
 BACKEND = "zotero"
 
 # Zotero's itemType to the vocabulary TYPE_MAP already speaks. Anything absent
 # falls through to "generic", which TYPE_MAP renders as @misc -- the same place
-# an unrecognized Mendeley type went, so an unmapped type degrades rather than
+# an unrecognized incoming type went, so an unmapped type degrades rather than
 # raising.
 ITEM_TYPES = {
     "journalArticle": "journal",
@@ -233,7 +233,7 @@ def item_to_doc(item: dict) -> dict:
     return {k: v for k, v in doc.items() if v not in ("", [], None, {})} | {"id": doc["id"]}
 
 
-def annotation_to_mendeley(a: dict) -> dict:
+def annotation_to_mirror(a: dict) -> dict:
     """One Zotero annotation in the shape `annotation_markdown` already renders.
 
     Zotero keeps annotations as child items of the ATTACHMENT, not of the
@@ -282,8 +282,8 @@ def annotation_to_mendeley(a: dict) -> dict:
 class ZoteroSource:
     """List documents, files and annotations from a Zotero library.
 
-    Deliberately the same four questions the Mendeley client is asked, so the
-    refresh can take either. `fetch_file` is NOT among them: Zotero served no
+    Deliberately the same four questions any backend client is asked, so the
+    refresh can take another one. `fetch_file` is NOT among them: Zotero served no
     attachment bytes for a large minority of this library before 2026-10-02 and
     the local archive is the reliable source, so locating bytes belongs to
     `find_archived` and not to the backend.
@@ -410,13 +410,13 @@ class ZoteroSource:
             parent = (a.get("data") or {}).get("parentItem")
             doc_id = owner.get(parent)
             if doc_id:
-                out.setdefault(doc_id, []).append(annotation_to_mendeley(a))
+                out.setdefault(doc_id, []).append(annotation_to_mirror(a))
         return out
 
     def collections(self) -> tuple:
         """Zotero collections as `(folders, folder_docs)`, the shape write_folders takes.
 
-        The migration put the four Mendeley folders inside an import wrapper, so
+        The migration put the four imported folders inside a wrapper, so
         their names gain one level of prefix -- recorded in ROADMAP item 1 when
         the import was done, and visible here as the parent in each name.
         """
@@ -597,7 +597,7 @@ def rescue_identifiers(out: Path) -> int:
     Two things it deliberately does not do.
 
     It does not restore an `isbn` that is not shaped like one. 45 of the frozen
-    bib's 201 `isbn` values are ISSNs that Mendeley mislabeled, and copying a
+    bib's 201 `isbn` values are ISSNs that the old import mislabeled, and copying a
     known defect into the live library because it is in a file we trust is how a
     defect becomes permanent. Those are routed to `ISSN` and reported.
 
@@ -993,7 +993,7 @@ def minted_verdict(new_ids: list, before: dict, keymap: dict,
 
     - **The same bare id is already present under another backend's prefix.**
       That *is* the namespacing failure: a Zotero run qualifying its ids as
-      Mendeley's would mint `mendeley:<zotero key>` beside the
+      another's would mint `<other>:<zotero key>` beside the
       `zotero:<zotero key>` already in the map. Nothing else produces that
       collision, and it needs no threshold to detect.
     - **`citekeys.json` was on disk and yielded nothing.** `load_json` returns
@@ -1147,13 +1147,13 @@ def resolve_only(names: list, keymap: dict, docs_by_id: dict,
     An unrecognized name is an ERROR, never a silent no-op. The whole point of
     a targeted refresh is that the operator names the record they just filed;
     a typo that quietly selects nothing would extract nothing, report a clean
-    run, and look exactly like success. `mendeley_edit.py` refuses an unknown
+    run, and look exactly like success. `zotero_edit.py` refuses an unknown
     citation key for the same reason.
     """
-    # `local_id` defaults to BACKEND = "mendeley" and returns None for anything
-    # else -- deliberately, so one service's id cannot be sent to another's
-    # API. Pass the backend or every zotero: entry reads as a foreign id and
-    # every citation key looks unknown.
+    # `local_id` returns None for an id belonging to another backend --
+    # deliberately, so one service's id cannot be sent to another's API. The
+    # backend is required, because without it every zotero: entry would read as
+    # a foreign id and every citation key would look unknown.
     by_citekey = {}
     for ident, ck in keymap.items():
         local = local_id(ident, backend)
@@ -1181,7 +1181,7 @@ def refresh(out: Path, ocr: bool = False, dry_run: bool = False,
             prune_state: bool = False) -> int:
     """Rebuild the mirror from Zotero.
 
-    The generators are `mendeley_mirror`'s and are untouched; what changed is
+    The generators are `mirror`'s and are untouched; what changed is
     where documents come from and where bytes come from. Three things this does
     NOT do, each said out loud rather than left to be discovered:
 
@@ -1193,8 +1193,8 @@ def refresh(out: Path, ocr: bool = False, dry_run: bool = False,
       decision from refreshing and this does not make it.
 
     It supersedes `.mirror/retired.json` rather than being blocked by it: that
-    marker says the mirror is frozen *as a Mendeley mirror*, and a Zotero
-    refresh is precisely the thing that stops being true.
+    marker says the mirror is frozen against whatever backend froze it, and a
+    live refresh is precisely the thing that stops being true.
     """
     # Checked here, once, because the alternative is what happened on
     # 2026-10-02: extract_pdf_text imports pymupdf lazily, this script's header
@@ -1222,6 +1222,16 @@ def refresh(out: Path, ocr: bool = False, dry_run: bool = False,
     docs = src.documents()
     phases.mark("fetch records (items/top)")
     print(f"  documents: {len(docs)}")
+    if not docs:
+        # An empty listing is a broken run, never an empty library. Every
+        # generator below is rebuilt whole from `docs`, so continuing would
+        # rewrite library.bib and index.md with nothing in them and report ok.
+        # The retired refresh refused this and the Zotero one never did; the
+        # guard moved here on 2026-11-13 rather than going with that code.
+        # `classify_failure` reads this wording, so keep them in step.
+        raise RuntimeError(
+            "No documents returned. If your library is not empty, the key is "
+            "no longer seeing the account.")
 
     keymap_path = mirror / "citekeys.json"
     keymap_file_existed = keymap_path.exists()
@@ -1298,9 +1308,9 @@ def refresh(out: Path, ocr: bool = False, dry_run: bool = False,
     # the second costs only the second.
     try:
         fetched, skipped, failed, report = harvest_attachments(
-            None, harvest, keymap, docs_by_id, out, state, "text",
-            state_path=mirror / "state.json", ocr=ocr, reassess=reassess,
-            fetch=zotero_fetch(z), backend=BACKEND)
+            zotero_fetch(z), harvest, keymap, docs_by_id, out, state, "text",
+            BACKEND, state_path=mirror / "state.json", ocr=ocr,
+            reassess=reassess)
         save_json(mirror / "state.json", state)
         write_extraction_report(report, out, fetched)
         phases.mark(f"extract text ({fetched} read, {skipped} skipped)")

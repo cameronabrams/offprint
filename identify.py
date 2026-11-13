@@ -4,29 +4,12 @@
 # dependencies = ["requests>=2.31", "pymupdf>=1.24"]
 # ///
 """
-inbox.py -- drop a PDF in, get a filed Mendeley reference out.
+identify.py -- work out which paper a PDF is, and whether the library has it.
 
-Save a paper into inbox/ straight from the browser, under whatever name the
-publisher gave it, then:
-
-    uv run --script inbox.py --dry-run    # what it thinks each PDF is
-    uv run --script inbox.py              # file them (asks first)
-
-For each PDF it works out which paper it is, finds the matching reference in
-Mendeley or creates one from Crossref, uploads the PDF as an attachment, and
-moves the file out of the folder into the local PDF cache -- outside the
-mirror, so it is not synced to every machine. The next refresh extracts the
-text like any other reference.
-
-Grey literature -- DTIC/NTIS reports, theses, conference proceedings -- often
-has no DOI to identify it by. For those, drop a sidecar JSON next to the PDF
-with the same stem (report.pdf + report.json) holding the Mendeley fields:
-
-    {"type": "report", "title": "...", "year": 1991,
-     "source": "NRL Memorandum Report 6848 (DTIC ADA239276)",
-     "authors": [{"first_name": "Arthur W.", "last_name": "Snow"}]}
-
-A sidecar overrides identification entirely; nothing is looked up.
+Not a CLI. This is the identification half of filing a paper, factored out so
+the scripts that file one -- `zotero_inbox.py` and `zotero_push.py` -- all ask
+the question the same way. Its public names are `identify`, `existing_document`,
+`has_content` and `title_of`.
 
 Identification, in order, stopping at the first candidate that checks out:
 
@@ -35,24 +18,30 @@ Identification, in order, stopping at the first candidate that checks out:
     a DOI printed on the first two pages
     a Crossref search on the text of the first page
 
-Every candidate is verified before it is used: the title Crossref returns has
-to actually appear on the PDF's first page. A PDF that cannot be identified
-that way is left in the inbox and reported, because attaching a paper to the
-wrong reference is worse than not filing it.
+**Every candidate is verified before it is used**: the title Crossref returns
+has to actually appear on the PDF's first page. A PDF that cannot be identified
+that way is refused and reported, because attaching a paper to the wrong
+reference files one paper's PDF under another paper's citation key, silently.
 
-This is the one script here besides mendeley_push.py that WRITES to Mendeley.
-It asks before sending unless you pass --yes.
+Grey literature -- DTIC/NTIS reports, theses, conference proceedings -- often
+has no DOI to identify it by. For those, drop a sidecar JSON next to the PDF
+with the same stem (report.pdf + report.json) holding the record's fields:
+
+    {"type": "report", "title": "...", "year": 1991,
+     "source": "NRL Memorandum Report 6848 (DTIC ADA239276)",
+     "authors": [{"first_name": "Arthur W.", "last_name": "Snow"}]}
+
+A sidecar overrides identification entirely; nothing is looked up.
+
+It reads the mirror and the public Crossref API. It writes nothing, and it
+holds no credentials for anything.
 """
 
 from __future__ import annotations
 
-import argparse
-import hashlib
 import json
 import os
 import re
-import shutil
-import subprocess
 import sys
 import unicodedata
 from pathlib import Path
@@ -62,15 +51,10 @@ import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
-    from mendeley_mirror import (API, DEFAULT_OUT, Mendeley, config_dir,
-                                 get_app_config, load_json, local_id,
-                                 mirror_state_dir, page_is_garbled, pdftotext_pages)
-    from mendeley_push import CSL_TO_MENDELEY, DOC_CT, csl_year, one, split_name
-    from get_pdf import cache_dir
+    from mirror import page_is_garbled, pdftotext_pages
+    from fromdoi import CSL_TO_TYPE, csl_year, one
 except ImportError as exc:
-    sys.exit(f"inbox.py must sit beside the other mirror scripts ({exc})")
-
-FILE_CT = "application/vnd.mendeley-file.1+json"
+    sys.exit(f"identify.py must sit beside the other mirror scripts ({exc})")
 # A DOI may contain brackets, angle brackets and semicolons, and old Elsevier and
 # Wiley DOIs routinely do: 10.1016/s0032-3861(01)00634-6, and the SICI form
 # 10.1002/(SICI)1097-4628(19990906)73:10<1927::AID-APP12>3.0.CO;2-O. Excluding
@@ -81,7 +65,7 @@ FILE_CT = "application/vnd.mendeley-file.1+json"
 DOI_RE = re.compile(r"\b10\.\d{4,9}/[^\s\"']+", re.I)
 
 CLOSERS = {")": "(", "]": "[", "}": "{", ">": "<"}
-UA = "offprint inbox.py (mailto:cfa22@drexel.edu)"
+UA = "offprint identify.py (mailto:cfa22@drexel.edu)"
 
 STOP = {"a", "an", "and", "as", "at", "by", "for", "from", "in", "of", "on",
         "or", "the", "to", "with", "its", "their", "using", "via"}
@@ -140,8 +124,8 @@ def pdf_text(path: Path, pages: int = 2) -> str:
     """The first pages as text, repairing a garbled text layer the way a refresh does.
 
     Some PDFs carry a broken font encoding, so pymupdf returns control characters
-    where the words should be. mendeley_mirror has re-read those with pdftotext
-    since 2026-09-16, and inbox.py did not -- so a paper whose text layer is
+    where the words should be. The refresh has re-read those with pdftotext
+    since 2026-09-16, and identification did not -- so a paper whose text layer is
     garbled could not be identified from its own page, while the very same file,
     once filed, produced a perfectly readable extract. That asymmetry cost a
     correctly named paper a sidecar workaround and sent two investigations after
@@ -199,16 +183,16 @@ def pdf_metadata_dois(path: Path) -> list[str]:
 
 
 def normalize(raw: dict) -> dict:
-    """Both metadata shapes, reduced to the fields a Mendeley record needs."""
+    """Both metadata shapes, reduced to the fields a mirror record needs."""
     return {
         # Share the pusher's type map so a book filed through the inbox is a
         # book, not a journal article.
-        "type": CSL_TO_MENDELEY.get((raw.get("type") or "").lower(), "generic"),
+        "type": CSL_TO_TYPE.get((raw.get("type") or "").lower(), "generic"),
         "publisher": one(raw.get("publisher")),
         "doi": (raw.get("DOI") or raw.get("doi") or "").lower(),
         "title": one(raw.get("title")),
         "source": one(raw.get("container-title")),
-        # The issue year, not the online one -- see csl_year in mendeley_push.
+        # The issue year, not the online one -- see csl_year in fromdoi.
         "year": csl_year(raw),
         "volume": one(raw.get("volume")),
         "issue": one(raw.get("issue")),
@@ -507,11 +491,11 @@ def identify(path: Path) -> tuple[dict | None, str, str]:
 
 
 # --------------------------------------------------------------------------
-# talking to Mendeley
+# asking the mirror what it already holds
 # --------------------------------------------------------------------------
 
-def existing_document(out: Path, doi: str, title: str = "") -> tuple[str, str]:
-    """(mendeley id, citekey) for a reference already in the library, else ('','')."""
+def existing_document(out: Path, doi: str, title: str = "") -> str:
+    """The citation key of a reference the library already holds, else ''."""
     bib = (out / "library.bib").read_text(encoding="utf-8") if (out / "library.bib").exists() else ""
     key = ""
     if doi:
@@ -525,8 +509,8 @@ def existing_document(out: Path, doi: str, title: str = "") -> tuple[str, str]:
         # exact normalized title match.
         #
         # The fallback used to be skipped whenever a DOI was present, which made
-        # a whole class of reference invisible: an arXiv paper pushed into
-        # Mendeley without a doi field cannot be found by DOI, so dropping its
+        # a whole class of reference invisible: an arXiv paper filed without a
+        # doi field cannot be found by DOI, so dropping its
         # PDF in the inbox reported "new to the library" and would have created
         # a second reference for a paper already held. Trying the title after
         # the DOI misses costs one pass and cannot match more loosely than the
@@ -539,282 +523,5 @@ def existing_document(out: Path, doi: str, title: str = "") -> tuple[str, str]:
                 k = re.match(r"\w+\{([^,]+),", chunk)
                 key = k.group(1).strip() if k else ""
                 break
-    if not key:
-        return "", ""
-    keymap = load_json(mirror_state_dir(out) / "citekeys.json", {})
-    for ident, citekey in keymap.items():
-        if citekey == key:
-            # Only a Mendeley id can be attached to; a key from another backend
-            # resolves to no id, and the caller reports it as unresolved.
-            return local_id(ident) or "", key
-    return "", key
+    return key
 
-
-def remote_doi_index(client: Mendeley) -> dict[str, str]:
-    """Every DOI in Mendeley right now, mapped to its document id.
-
-    library.bib only knows what the last refresh saw. A reference pushed since
-    then -- or added on another machine -- is absent from it, and creating a
-    second record for it would leave a duplicate in the library that nothing
-    here can clean up. So ask Mendeley itself before creating anything.
-    """
-    index = {}
-    for doc in client.paged("/documents", "documents", quiet=True):
-        doi = ((doc.get("identifiers") or {}).get("doi") or "").strip().lower()
-        if doi:
-            index[doi] = doc["id"]
-    return index
-
-
-def has_attachment(client: Mendeley, doc_id: str) -> bool:
-    resp = client.get(f"{API}/files", accept=None, params={"document_id": doc_id})
-    files = resp.json() if resp.ok else []
-    return any("pdf" in (f.get("mime_type") or "").lower() for f in files)
-
-
-def create_document(client: Mendeley, meta: dict) -> str:
-    if meta["doi"].startswith("10.48550/arxiv"):
-        # arXiv DOIs resolve with no container title; match the push script's
-        # convention so the entry is not left journal-less.
-        meta["source"] = meta.get("source") or "arXiv"
-    doc = {
-        "type": meta.get("type", "journal"),
-        "title": meta["title"],
-        "authors": meta["authors"],
-        "year": meta["year"],
-        "source": meta["source"],
-        "identifiers": {k: v for k, v in (("doi", meta["doi"]),) if v},
-        "publisher": meta.get("publisher", ""),
-        "volume": meta["volume"],
-        "issue": meta["issue"],
-        "pages": meta["pages"],
-    }
-    doc = {k: v for k, v in doc.items() if v not in (None, "", [], {})}
-    resp = client.session.post(
-        f"{API}/documents",
-        headers={**client._auth_header(), "Content-Type": DOC_CT, "Accept": DOC_CT},
-        data=json.dumps(doc), timeout=60)
-    if resp.status_code not in (200, 201):
-        raise RuntimeError(f"Mendeley refused the new reference "
-                           f"({resp.status_code}): {resp.text[:200]}")
-    return resp.json()["id"]
-
-
-def upload(client: Mendeley, doc_id: str, path: Path) -> str:
-    safe = re.sub(r"[^A-Za-z0-9._-]", "_", path.name)
-    headers = {
-        **client._auth_header(),
-        "Content-Type": "application/pdf",
-        "Accept": FILE_CT,
-        "Content-Disposition": f'attachment; filename="{safe}"',
-        "Link": f'<{API}/documents/{doc_id}>; rel="document"',
-    }
-    resp = client.session.post(f"{API}/files", headers=headers,
-                               data=path.read_bytes(), timeout=300)
-    if resp.status_code not in (200, 201):
-        raise RuntimeError(f"upload refused ({resp.status_code}): {resp.text[:200]}")
-    return resp.json().get("id", "")
-
-
-# --------------------------------------------------------------------------
-
-REFRESH_UNIT = "mendeley-mirror.service"
-
-
-def refresh_command(which=shutil.which, run=subprocess.run) -> str:
-    """How to refresh on *this* machine, named so it cannot cause a double run.
-
-    This string is printed at the one moment the reader is most likely to obey
-    it immediately, so it must not name a command that can overlap a scheduled
-    refresh. Starting the systemd service cannot run twice at once; calling
-    run_mirror.sh directly can, and two refreshes at once make Syncthing
-    conflict files out of .mirror/. So prefer the unit wherever it is installed,
-    and fall back to the launcher only where it is not.
-
-    `which` and `run` are injectable for the tests: probing the real systemd on
-    the machine running the suite would make the result depend on the host.
-    """
-    if os.name == "nt":
-        return "run_mirror.bat"
-    systemctl = which("systemctl")
-    if systemctl:
-        try:
-            probe = run([systemctl, "--user", "list-unit-files", REFRESH_UNIT],
-                        capture_output=True, text=True, timeout=5)
-            if probe.returncode == 0 and REFRESH_UNIT in (probe.stdout or ""):
-                return f"systemctl --user start {REFRESH_UNIT}"
-        except (OSError, subprocess.SubprocessError):
-            pass  # no usable systemd: fall through to the launcher
-    return "./run_mirror.sh"
-
-
-def cache_target(dest: Path, stem: str, src: Path) -> Path:
-    """Where to park this PDF without destroying one already there.
-
-    The cache was named for the citation key alone, so a SECOND attachment on the
-    same record -- Supporting Information, a corrigendum, a scanned appendix --
-    overwrote the first. The article was replaced by its SI under the article's
-    own name, and get_pdf.py then served that to anyone who asked for the paper.
-    Nothing crashed, which is what made it dangerous.
-
-    So mirror what the extractor already does with text/<key>-2.md: the first file
-    keeps the bare stem and the rest are suffixed. A byte-identical file is not a
-    second attachment -- it is the same one being filed again, so reuse its name
-    rather than accumulating copies.
-    """
-    first = dest / f"{stem}.pdf"
-    if not first.exists():
-        return first
-    digest = hashlib.sha256(src.read_bytes()).hexdigest()
-    n = 1
-    while True:
-        cand = first if n == 1 else dest / f"{stem}-{n}.pdf"
-        if not cand.exists():
-            return cand
-        if hashlib.sha256(cand.read_bytes()).hexdigest() == digest:
-            return cand          # already cached, same bytes: keep one copy
-        n += 1
-
-
-def closing_report(attached: list[str], skipped: list[tuple[str, str]],
-                   stuck: list[tuple[str, str]], dry_run: bool = False,
-                   refresh_cmd: str | None = None) -> str:
-    """The last thing the run prints, and it must match what actually happened.
-
-    Two constraints, both learned the hard way. The instruction to refresh is
-    printed only when something was actually attached -- a failed run used to
-    end by telling you to go pull down text that was never uploaded. And
-    anything still sitting in inbox/ is printed LAST, because the common way to
-    read this output is `| tail`, which shows the end and throws the exit status
-    away. A reader who sees only the final lines must not come away thinking a
-    failed run succeeded.
-    """
-    out: list[str] = []
-    if attached and not dry_run:
-        cmd = refresh_cmd if refresh_cmd is not None else refresh_command()
-        out.append(f"Run `{cmd}` to pull the extracted text down.")
-    if skipped:
-        out.append(f"{len(skipped)} left in inbox/ (already had a PDF; --replace to override):")
-        out += [f"      {name} -- {why}" for name, why in skipped]
-    if stuck:
-        out.append(f"! {len(stuck)} NOT filed, still in inbox/:")
-        out += [f"      {name} -- {why}" for name, why in stuck]
-        out.append("  Nothing was sent for these. Give each a DOI file name or a"
-                   " sidecar JSON, then run again.")
-    return "\n" + "\n".join(out) if out else ""
-
-
-def main() -> int:
-    ap = argparse.ArgumentParser(description="File PDFs dropped in inbox/ into Mendeley.")
-    ap.add_argument("--out", type=Path, default=DEFAULT_OUT, help="mirror directory")
-    ap.add_argument("--dry-run", action="store_true", help="identify only, send nothing")
-    ap.add_argument("--yes", action="store_true", help="do not ask before sending")
-    ap.add_argument("--keep", action="store_true",
-                    help="leave the PDFs in inbox/ instead of moving them to the cache")
-    ap.add_argument("--replace", action="store_true",
-                    help="attach even if the reference already has a PDF")
-    args = ap.parse_args()
-
-    out = args.out.expanduser()
-    box = out / "inbox"
-    box.mkdir(exist_ok=True)
-    pdfs = sorted(p for p in box.glob("*.pdf") if p.is_file())
-    if not pdfs:
-        print(f"nothing to file -- drop PDFs in {box}")
-        return 0
-
-    print(f"{len(pdfs)} PDF(s) in {box}\n")
-    plan = []
-    stuck: list[tuple[str, str]] = []
-    for path in pdfs:
-        try:
-            msg, doi, how = identify(path)
-        except RuntimeError as exc:
-            print(f"  ! {path.name}\n      {exc}")
-            stuck.append((path.name, str(exc)))
-            continue
-        if not msg:
-            print(f"  ? {path.name}\n      cannot identify: {how}")
-            stuck.append((path.name, f"cannot identify: {how}"))
-            continue
-        doc_id, key = existing_document(out, doi, msg.get('title', ''))
-        where = f"already in the library as {key}" if key else "new to the library"
-        print(f"  - {path.name}")
-        print(f"      {title_of(msg)[:90]}")
-        print(f"      {doi}  ({how}; {where})")
-        if how.startswith("crossref title search"):
-            # This path asks Crossref live and does NOT reproduce: two files this week
-            # identified cleanly in every dry run and then failed on the real one,
-            # which breaks the promise that a dry run predicts what --yes will do.
-            print("      ! identified by live title search -- this may fail on the real run."
-                  " Rename it to its DOI first.")
-        plan.append((path, msg, doi, doc_id, key))
-
-    if not plan:
-        print(closing_report([], [], stuck))
-        return 1
-    if args.dry_run:
-        print("\n--dry-run: nothing sent.")
-        print(closing_report([], [], stuck, dry_run=True))
-        return 1 if stuck else 0
-
-    tokens = load_json(config_dir() / "tokens.json", {})
-    if not tokens.get("access_token"):
-        sys.exit("no Mendeley tokens on this machine -- run ./run_mirror.sh once first.")
-
-    if not args.yes:
-        reply = input(f"\nFile {len(plan)} PDF(s) into Mendeley? [y/N] ").strip().lower()
-        if reply not in ("y", "yes"):
-            print("aborted.")
-            return 0
-
-    client = Mendeley(get_app_config(), tokens)
-    dest = cache_dir()
-    status = 1 if stuck else 0
-    attached: list[str] = []
-    skipped: list[tuple[str, str]] = []
-    remote: dict[str, str] | None = None
-    for path, msg, doi, doc_id, key in plan:
-        try:
-            if not doc_id and doi:
-                if remote is None:
-                    print("  (checking Mendeley for references the mirror has not seen yet)")
-                    remote = remote_doi_index(client)
-                doc_id = remote.get(doi, "")
-                if doc_id:
-                    print(f"  = {doi} is already in Mendeley, just not mirrored yet")
-            if not doc_id:
-                doc_id = create_document(client, msg)
-                print(f"  + created reference for {doi}")
-            elif has_attachment(client, doc_id) and not args.replace:
-                print(f"  = {key} already has a PDF attached; skipping (--replace to override)")
-                skipped.append((path.name, f"{key} already has a PDF"))
-                continue
-            upload(client, doc_id, path)
-            attached.append(path.name)
-            print(f"  ✓ attached {path.name} -> {key or doi}")
-            if not args.keep:
-                # Prefer the citation key; fall back to the DOI, then to the
-                # file's own name -- a sidecar-identified report has neither of
-                # the first two, and an empty stem would give a nameless file.
-                stem = key or re.sub(r"[^A-Za-z0-9]", "_", doi) or path.stem
-                target = cache_target(dest, stem, path)
-                shutil.move(str(path), target)
-                print(f"    moved out of the inbox to {target}")
-                side = path.with_suffix(".json")
-                if side.exists():
-                    shutil.move(str(side), target.with_suffix(".json"))
-        except Exception as exc:
-            print(f"  ! {path.name}: {exc}")
-            stuck.append((path.name, str(exc)))
-            status = 1
-
-    print(closing_report(attached, skipped, stuck))
-    return status
-
-
-if __name__ == "__main__":
-    try:
-        sys.exit(main())
-    except KeyboardInterrupt:
-        sys.exit(130)

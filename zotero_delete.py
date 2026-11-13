@@ -71,9 +71,9 @@ import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from mendeley_mirror import DEFAULT_OUT, __version__, load_json, mirror_state_dir  # noqa: E402
+from mirror import DEFAULT_OUT, __version__, load_json, mirror_state_dir  # noqa: E402
 from zotero_attach import storage_attachments  # noqa: E402
-from zotero_migrate import Zotero, load_zotero_credentials, parse_bib  # noqa: E402
+from zotero import Zotero, load_zotero_credentials, parse_bib  # noqa: E402
 
 
 def die(msg: str):

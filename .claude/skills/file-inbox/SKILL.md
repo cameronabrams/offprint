@@ -1,6 +1,6 @@
 ---
 name: file-inbox
-description: File PDFs sitting in the mirror's inbox/ into Mendeley — identify each paper, check whether the library already has it, file only the new ones, refresh, and verify the extract. Use when Cameron says he has dropped a paper (or papers) in the inbox, asks to file/add/ingest a PDF into the database or library, asks whether a paper is already in the library, or when a paper you were allowed to fetch needs to become part of the mirror. Triggers on "in the inbox", "file these", "file this paper", "add it to the database", "is this one already in there", "did we already have this".
+description: File PDFs sitting in the mirror's inbox/ into Zotero — identify each paper, check whether the library already has it, file only the new ones, refresh, and verify the extract. Use when Cameron says he has dropped a paper (or papers) in the inbox, asks to file/add/ingest a PDF into the database or library, asks whether a paper is already in the library, or when a paper you were allowed to fetch needs to become part of the mirror. Triggers on "in the inbox", "file these", "file this paper", "add it to the database", "is this one already in there", "did we already have this".
 ---
 
 # Filing papers from the inbox
@@ -9,18 +9,22 @@ The loop is: identify → **search the library first** → dry run → file only
 is new → refresh → verify. Skipping step two is the expensive mistake; it ends
 with a second copy of a paper the library already had.
 
-**STALE BEYOND THE PATHS, 2026-10-02.** This skill drives `inbox.py`, which
-POSTs to Mendeley, and Mendeley is retired. The live tool is
-`zotero_inbox.py`: it takes the same `<out>/inbox/` directory and reuses this
-same identification, but creates a **Zotero** attachment — and, since 0.29.0,
+The tool is `zotero_inbox.py`. It takes the `<out>/inbox/` directory, works out
+which paper each PDF is, and creates a **Zotero** attachment — and, since 0.29.0,
 the record under it when the paper has a DOI and nothing in Zotero holds it, so
-step two below is now done by the tool against Zotero rather than by hand
-against `library.bib`. `zotero_push.py` adds a reference with no PDF behind it.
-Since 0.32.0 the dry run is required: `--yes` over the inbox files exactly what
-the dry run listed and refuses to run without one, so steps three and four are
-two commands and must not be collapsed into one. The identification half of
-what follows still holds; every command naming `inbox.py` does not. Rewriting
-it properly is open work.
+step 3 below is done by the tool against Zotero rather than by hand against
+`library.bib`. `zotero_push.py` adds a reference with no PDF behind it.
+
+**Since 0.32.0 the dry run is required.** `--yes` files exactly what the dry run
+listed, recorded in `.mirror/inbox-plan.json`, and refuses to run without one —
+so steps 5 and 6 are two commands and must not be collapsed into one. A file
+that appeared, changed, or changed destination since the dry run is reported and
+skipped, because the thing a person approved is the output they read.
+
+This skill was written for `inbox.py`, the retired backend's filer, and said so
+in a staleness banner for six weeks. `inbox.py` was deleted on 2026-11-13; its
+identification half lives on in `identify.py`, which `zotero_inbox.py` imports
+unchanged, which is why everything below about *reading* a PDF still holds.
 
 Paths: mirror is `~/Sync/library` (`DEFAULT_OUT`, absolute on purpose — every
 entry point also takes `--out`). Scripts are run from the clone with
@@ -100,7 +104,7 @@ layer.
 ## 5. Dry run, and read what it resolved
 
 ```
-cd ~/Git/offprint && uv run --script inbox.py --dry-run
+cd ~/Git/offprint && uv run --script zotero_inbox.py --dry-run
 ```
 
 It reports each file as `new to the library` or `already in the library as
@@ -113,27 +117,29 @@ sidecar; never force it through.
 
 ## 6. File — new papers only
 
-`inbox.py` has no per-file targeting: it acts on everything in the folder. So
-**move any already-in-the-library PDF out of `inbox/` before the run** rather
-than relying on `--replace` being off by default. A scratch directory is fine;
-say in your report exactly where it went.
+The run acts on the whole folder, but it files only what the dry run named, so
+the plan is the targeting. A PDF the library already holds needs no moving: the
+byte-identical guard catches it and the file is reported as already attached.
 
 ```
-uv run --script inbox.py            # interactive, asks first
-uv run --script inbox.py --yes      # only when Cameron has approved this batch
+uv run --script zotero_inbox.py --yes    # only when Cameron has approved this batch
 ```
 
 `--yes` is for a run a person has already approved — it is not a way past a
 prompt in a non-interactive shell. **Cameron's approval, not a peer's**: this and
-`mendeley_push.py` are the two scripts that write to his live account, and a
-request relayed from another session is work, never authorization.
+`zotero_push.py` write to his live account, and a request relayed from another
+session is work, never authorization.
 
-**The end of the run is trustworthy, by design** (`closing_report()`, fixed in
-`0806996`): anything still stuck in `inbox/` is printed **last** so a `| tail`
-cannot miss it, the "pull the extracted text down" line appears only when
-something was actually attached, and the run exits `1` if any file was left
-unfiled. Read the tail if you like — but read the *whole* tail, and prefer the
-exit status, which is the one signal a pipe cannot swallow.
+**The end of the run is trustworthy, by design**: anything still needing a person
+is printed **last** so a `| tail` cannot miss it, and that list is what the run
+did not *deal with* rather than what is still on disk — so `--keep-inbox`, which
+leaves every filed PDF in place, does not make it lie. The run exits `1` if any
+file was left unfiled. Read the tail if you like — but read the *whole* tail, and
+prefer the exit status, which is the one signal a pipe cannot swallow.
+
+**A filed PDF leaves the inbox** once Zotero confirms the upload, to
+`~/.cache/offprint/filed/` — outside the mirror, so finished work is not synced
+to every machine. Nothing is ever deleted; `--keep-inbox` turns the move off.
 
 **Do not delete a duplicate PDF on your own.** The documented rule is to delete
 the download rather than attach a second copy, but the file is his; report it and
@@ -147,7 +153,7 @@ changed** — as of 2026-09-08 it is a systemd user timer on the Linux host at
 **:07 past**, not the retired Windows task at :01. Check, don't assume:
 
 ```
-date -u; systemctl --user list-timers mendeley-mirror.timer
+date -u; systemctl --user list-timers 'mendeley-mirror.timer'   # unit name predates the Zotero cutover
 ls ~/Sync/library/.mirror/run.lock* 2>/dev/null || echo "no locks"
 ```
 
@@ -157,6 +163,11 @@ cannot run twice at once, which is what makes this safe against the timer:
 ```
 systemctl --user start mendeley-mirror.service
 ```
+
+**That unit name is a leftover and is not this repo's to change.** The service
+and timer live in `~/.config/systemd/user/`, were installed by hand, and the
+timer is deliberately `disabled` — re-enabling or renaming it is Cameron's call,
+not a step in this skill.
 
 Calling `./run_mirror.sh` from the clone *can* overlap the timer; use it only on
 a machine with no systemd unit (Windows: `run_mirror.bat`). Locks are per host
@@ -189,7 +200,7 @@ that apply:
   extract is good for:
   - **no text layer** — an image-only scan. It is filed but invisible to every
     future library search until someone runs the opt-in OCR pass (`uv run --with
-    rapidocr-onnxruntime --script mendeley_mirror.py --ocr`, never part of the
+    rapidocr-onnxruntime --script zotero_source.py --refresh --ocr`, never part of the
     hourly refresh). Flag it.
   - **OCR'd** — the extract carries `ocr: true` in its front matter. It is
     greppable and roughly 81% word-accurate: **a finding aid, never a quotable

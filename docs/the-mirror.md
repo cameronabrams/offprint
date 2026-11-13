@@ -50,7 +50,7 @@ text, in four classes:
   said nothing at all.
 
   Which attachment counts as a PDF is decided by the bytes, not by the MIME type
-  the backend reports. Mendeley described a complete 20-page paper as something
+  the backend reports. One backend described a complete 20-page paper as something
   else, and under that older rule it was skipped, cached as skipped, and never
   reconsidered by any later refresh.
 

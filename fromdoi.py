@@ -4,57 +4,40 @@
 # dependencies = ["requests>=2.31"]
 # ///
 """
-mendeley_push.py -- add one reference TO Mendeley, from an arXiv ID or a DOI.
+fromdoi.py -- build a mirror document from a DOI or an arXiv ID.
 
-The mirror is one-way: Mendeley is the source of truth and everything in this
-folder is generated from it. This script is the one deliberate exception. It
-does not touch the mirror at all -- it POSTs a new document to Mendeley itself,
-and the next refresh brings it back down like any other reference.
-
-    uv run --script mendeley_push.py --arxiv 2507.07887
-    uv run --script mendeley_push.py --doi 10.1088/2632-2153/ae4b07
-    uv run --script mendeley_push.py --arxiv 2507.07887 --dry-run   # look first
+Not a CLI. This is the metadata half of filing a paper, factored out so the
+two scripts that create records -- `zotero_push.py` and `zotero_inbox.py` --
+reach it the same way. Its public names are `from_doi`, `from_arxiv` and
+`csl_year`.
 
 Metadata comes from arXiv's Atom API or, for a DOI, from doi.org content
 negotiation -- which routes to whichever agency registered the DOI, so OSTI
 reports and Zenodo deposits resolve as readily as Crossref journal articles.
 You get real authors and a real year rather than a stub to fix up by hand.
 
+**`csl_year` is the reason this is one function and not three.** Every creator
+of records must take the ISSUE year, and a second path doing its own date
+handling is a second chance to file an Advance Access paper under its online
+year. That is how CHARMM36m was cited as 2016.
+
 The document type follows the metadata: a book is filed as a book, a thesis as
-a thesis, a report as a report. Only arXiv preprints are deliberately filed as
-"journal", because Mendeley has no preprint type and journal + source is the
-convention.
+a thesis, a report as a report. Preprints are deliberately filed as "journal"
+with `source: arXiv`, because the mirror's document shape has no preprint type
+and journal + source is the convention the whole library already uses.
 
-Credentials are the mirror's: it reuses config.json and tokens.json from the
-same per-machine store (~/.config/mendeley-mirror, or %LOCALAPPDATA% on
-Windows), and the app registration already asks for scope "all", so no
-re-authorization is needed on a machine where the mirror already runs. On a
-machine where it does not, run the mirror once first to log in.
-
-Nothing is sent until you confirm, unless you pass --yes.
+It reads no credentials and writes nothing. Both networks it touches are
+public and unauthenticated.
 """
 
 from __future__ import annotations
 
-import argparse
-import json
 import re
 import sys
 import xml.etree.ElementTree as ET
-from pathlib import Path
 
 import requests
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from mendeley_mirror import (  # noqa: E402
-    API,
-    Mendeley,
-    config_dir,
-    get_app_config,
-    load_json,
-)
-
-DOC_CT = "application/vnd.mendeley-document.1+json"
 
 
 def csl_year(meta: dict) -> int | None:
@@ -88,7 +71,7 @@ def die(msg: str) -> None:
 
 
 def split_name(full: str) -> dict:
-    """Mendeley wants first_name / last_name separately."""
+    """The mirror's document shape wants first_name / last_name separately."""
     parts = full.replace("\n", " ").split()
     if not parts:
         return {"first_name": "", "last_name": ""}
@@ -122,7 +105,7 @@ def from_arxiv(arxiv_id: str) -> dict:
     if doi_el is not None and doi_el.text:
         ids["doi"] = doi_el.text
     return {
-        "type": "journal",          # Mendeley has no "preprint"; journal + source is the convention
+        "type": "journal",          # no "preprint" type; journal + source is the convention
         "title": title,
         "authors": authors,
         "year": int(published) if published.isdigit() else None,
@@ -145,11 +128,11 @@ def one(v) -> str:
     return " ".join(text.split())
 
 
-# CSL-JSON type -> Mendeley document type. Anything unlisted becomes "generic",
-# which is Mendeley's own catch-all and is better than mislabeling.
+# CSL-JSON type -> the mirror's document type. Anything unlisted becomes
+# "generic", which is the catch-all and is better than mislabeling.
 # Crossref emits "journal-article" where the CSL spec says "article-journal";
 # both appear in the wild, so both are mapped.
-CSL_TO_MENDELEY = {
+CSL_TO_TYPE = {
     "journal-article": "journal", "article-journal": "journal",
     "article": "journal", "review": "journal", "preprint": "journal",
     "book": "book", "edited-book": "book", "monograph": "book",
@@ -176,7 +159,7 @@ def from_doi(doi: str) -> dict:
     r = requests.get(
         f"https://doi.org/{doi}", allow_redirects=True, timeout=60,
         headers={"Accept": "application/vnd.citationstyles.csl+json",
-                 "User-Agent": "mendeley_push (mailto:cfa22@drexel.edu)"},
+                 "User-Agent": "offprint (mailto:cfa22@drexel.edu)"},
     )
     if r.status_code == 404:
         die(f"no registration agency has a record for {doi}")
@@ -190,7 +173,7 @@ def from_doi(doi: str) -> dict:
         for a in m.get("author", []) if a.get("family")
     ]
     doc = {
-        "type": CSL_TO_MENDELEY.get((m.get("type") or "").lower(), "generic"),
+        "type": CSL_TO_TYPE.get((m.get("type") or "").lower(), "generic"),
         "title": one(m.get("title")),
         "authors": authors,
         "year": csl_year(m),
@@ -213,59 +196,3 @@ def from_doi(doi: str) -> dict:
         if v:
             doc[k] = one(v)
     return doc
-
-
-def main() -> None:
-    ap = argparse.ArgumentParser(description="Add one reference to Mendeley.")
-    src = ap.add_mutually_exclusive_group(required=True)
-    src.add_argument("--arxiv", help="arXiv identifier, e.g. 2507.07887")
-    src.add_argument("--doi", help="DOI, e.g. 10.1088/2632-2153/ae4b07")
-    ap.add_argument("--dry-run", action="store_true", help="show the payload, send nothing")
-    ap.add_argument("--yes", action="store_true", help="do not ask before sending")
-    args = ap.parse_args()
-
-    doc = from_arxiv(args.arxiv) if args.arxiv else from_doi(args.doi)
-    doc = {k: v for k, v in doc.items() if v not in (None, "", [], {})}
-
-    print(json.dumps(doc, indent=2, ensure_ascii=False))
-    if args.dry_run:
-        print("\n--dry-run: nothing sent.")
-        return
-
-    tokens = load_json(config_dir() / "tokens.json", {})
-    if not tokens.get("access_token"):
-        die(
-            "no Mendeley tokens on this machine.\n"
-            "       This script reuses the mirror's credentials; run the mirror once\n"
-            "       here first to log in:  ./run_mirror.sh"
-        )
-    cfg = get_app_config()
-
-    if not args.yes:
-        reply = input("\nAdd this to Mendeley? [y/N] ").strip().lower()
-        if reply not in ("y", "yes"):
-            print("aborted.")
-            return
-
-    client = Mendeley(cfg, tokens)
-    resp = client.session.post(
-        f"{API}/documents",
-        headers={
-            **client._auth_header(),
-            "Content-Type": DOC_CT,
-            "Accept": DOC_CT,
-        },
-        data=json.dumps(doc),
-        timeout=60,
-    )
-    if resp.status_code not in (200, 201):
-        die(f"Mendeley refused it ({resp.status_code}): {resp.text[:400]}")
-
-    created = resp.json()
-    print(f"\nadded: {created.get('title')}")
-    print(f"  id: {created.get('id')}")
-    print("\nIt will appear in this folder after the next mirror refresh.")
-
-
-if __name__ == "__main__":
-    main()

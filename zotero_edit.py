@@ -6,15 +6,23 @@
 """
 zotero_edit.py -- correct fields on records already IN Zotero.
 
-The direct counterpart of `mendeley_edit.py`, for the backend that is now live.
-Same cautions, same keying by CITATION KEY -- but **the field names are Zotero's,
-not Mendeley's, and an edits file written for the old script will not run here.**
-This docstring said "ports unchanged" on 2026-10-02 and that was wrong: the
-library session's file needed `authors` -> `creators` and
-`first_name`/`last_name` -> `firstName`/`lastName`. The unknown-field check
-stopped it on the first record, which is what that check is for, but a claim
-someone acts on with `--yes` has no business being wrong. The translations are
-listed in `MENDELEY_FIELDS` and named in the error.
+Keyed by CITATION KEY, because that is the handle a person actually has.
+
+**The field names in an edits file are Zotero's, and they are not the names the
+mirror uses.** `library.bib` and `index.md` are written from the mirror's own
+document shape -- `authors`, `source`, `year`, `identifiers`, with people as
+`first_name`/`last_name` -- so anyone composing an edit from what they just read
+will reach for those names first. Zotero calls them `creators`,
+`publicationTitle`, `date` and separate top-level identifiers, with people as
+`firstName`/`lastName`. Every one of those is refused **by name**, with the
+Zotero field named in the error: the translations are in `MIRROR_FIELDS`.
+
+Guessing the translation instead would be guessing at what someone meant about
+their own library, which is the one thing a writer to a live account must never
+do. This docstring claimed the old vocabulary "ports unchanged" on 2026-10-02
+and that was wrong; the unknown-field check stopped the file on its first
+record, which is what that check is for, but a claim someone acts on with
+`--yes` has no business being wrong.
 
     uv run --script zotero_edit.py --edits fixes.json --dry-run   # always first
     uv run --script zotero_edit.py --edits fixes.json             # asks before sending
@@ -31,17 +39,16 @@ listed in `MENDELEY_FIELDS` and named in the error.
 Keys resolve through `.mirror/citekeys.json`'s `zotero:` half, so a key the
 mirror has never seen is an error rather than a silent no-op.
 
-**The dangerous field here is `creators`, not `identifiers`.** Mendeley kept its
-DOI, ISSN and PMID in one nested object that its PATCH replaced wholesale, so
-`mendeley_edit.py` had to merge it by hand or lose an ISSN every time someone
-fixed a DOI. Zotero's PATCH *is* a partial merge at the top level -- "Properties
-not included in the uploaded JSON are left untouched on the server" -- so DOI
-and ISSN are separate fields and that hazard is simply gone.
+**The dangerous field is `creators`.** Zotero's PATCH is a partial merge at the
+top level -- "Properties not included in the uploaded JSON are left untouched on
+the server" -- so sending a DOI cannot disturb the ISSN beside it, and scalar
+fields need no protection at all.
 
-It reappears one level down. `creators` is a LIST, and sending one replaces the
-whole list, editors and translators included. So the same protection is applied
-where the same risk now lives: **an edit replaces only the creator types it
-mentions and preserves the ones it does not.** A list of authors replaces the
+That guarantee stops one level down. `creators` is a LIST, and sending one
+replaces the whole list, editors and translators included -- so the single most
+likely edit anyone makes, fixing an author list, is also the one that silently
+drops an editor. **An edit therefore replaces only the creator types it mentions
+and preserves the ones it does not.** A list of authors replaces the
 authors and keeps the editor. An entry with no `creatorType` is an author.
 
 Order is the payload, not an accident: 15 records in this library have their
@@ -49,7 +56,7 @@ authors in the wrong order, so the given order is used exactly. Replaced types
 come first in the order written, then the untouched types in their original
 order.
 
-Three further rules, all of them `mendeley_edit.py`'s:
+Three further rules:
 
 - **A value already equal to Zotero's is skipped**, so a re-run after a partial
   failure sends nothing for the records that already succeeded.
@@ -80,17 +87,16 @@ import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from mendeley_mirror import DEFAULT_OUT, __version__, load_json, mirror_state_dir  # noqa: E402
+from mirror import DEFAULT_OUT, __version__, load_json, mirror_state_dir  # noqa: E402
 from zotero_attach import ZoteroWriter  # noqa: E402
-from zotero_migrate import Zotero, load_zotero_credentials  # noqa: E402
+from zotero import Zotero, load_zotero_credentials  # noqa: E402
 
 AUTHOR = "author"
 
-# Named in the error rather than silently translated. Accepting a Mendeley field
-# name would be guessing at what someone meant about their own library; saying
-# which Zotero field they want costs one line and is the difference between a
-# refusal and a dead end.
-MENDELEY_FIELDS = {
+# The mirror's field vocabulary -> Zotero's. Named in the error rather than
+# silently translated: saying which Zotero field they want costs one line and is
+# the difference between a refusal and a dead end.
+MIRROR_FIELDS = {
     "authors": "creators",
     "editors": 'creators, with "creatorType": "editor"',
     "source": "publicationTitle, bookTitle or proceedingsTitle, by item type",
@@ -116,18 +122,20 @@ def show(label: str, value) -> str:
 
 
 def check_creator_shape(creators: list) -> None:
-    """Refuse Mendeley's person shape, and say what Zotero's is.
+    """Refuse the mirror's person shape, and say what Zotero's is.
 
-    `{"first_name": ..., "last_name": ...}` is what the Mendeley scripts take.
-    Passed here it would be accepted as a creator with empty names, and Zotero
-    would store a record with blank authors -- a successful-looking edit that
-    destroys the field it was meant to repair.
+    `{"first_name": ..., "last_name": ...}` is how a person is written
+    everywhere else in this repo -- it is what `fromdoi.py` produces and what
+    `bib_entry` consumes -- so it is the shape someone will reach for. Passed
+    here it would be accepted as a creator with empty names, and Zotero would
+    store a record with blank authors: a successful-looking edit that destroys
+    the field it was meant to repair.
     """
     for c in creators or []:
         wrong = sorted(k for k in c if k in ("first_name", "last_name"))
         if wrong:
             die(f"creator entries use firstName/lastName, not "
-                f"{'/'.join(wrong)} -- that is Mendeley's shape. Zotero also "
+                f"{'/'.join(wrong)} -- that is the mirror's shape. Zotero also "
                 f'accepts a single "name" for a corporate author.')
 
 
@@ -151,9 +159,9 @@ def merge_creators(current: list, new: list) -> list:
     """Replace the creator types the edit mentions; keep the ones it does not.
 
     `creators` is a list and Zotero's PATCH replaces a list wholesale, so
-    sending an author list would drop an editor. This is the same protection
-    `mendeley_edit.py` gives `identifiers`, moved to where the risk is under
-    this backend.
+    sending an author list would drop an editor. Everything else on a record is
+    a scalar the server merges for us; this is the one field where that is not
+    true, and so the one field that needs this.
 
     The replaced types come first, in exactly the order written -- order is the
     correction in 15 of this library's records -- and the untouched types follow
@@ -171,9 +179,9 @@ def plan_patch(data: dict, edits: dict) -> tuple[dict, list[str]]:
     lines: list[str] = []
     for field, new_value in edits.items():
         if field not in data:
-            hint = MENDELEY_FIELDS.get(field)
+            hint = MIRROR_FIELDS.get(field)
             if hint:
-                die(f"{field!r} is Mendeley's field name. Zotero wants {hint}.")
+                die(f"{field!r} is the mirror's field name. Zotero wants {hint}.")
             die(f"{field!r} is not a field of this item type. Zotero returns "
                 f"every valid field including the empty ones, so this is a typo "
                 f"-- and Zotero would ignore it silently rather than refuse it.")
@@ -218,7 +226,7 @@ def main() -> int:
     by_citekey = {v: k.split(":", 1)[1] for k, v in keymap.items()
                   if k.startswith("zotero:")}
     if not by_citekey:
-        die("citekeys.json holds no zotero: entries; run zotero_migrate.py first")
+        die("citekeys.json holds no zotero: entries; run zotero.py first")
     unknown = [k for k in edits if k not in by_citekey]
     if unknown:
         die("not a citation key this mirror knows: " + ", ".join(sorted(unknown)))

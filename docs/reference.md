@@ -149,17 +149,6 @@ A byte-less attachment is found by asking the **file endpoint**, never by
 `md5: None` — that field says the item records no file, which is a different
 claim, and 1,060 attachments reported it while Zotero held bytes for all of them.
 
-### `zotero_migrate.py` — pair Mendeley records with Zotero items
-
-```
---write                write the zotero: half into citekeys.json
---selftest             run the matcher's fixtures
-```
-
-A one-off, run on 2026-09-29. Read-only without `--write`. It is what made the
-migration keep every citation key: 2,739 of 2,739 paired, by DOI, then title and
-year, then by hand.
-
 ### `doixref.py` — each record's DOI against Crossref
 
 ```
@@ -171,32 +160,7 @@ year, then by hand.
 Read-only and public; it never writes to the library, and it caches to
 `~/.cache/offprint/` so a re-run resumes.
 
-### `mendeley_mirror.py` — the retired refresh
-
-```
---retire "REASON"      declare this mirror frozen: rewrite mirror-status.md as
-                       a standing staleness notice and refuse further refreshes
---successor WHERE      with --retire, where the live library now is
---backfill             with --attachments keep: download attachments whose text
-                       is already extracted, so every file lands in <out>/pdf/
-run_mirror.bat --reconfigure       re-enter application ID, secret, redirect URL
-run_mirror.bat --attachments keep  keep the PDFs as well as the extracted text
-run_mirror.bat --attachments none  metadata and annotations only
-run_mirror.bat --no-abstracts      leave abstracts out of library.bib
-run_mirror.bat --out D:\refs       mirror somewhere else
-run_mirror.bat --reauth            forget tokens and log in again
-```
-
-Three more, not shown above because they are not part of an ordinary refresh:
-
-```
---ocr              read scanned attachments that have no text layer, and mark
-                   the extract ocr: true (needs --with rapidocr-onnxruntime)
---no-annotations   skip the annotation export
---quiet            for scheduled runs: no progress output, never prompt, log to
-                   .mirror/mirror.log
---version          print the version and exit
-```
+## Re-extraction, and what an `ok` means
 
 There is **no re-extract flag.** A refresh skips any attachment whose file hash
 is unchanged *and* whose stored status says it was examined. Improving
@@ -234,7 +198,8 @@ uv run --script test_mirror.py
 ```
 
 Offline throughout: pure functions plus a stubbed API, no network and no
-Mendeley account. It prints a line per check and exits non-zero on failure.
+account of any kind. It prints a line per check and ends in `ALL CHECKS PASSED`,
+exiting non-zero on failure.
 
 
 ## Notes and limits
@@ -243,7 +208,7 @@ Mendeley account. It prints a line per check and exits non-zero on failure.
   `bibtex` + `inputenc` works too, but expect the usual accent grumbles.
 - Titles are double-braced (`title = {{Yield of CO2 capture}}`) so styles that
   lowercase titles cannot mangle formulas and acronyms.
-- Mendeley's API returns the *position* of a PDF highlight but not always the
+- A backend may return the *position* of a PDF highlight but not always the
   highlighted **text**. Those show up as `*(highlight, p. 7)*` with no quote.
   If a lot of yours come out that way, the text can be recovered by cropping the
   PDF at those coordinates — worth doing only if you find you need it.
@@ -255,10 +220,10 @@ Mendeley account. It prints a line per check and exits non-zero on failure.
 - PDF downloads are resumable. Progress is checkpointed every 25 files and on
   Ctrl-C, so an interrupted first run picks up where it left off.
 - The mirror is one-directional, by design. A refresh never writes back to
-  Mendeley, so a bad run can't damage your library. Edit in Mendeley, re-run,
-  done. Three scripts write to Mendeley, all by hand and all with a confirmation
-  prompt: `inbox.py` attaches files, `mendeley_push.py` adds a reference, and
-  `mendeley_edit.py` corrects fields on one that is already there.
+  Zotero, so a bad run can't damage your library. Edit in Zotero, re-run, done.
+  The scripts that *do* write are all `zotero_*`, all run by hand, and all
+  dry-run by default: see "writing to the live account" in the operating
+  guide.
 
 
 ## Which version wrote this mirror?
@@ -274,7 +239,7 @@ actually find it:
   began, and which kind the last failure was. It is separate from `state.json`
   on purpose: that file's shape is something other people's tooling reads, and a
   counter that changes on every failed run does not belong in it.
-- `mendeley_mirror.py --version` prints it.
+- `zotero_source.py --version` prints it.
 
 That makes "this extract predates the garbled-text fix" a question the library
 can answer about itself, rather than one answered from a git log that the
@@ -283,9 +248,10 @@ library does not carry.
 
 ## Namespaced ids, and why a reference has two entries
 
-Ids in `citekeys.json` and in `state.json` are **namespaced** — `mendeley:<id>`,
+Ids in `citekeys.json` and in `state.json` are **namespaced** — `<backend>:<id>`,
 `zotero:<key>` — so that a second backend can be added without two services' ids
-colliding. A bare id is read as Mendeley's, so a map written before this change
+colliding. A bare id is read as the **legacy** backend's, so a map written
+before this change
 still works, and it is rewritten in place on the next run. The citation *key*
 never changes: it is assigned once per id, is cited in manuscripts, and names
 files under `findings/`.
@@ -296,14 +262,14 @@ citation key. That pairing *is* the migration map, and it is what lets a key
 already in a manuscript survive the move between services.
 
 The file is **append-only**: `assign_citekeys` adds an entry for a document id it
-has not seen and never removes one. So a reference deleted in Mendeley keeps its
+has not seen and never removes one. So a reference deleted at the backend keeps its
 line here, on purpose — a key cited last year should still tell you which paper
 was meant, long after the record behind it is gone.
 
 **If you ever do prune the file by hand, drop both halves of a reference or
 neither.** A new key is chosen against the keys already in use, and that check is
 namespace-blind by design: a key spoken for by either half is spoken for, so a
-Zotero record can never be handed a key some Mendeley record already owns. The
+Zotero record can never be handed a key the other half already owns. The
 cost is one sharp edge — removing just the `mendeley:` line does not release the
 key, and leaves a `zotero:` line pointing at a citation key that nothing in
 `library.bib` answers to any more. Half a deletion is worse than none.
